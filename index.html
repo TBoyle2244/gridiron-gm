@@ -693,11 +693,33 @@ function execTrade(L, a, b, aGive, bGive) {
   (aGive.picks || []).forEach(id => pickById(L, id).own = b); (bGive.picks || []).forEach(id => pickById(L, id).own = a);
   addNews(L, `TRADE: ${L.teams[a].abbr} send ${pkgText(L, aGive)} to ${L.teams[b].abbr} for ${pkgText(L, bGive)}.`);
   const inSeason = L.phase === 'regular' || L.phase === 'playoffs';
-  for (const t of [a, b]) if (t !== L.user) { cutTo(L, t, rules(L.year).rosterMax, true); }
-  if (!inSeason) aiSignings(L);
+  // Roster limits are enforced at training camp, so offseason trades don't trigger cuts.
+  if (inSeason) for (const t of [a, b]) if (t !== L.user) cutTo(L, t, rules(L.year).rosterMax, true);
+}
+// What a team really gains from incoming players: anyone who wouldn't make its roster
+// after the trade (it would just cut him) is worth almost nothing.
+// Newly signed free agents can't be flipped right away: offseason signings are locked until
+// kickoff, in-season signings for 4 weeks.
+function nowKey(L) {
+  if (L.phase === 'regular') return L.year * 100 + L.week;
+  if (L.phase === 'preseason') return L.year * 100 - 1;
+  if (L.phase === 'offseason') return (L.year + 1) * 100 - 2;
+  return L.year * 100 + 99;
+}
+// (Trade lock on new signings was removed by request: new signings can be traded right away.)
+function lockNewSigning(L, p) { delete p.lock; }
+function tradeLocked(L, p) { return false; }
+function lockText(L, p) { const y = Math.floor(p.lock / 100), w = p.lock % 100; return w === 0 ? `the ${y} season kicks off` : `week ${w + 1} of ${y}`; }
+function receiverWeight(L, tid, incoming, outgoing) {
+  const max = rules(capYear(L)).rosterMax, out = new Set(outgoing.players || []);
+  const inc = (incoming.players || []).map(id => L.players[id]);
+  const after = roster(L, tid).filter(p => !out.has(p.id)).concat(inc).sort((a, b) => value(b) - value(a));
+  const keep = new Set(after.slice(0, max).map(p => p.id));
+  return inc.reduce((s, p) => s + playerWeight(p) * (keep.has(p.id) ? 1 : 0.05), 0)
+    + (incoming.picks || []).reduce((s, id) => s + pickWeight(L, pickById(L, id)), 0);
 }
 function tradeVerdict(L, partner, give, get) {
-  const g = pkgWeight(L, give), r = pkgWeight(L, get);
+  const g = receiverWeight(L, partner, give, get), r = pkgWeight(L, get);
   return { give: g, get: r, ask: diff(L).tradeAsk, ok: r > 0 && g >= r * diff(L).tradeAsk };
 }
 // give = what the user sends, get = what the user receives; each is {players:[ids], picks:[ids]}
@@ -715,6 +737,8 @@ function proposeTrade(L, partner, give, get) {
   const n = x => (x.players || []).length + (x.picks || []).length;
   if (!n(give) || !n(get)) return { ok: false, msg: 'Put at least one player or pick on each side.' };
   if (!validPkg(L, L.user, give) || !validPkg(L, partner, get)) return { ok: false, msg: 'Something in this deal is no longer on the right team.' };
+  const locked = (give.players || []).map(id => L.players[id]).find(p => tradeLocked(L, p));
+  if (locked) return { ok: false, msg: `${locked.name} was just signed and can't be traded until ${lockText(L, locked)}.` };
   const max = rules(L.year).rosterMax, after = roster(L, L.user).length - (give.players || []).length + (get.players || []).length;
   if ((L.phase === 'regular' || L.phase === 'playoffs') && after > max) return { ok: false, msg: `That would put you at ${after} players, over the ${max} limit. Release someone first.` };
   const t = L.teams[partner], v = tradeVerdict(L, partner, give, get);
@@ -775,7 +799,7 @@ function makeOffer(L) {
   const avg = (d, g) => { let s = 0; for (let i = 0; i < STARTERS[g]; i++) s += d[g][i] ? d[g][i].ovr : 35; return s / STARTERS[g]; };
   const g = GRPS.filter(x => x !== 'K' && x !== 'P').sort((x, y) => avg(dA, x) - avg(dA, y))[0];
   const worst = dA[g][STARTERS[g] - 1] ? dA[g][STARTERS[g] - 1].ovr : 35;
-  const target = R.pick(dU[g].filter(p => p.ovr >= worst + 4 && p.age <= 31));
+  const target = R.pick(dU[g].filter(p => p.ovr >= worst + 4 && p.age <= 31 && !tradeLocked(L, p)));
   if (!target) return false;
   const pkg = buildPackage(L, A.id, playerWeight(target) * (diff(L).offer[0] + Math.random() * (diff(L).offer[1] - diff(L).offer[0])), 4);
   if (!pkg) return false;
@@ -793,6 +817,7 @@ function acceptOffer(L, id) {
   const max = rules(L.year).rosterMax, after = roster(L, L.user).length - o.get.players.length + o.give.players.length;
   if ((L.phase === 'regular' || L.phase === 'playoffs') && after > max) return `Accepting would put you at ${after} players, over the ${max} limit. Release someone first.`;
   const cm = tradeCapMsg(L, L.user, o.from, o.get, o.give); if (cm) return cm;
+  const lk = (o.get.players || []).map(i => L.players[i]).find(p => tradeLocked(L, p)); if (lk) return `${lk.name} was just signed and can't be traded yet.`;
   L.offers = L.offers.filter(x => x !== o);
   execTrade(L, o.from, L.user, o.give, o.get);
   L.offers = L.offers.filter(x => offerValid(L, x));
@@ -1989,6 +2014,7 @@ function resolveRound(L) {
     if (best.score < ROUND_MIN[r - 1]) { p.askMult = (p.askMult || 1) * 0.92; if (userIn) addNews(L, `${p.pos} ${p.name} turned down every offer this round, including yours.`); continue; }
     const from = p.prevTeam;
     p.team = best.tid; setContract(p, best.sal, y, best.yrs); delete p.askMult;
+    if (best.tid === L.user) lockNewSigning(L, p);
     const ce = C[best.tid]; ce.pay += best.sal; ce.size++; (ce.g[p.grp] = ce.g[p.grp] || []).push(p.ovr); ce.g[p.grp].sort((a, b) => b - a);
     signed.push({ pid: p.id, tid: best.tid, sal: best.sal, yrs: best.yrs, bidders: bids.map(b => b.tid) });
     if (userIn || from === L.user || value(p) >= 72) {
@@ -2148,7 +2174,7 @@ function sendSheet(L, pid) {
   L.fa.done[pid] = true;
   if (Math.random() < matchP) { setContract(p, Math.round(sal), y, contractYears(p)); addNews(L, `${L.teams[owner].abbr} matched your offer sheet for ${p.pos} ${p.name}.`); return `${L.teams[owner].city} matched. He stays there.`; }
   const roundsTxt = takePicks(L, L.user, owner, rounds);
-  p.team = L.user; setContract(p, sal, y, contractYears(p));
+  p.team = L.user; setContract(p, sal, y, contractYears(p)); lockNewSigning(L, p);
   addNews(L, `${L.teams[L.user].abbr} landed ${p.pos} ${p.name} on an offer sheet (${money(sal)} a year). ${L.teams[owner].abbr} receive ${roundsTxt || 'no picks'}.`);
   return null;
 }
@@ -2171,7 +2197,7 @@ function signFA(L, pid) {
   if (inSeason && roster(L, L.user).length >= max) return `Your roster is full (${max}). Release someone first.`;
   const sal = askPrice(L, p) * (inSeason ? 0.6 : 1), e = capMsg(L, L.user, sal); if (e) return e;
   const from = p.team;
-  p.team = L.user; setContract(p, sal, y, inSeason ? 1 : contractYears(p));
+  p.team = L.user; setContract(p, sal, y, inSeason ? 1 : contractYears(p)); lockNewSigning(L, p);
   addNews(L, `${L.teams[L.user].abbr} signed ${p.pos} ${p.name}${planB ? ` from ${L.teams[from].abbr} (Plan B)` : ''}: ${p.con.exp - y + 1} yr${p.con.exp > y ? 's' : ''}, ${money(sal)} a year.`);
   return null;
 }
@@ -2233,7 +2259,7 @@ function leaders(L, key, n, year) {
 
 function myDraftSlots(L) { const D = L.draft; if (!D || !D.slotPick) return []; const out = []; for (let i = D.pick; i < D.slotPick.length; i++) { const k = pickById(L, D.slotPick[i]); if (k && k.own === L.user) out.push(i + 1); } return out; }
 
-const API = { ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
+const API = { tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
   value, release, sign, proposeTrade, tradeVerdict, teamPicks, pickById, pickLabel, projectedOverall, pickWeight, playerWeight, ensurePicks, myDraftSlots, aiTrades, acceptOffer, rejectOffer, offerValid, cutTo, ratings, teamOverall, startRegular, canStartSeason, simWeek, simPlayoffRound, roundName,
   sortTeams, divisions, pct, startDraft, onClock, makePick, aiPick, draftUntilUser, draftAll, scoutPlayer, beginDraft, SCOUT_VISITS, endDraft, startNextSeason, leaders, potKnown, shownPot, roman, addNews };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.GG = API;
@@ -2857,7 +2883,7 @@ function vMoves() {
   ui.give = ui.give.filter(x => x[0] === 'p' ? (L.players[+x.slice(2)] || {}).team === L.user : (G.pickById(L, +x.slice(2)) || {}).own === L.user);
   ui.get = ui.get.filter(x => x[0] === 'p' ? (L.players[+x.slice(2)] || {}).team === tt : (G.pickById(L, +x.slice(2)) || {}).own === tt);
   const tc = cmp(ui.tSort), theirs = G.roster(L, tt).sort(tc), mine = G.roster(L, L.user).sort(tc), showPot = ui.tSort === 'pot';
-  const btnP = (p, side) => { const key = 'p:' + p.id, on = ui[side].includes(key); return `<button class="tp ${on ? 'on' : ''}" data-act="tp" data-side="${side}" data-id="${key}"><span class="pos">${esc(p.pos)}</span><span class="tp-n">${esc(p.name)}</span><span class="tp-a">${p.age}</span>${rating(showPot ? G.shownPot(L, p) : p.ovr)}</button>`; };
+  const btnP = (p, side) => { const key = 'p:' + p.id, on = ui[side].includes(key), lk = side === 'give' && G.tradeLocked(L, p); return `<button class="tp ${on ? 'on' : ''}" data-act="tp" data-side="${side}" data-id="${key}"${lk ? ' disabled title="Just signed"' : ''}><span class="pos">${esc(p.pos)}</span><span class="tp-n">${esc(p.name)}${lk ? ' (new)' : ''}</span><span class="tp-a">${p.age}</span>${rating(showPot ? G.shownPot(L, p) : p.ovr)}</button>`; };
   const btnK = (k, side) => { const key = 'k:' + k.id, on = ui[side].includes(key); return `<button class="tp ${on ? 'on' : ''}" data-act="tp" data-side="${side}" data-id="${key}"><span class="pos pk">PICK</span><span class="tp-n">${k.y} R${k.rnd}${k.orig !== k.own ? ' ' + esc(L.teams[k.orig].abbr) : ''}</span><span class="tp-a">≈#${G.projectedOverall(L, k)}</span></button>`; };
   const col = (side, players, tid, label) => {
     const picks = G.teamPicks(L, tid);
