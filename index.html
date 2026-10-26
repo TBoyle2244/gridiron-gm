@@ -1,0 +1,1320 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Gridiron GM">
+<meta name="theme-color" content="#1d6a3b">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<title>Gridiron GM</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Graduate&family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap">
+<style>
+/* Layout: one-column front-office app; sticky team banner on top, fixed tab bar at the bottom, cards in between. */
+:root {
+  --bg: #e9eee6; --panel: #f7f9f4; --ink: #15211a; --muted: #5a6b5f; --line: #cfd8cc;
+  --field: #1d6a3b; --field-ink: #f4f7f1; --gold: #b07a0c; --gold-soft: #f3e3b8;
+  --good: #1d7a43; --warn: #a3650a; --bad: #b3372a;
+  --display: 'Graduate', 'Rockwell', 'Georgia', serif;
+  --body: 'Barlow', -apple-system, 'Helvetica Neue', Arial, sans-serif;
+  --cond: 'Barlow Condensed', 'Arial Narrow', -apple-system, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0d1611; --panel: #15211a; --ink: #e5ebe2; --muted: #93a596; --line: #263a2d;
+  --field: #2f8a50; --field-ink: #f4f7f1; --gold: #e2b444; --gold-soft: #3a3016;
+  --good: #57c27e; --warn: #e2a64a; --bad: #e76a5a; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0d1611; --panel: #15211a; --ink: #e5ebe2; --muted: #93a596; --line: #263a2d;
+  --field: #2f8a50; --field-ink: #f4f7f1; --gold: #e2b444; --gold-soft: #3a3016;
+  --good: #57c27e; --warn: #e2a64a; --bad: #e76a5a; color-scheme: dark }
+html, body { background: var(--bg); color: var(--ink); }
+body { font-family: var(--body); font-size: 15px; line-height: 1.45; -webkit-text-size-adjust: 100%; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--field); }
+* { box-sizing: border-box; }
+button, select, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+#top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; color: var(--field-ink);
+  background: var(--field) repeating-linear-gradient(90deg, transparent 0 39px, rgba(255,255,255,.08) 39px 41px); }
+.top-inner { display: flex; align-items: center; gap: 12px; max-width: 760px; margin: 0 auto;
+  padding-block: 10px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.crest { font-family: var(--display); font-size: 15px; min-width: 52px; height: 40px; display: grid; place-items: center; padding: 0 6px;
+  border: 2px solid var(--field-ink); border-radius: 6px; letter-spacing: .04em; }
+.top-team { font-family: var(--display); font-size: 17px; line-height: 1.15; text-wrap: balance; }
+.top-sub { font-family: var(--cond); font-size: 14px; letter-spacing: .06em; text-transform: uppercase; opacity: .85; }
+
+#main { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px;
+  padding-block: 14px calc(84px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+
+#tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; display: flex; background: var(--panel); border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom, 0px); padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); }
+.tab { flex: 1; min-width: 0; padding: 12px 2px 10px; background: none; border: 0; border-top: 3px solid transparent;
+  font-family: var(--cond); font-weight: 600; font-size: 13px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tab.on { color: var(--ink); border-top-color: var(--gold); }
+.tab:disabled { opacity: .35; cursor: default; }
+
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+.card h3 { font-family: var(--cond); font-weight: 700; font-size: 16px; letter-spacing: .08em; text-transform: uppercase; margin: 0 0 8px; }
+.card p { margin: 6px 0; }
+.hero { border-color: var(--field); border-width: 2px; }
+.hero h2 { font-family: var(--display); font-weight: 400; font-size: 22px; line-height: 1.2; margin: 2px 0 6px; text-wrap: balance; }
+.eyebrow { font-family: var(--cond); font-weight: 600; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: var(--gold); }
+.small { font-size: 13px; color: var(--muted); }
+.warn { color: var(--warn); }
+.good { color: var(--good); } .bad { color: var(--bad); }
+.row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.split { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.count { font-family: var(--cond); font-weight: 700; font-size: 18px; font-variant-numeric: tabular-nums; }
+
+.btn { border: 1.5px solid var(--line); background: var(--bg); border-radius: 8px; padding: 10px 14px; font-weight: 600; min-height: 44px; }
+.btn.primary { background: var(--field); border-color: var(--field); color: var(--field-ink); }
+.btn.danger { border-color: var(--bad); color: var(--bad); }
+.btn.armed { background: var(--bad); border-color: var(--bad); color: #fff; }
+.btn.sm { padding: 6px 12px; min-height: 36px; font-size: 14px; }
+.btn:disabled { opacity: .45; cursor: default; }
+.filebtn { display: inline-flex; align-items: center; position: relative; overflow: hidden; }
+.filebtn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+
+.toast { background: var(--gold-soft); border: 1px solid var(--gold); border-radius: 8px; padding: 10px 14px; font-weight: 500; }
+
+.matchup { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; text-align: center; gap: 8px; margin: 10px 0 4px; }
+.mu-abbr { font-family: var(--display); font-size: 30px; line-height: 1; }
+.mu-rec { font-family: var(--cond); font-size: 15px; color: var(--muted); margin: 4px 0; font-variant-numeric: tabular-nums; }
+.mu-vs { font-family: var(--cond); font-weight: 700; font-size: 16px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+
+.rt { display: inline-block; min-width: 34px; text-align: center; font-family: var(--cond); font-weight: 700; font-size: 15px; padding: 2px 5px; border-radius: 5px; font-variant-numeric: tabular-nums; border: 1.5px solid currentColor; }
+.g-elite { color: var(--gold); } .g-good { color: var(--good); } .g-avg { color: var(--ink); } .g-low { color: var(--muted); }
+
+.chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; margin: 6px 0; scrollbar-width: none; }
+.chip { flex: none; border: 1.5px solid var(--line); background: var(--bg); border-radius: 999px; padding: 5px 12px; font-family: var(--cond); font-weight: 600; font-size: 14px; letter-spacing: .04em; }
+.chip.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.seg { display: flex; border: 1.5px solid var(--line); border-radius: 9px; overflow: hidden; }
+.seg button { flex: 1; min-width: 0; border: 0; background: var(--bg); padding: 9px 4px; font-family: var(--cond); font-weight: 600; font-size: 14px; letter-spacing: .03em; }
+.seg button + button { border-left: 1.5px solid var(--line); }
+.seg button.on { background: var(--field); color: var(--field-ink); }
+
+.list { display: flex; flex-direction: column; }
+.pl { border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 0; }
+.pl-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; background: none; border: 0; padding: 0; text-align: left; }
+.pos { flex: none; width: 38px; text-align: center; font-family: var(--cond); font-weight: 700; font-size: 13px; padding: 3px 0; border-radius: 4px; background: var(--bg); border: 1px solid var(--line); }
+.pos.st { background: var(--field); color: var(--field-ink); border-color: var(--field); }
+.pl-name { flex: 1; min-width: 0; font-weight: 600; }
+.pl-sub { font-weight: 400; font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+.pl-r { flex: none; display: flex; flex-direction: column; align-items: center; gap: 1px; }
+.lbl { font-family: var(--cond); font-size: 10.5px; letter-spacing: .08em; color: var(--muted); }
+.pl-act { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-left: 48px; }
+.inj { margin-left: 6px; font-family: var(--cond); font-size: 12px; font-weight: 700; color: var(--bad); }
+
+.tbl { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.tbl th { font-family: var(--cond); font-weight: 600; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); text-align: right; padding: 4px 6px; border-bottom: 1.5px solid var(--line); }
+.tbl td { padding: 6px; text-align: right; border-bottom: 1px solid var(--line); }
+.tbl th:first-child, .tbl td:first-child, .tbl .l { text-align: left; }
+.tbl tr.me td { background: var(--gold-soft); font-weight: 600; }
+
+.gl { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); font-family: var(--cond); font-size: 17px; font-variant-numeric: tabular-nums; }
+.gl .win { font-weight: 700; }
+.gl .at { color: var(--muted); font-size: 13px; }
+.gl.mine { color: var(--field); }
+.gl .ot { font-size: 12px; color: var(--warn); font-weight: 700; }
+.pr + .pr { margin-top: 10px; }
+
+.news { list-style: none; margin: 0; padding: 0; }
+.news li { padding: 7px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.nw { font-family: var(--cond); font-weight: 700; font-size: 12px; color: var(--gold); margin-right: 8px; letter-spacing: .05em; }
+
+.fld { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; font-size: 13px; color: var(--muted); font-weight: 500; }
+.fld select, .fld input, .fld textarea { color: var(--ink); background: var(--bg); border: 1.5px solid var(--line); border-radius: 8px; padding: 10px; font-size: 16px; }
+.fld textarea { font-family: ui-monospace, Menlo, monospace; font-size: 13px; resize: vertical; }
+.tog { display: flex; gap: 10px; align-items: center; font-weight: 600; }
+.tog input { width: 22px; height: 22px; accent-color: var(--field); }
+input[type=range] { width: 100%; accent-color: var(--field); }
+
+.bar { display: grid; grid-template-columns: 70px 1fr 34px; align-items: center; gap: 8px; padding: 4px 0; }
+.bar-l { font-family: var(--cond); font-weight: 600; font-size: 14px; }
+.bar-t { height: 10px; background: var(--bg); border-radius: 5px; overflow: hidden; border: 1px solid var(--line); }
+.bar-f { display: block; height: 100%; background: currentColor; }
+.bar-v { font-family: var(--cond); font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
+
+.trade { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+.trade > div { min-width: 0; }
+.tlist { display: flex; flex-direction: column; gap: 4px; max-height: 340px; overflow-y: auto; margin-top: 6px; }
+.tp { display: flex; align-items: center; gap: 6px; border: 1.5px solid var(--line); background: var(--bg); border-radius: 7px; padding: 5px 6px; text-align: left; min-width: 0; }
+.tp.on { border-color: var(--field); background: var(--gold-soft); }
+.tp .pos { width: 30px; font-size: 11px; }
+.tp-n { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-a { font-size: 12px; color: var(--muted); }
+.tp .rt { min-width: 28px; font-size: 13px; padding: 1px 3px; }
+
+.grid26 { display: grid; grid-template-columns: repeat(auto-fill, minmax(58px, 1fr)); gap: 6px; }
+.cell { display: flex; flex-direction: column; align-items: center; padding: 6px 2px; border: 1.5px dashed var(--line); border-radius: 7px; font-family: var(--cond); font-weight: 700; font-size: 15px; color: var(--muted); }
+.cell small { font-weight: 500; font-size: 11px; }
+.cell.ok { border-style: solid; border-color: var(--field); color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+<style>html{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+</head>
+<body>
+<header id="top"></header>
+<main id="main"></main>
+<nav id="tabs"></nav>
+<script>
+/* Gridiron GM — simulation engine (no DOM). Works in browser and Node. */
+(function (root) {
+'use strict';
+
+/* ---------- random helpers ---------- */
+const R = {
+  int: (a, b) => a + Math.floor(Math.random() * (b - a + 1)),
+  pick: a => a[Math.floor(Math.random() * a.length)],
+  norm: () => { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); },
+  shuffle: a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; },
+  poisson: l => { const L = Math.exp(-Math.max(0.01, l)); let k = 0, p = 1; do { k++; p *= Math.random(); } while (p > L); return k - 1; }
+};
+const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+const num = v => { const n = parseFloat(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n; };
+
+/* ---------- league history data ---------- */
+// [pfr franchise code, abbr, city, nickname, conference, division]
+const TEAMS_1970 = [
+  ['clt','BAL','Baltimore','Colts','AFC','East'], ['nwe','BOS','Boston','Patriots','AFC','East'],
+  ['buf','BUF','Buffalo','Bills','AFC','East'], ['mia','MIA','Miami','Dolphins','AFC','East'],
+  ['nyj','NYJ','New York','Jets','AFC','East'],
+  ['cin','CIN','Cincinnati','Bengals','AFC','Central'], ['cle','CLE','Cleveland','Browns','AFC','Central'],
+  ['oti','HOU','Houston','Oilers','AFC','Central'], ['pit','PIT','Pittsburgh','Steelers','AFC','Central'],
+  ['den','DEN','Denver','Broncos','AFC','West'], ['kan','KC','Kansas City','Chiefs','AFC','West'],
+  ['rai','OAK','Oakland','Raiders','AFC','West'], ['sdg','SD','San Diego','Chargers','AFC','West'],
+  ['dal','DAL','Dallas','Cowboys','NFC','East'], ['nyg','NYG','New York','Giants','NFC','East'],
+  ['phi','PHI','Philadelphia','Eagles','NFC','East'], ['crd','STL','St. Louis','Cardinals','NFC','East'],
+  ['was','WAS','Washington','Redskins','NFC','East'],
+  ['chi','CHI','Chicago','Bears','NFC','Central'], ['det','DET','Detroit','Lions','NFC','Central'],
+  ['gnb','GB','Green Bay','Packers','NFC','Central'], ['min','MIN','Minnesota','Vikings','NFC','Central'],
+  ['atl','ATL','Atlanta','Falcons','NFC','West'], ['ram','LA','Los Angeles','Rams','NFC','West'],
+  ['nor','NO','New Orleans','Saints','NFC','West'], ['sfo','SF','San Francisco','49ers','NFC','West']
+];
+
+// League changes applied at the start of each listed season.
+const EVENTS = {
+  1971: [{ t: 'rename', pfr: 'nwe', city: 'New England', abbr: 'NE' }],
+  1976: [{ t: 'expand', team: ['sea','SEA','Seattle','Seahawks','NFC','West'] },
+         { t: 'expand', team: ['tam','TB','Tampa Bay','Buccaneers','AFC','West'] }],
+  1977: [{ t: 'realign', pfr: 'sea', conf: 'AFC', div: 'West' }, { t: 'realign', pfr: 'tam', conf: 'NFC', div: 'Central' }],
+  1982: [{ t: 'rename', pfr: 'rai', city: 'Los Angeles', abbr: 'LARD' }],
+  1984: [{ t: 'rename', pfr: 'clt', city: 'Indianapolis', abbr: 'IND' }],
+  1988: [{ t: 'rename', pfr: 'crd', city: 'Phoenix', abbr: 'PHX' }],
+  1994: [{ t: 'rename', pfr: 'crd', city: 'Arizona', abbr: 'ARI' }],
+  1995: [{ t: 'rename', pfr: 'ram', city: 'St. Louis', abbr: 'STL' }, { t: 'rename', pfr: 'rai', city: 'Oakland', abbr: 'OAK' },
+         { t: 'expand', team: ['car','CAR','Carolina','Panthers','NFC','West'] },
+         { t: 'expand', team: ['jax','JAX','Jacksonville','Jaguars','AFC','Central'] }],
+  1996: [{ t: 'rename', pfr: 'cle', newPfr: 'rav', city: 'Baltimore', name: 'Ravens', abbr: 'BAL' }],
+  1997: [{ t: 'rename', pfr: 'oti', city: 'Tennessee', abbr: 'TEN' }],
+  1999: [{ t: 'rename', pfr: 'oti', name: 'Titans' }, { t: 'expand', team: ['cle','CLE','Cleveland','Browns','AFC','Central'] }]
+};
+
+function rules(y) {
+  return {
+    games: y < 1978 ? 14 : (y < 2021 ? 16 : 17),
+    playoffPerConf: y < 1978 ? 4 : (y < 1990 ? 5 : (y < 2020 ? 6 : 7)),
+    draftRounds: y <= 1976 ? 17 : (y <= 1992 ? 12 : (y === 1993 ? 8 : 7)),
+    rosterMax: y <= 1973 ? 40 : (y === 1974 ? 47 : (y <= 1977 ? 43 : (y <= 1992 ? 45 : 53))),
+    regOT: y >= 1974,
+    tiesCountHalf: y >= 1972,
+    salaryCap: y >= 1994
+  };
+}
+
+/* ---------- positions ---------- */
+const GRPS = ['QB','RB','WR','TE','OL','DL','LB','DB','K','P'];
+const STARTERS = { QB: 1, RB: 2, WR: 2, TE: 1, OL: 5, DL: 4, LB: 3, DB: 4, K: 1, P: 1 };
+const MIX40 = { QB: 3, RB: 4, WR: 4, TE: 2, OL: 8, DL: 6, LB: 5, DB: 6, K: 1, P: 1 };
+const POSMAP = {
+  QB: 'QB', RB: 'RB', HB: 'RB', FB: 'RB', TB: 'RB',
+  WR: 'WR', FL: 'WR', SE: 'WR', SR: 'WR', E: 'WR',
+  TE: 'TE',
+  T: 'OL', G: 'OL', C: 'OL', OT: 'OL', OG: 'OL', OL: 'OL', LT: 'OL', RT: 'OL', LG: 'OL', RG: 'OL', LS: 'OL',
+  DE: 'DL', DT: 'DL', DL: 'DL', NT: 'DL', LDE: 'DL', RDE: 'DL', LDT: 'DL', RDT: 'DL', LE: 'DL', RE: 'DL', MG: 'DL',
+  LB: 'LB', MLB: 'LB', OLB: 'LB', ILB: 'LB', LLB: 'LB', RLB: 'LB', LILB: 'LB', RILB: 'LB', LOLB: 'LB', ROLB: 'LB',
+  CB: 'DB', S: 'DB', FS: 'DB', SS: 'DB', DB: 'DB', LCB: 'DB', RCB: 'DB', RS: 'DB', LS2: 'DB',
+  K: 'K', PK: 'K', P: 'P'
+};
+const DISPLAY_POS = { OL: ['T','G','C'], DL: ['DE','DT'], DB: ['CB','S'] };
+
+function grpOf(pos, wt) {
+  const first = String(pos || '').toUpperCase().split(/[-\/,]/)[0].replace(/[^A-Z]/g, '');
+  if (POSMAP[first]) return POSMAP[first];
+  const w = num(wt);
+  if (w >= 245) return Math.random() < 0.5 ? 'OL' : 'DL';
+  if (w >= 215) return 'LB';
+  if (w > 0) return 'DB';
+  return R.pick(['OL','DL','LB','DB']);
+}
+
+/* ---------- generated players ---------- */
+const FIRST = ['Bill','Bob','Jim','Tom','John','Mike','Dave','Dan','Joe','Ron','Larry','Gary','Steve','Ken','Rich','Don','Jerry','Terry','Ray','Fred','Walt','Carl','Earl','Lee','Roy','Gene','Chuck','Mel','Ed','Hal','Willie','Leroy','Curtis','Otis','Reggie','Ted','Phil','Rod','Wayne','Doug','Paul','Mark','Greg','Tim','Chris','Pat','Glenn','Ernie','Vince','Al'];
+const LAST = ['Johnson','Williams','Brown','Jones','Miller','Davis','Wilson','Anderson','Taylor','Thomas','Moore','Martin','Jackson','White','Harris','Clark','Lewis','Walker','Hall','Allen','Young','King','Wright','Hill','Scott','Green','Baker','Nelson','Carter','Mitchell','Roberts','Turner','Phillips','Campbell','Parker','Evans','Edwards','Collins','Stewart','Morris','Murphy','Cook','Rogers','Reed','Bailey','Bell','Cooper','Howard','Ward','Cox','Brooks','Gray','Hughes','Price','Sanders','Bennett','Wood','Barnes','Ross','Henderson','Coleman','Jenkins','Perry','Powell','Long','Patterson','Foster','Butler','Simmons','Bryant'];
+const COLLEGES = ['Alabama','USC','Ohio State','Notre Dame','Texas','Michigan','Grambling','Nebraska','Oklahoma','Penn State','LSU','Purdue','Tennessee','Jackson State','Arizona State','UCLA','Florida A&M','Houston','Stanford','Iowa','Missouri','Southern','Kansas','Ole Miss','Syracuse'];
+
+function genName() { return R.pick(FIRST) + ' ' + R.pick(LAST); }
+
+function mkPlayer(L, o) {
+  const p = Object.assign({ id: L.nextId++, name: genName(), pos: '', grp: 'LB', age: 24, ovr: 50, pot: 55, team: -1, inj: 0, yrs: 0, college: '', real: false, hist: {} }, o);
+  if (!p.pos) p.pos = DISPLAY_POS[p.grp] ? R.pick(DISPLAY_POS[p.grp]) : p.grp;
+  L.players[p.id] = p;
+  return p;
+}
+
+function genPlayer(L, grp, team, mean, ageRange) {
+  const age = R.int(ageRange[0], ageRange[1]);
+  const ovr = clamp(Math.round(mean + R.norm() * 7), 35, 85);
+  const pot = clamp(ovr + (age < 26 ? R.int(0, 12) : R.int(0, 3)), ovr, 95);
+  return mkPlayer(L, { grp, team, age, ovr, pot, yrs: Math.max(0, age - 22), college: R.pick(COLLEGES), real: false });
+}
+
+function genRoster(L, tid, size, mean) {
+  const mix = Object.assign({}, MIX40);
+  const extra = ['OL','DB','DL','LB','WR','RB','TE'];
+  let n = 40, i = 0;
+  while (n < size) { mix[extra[i % extra.length]]++; n++; i++; }
+  for (const g of GRPS) for (let k = 0; k < mix[g]; k++) genPlayer(L, g, tid, (mean || 56) + (k < STARTERS[g] ? 6 : -2), [22, 31]);
+}
+
+/* ---------- PFR CSV import ---------- */
+function parseCSV(text) {
+  const rows = []; let row = [], f = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"') { if (text[i + 1] === '"') { f += '"'; i++; } else q = false; }
+      else f += c;
+    } else if (c === '"') q = true;
+    else if (c === ',') { row.push(f); f = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(f); rows.push(row); row = []; f = '';
+    } else f += c;
+  }
+  if (f.length || row.length) { row.push(f); rows.push(row); }
+  return rows;
+}
+
+function cleanName(s) { return String(s || '').replace(/\s*HOF\s*$/i, '').replace(/[*+]/g, '').trim(); }
+
+function parsePFR(text) {
+  const rows = parseCSV(String(text || '').replace(/^﻿/, '').trim()).filter(r => r.some(c => c.trim()));
+  const hi = rows.findIndex(r => r.some(c => c.trim() === 'Player'));
+  if (hi < 0) throw new Error('No "Player" column found. Copy the CSV text from Share & Export → Get table as CSV.');
+  const idx = {};
+  rows[hi].forEach((h, i) => { h = h.trim(); if (h && !(h in idx)) idx[h] = i; });
+  const get = (r, k) => (k in idx ? (r[idx[k]] || '').trim() : '');
+  const out = [];
+  for (const r of rows.slice(hi + 1)) {
+    const name = cleanName(get(r, 'Player'));
+    if (!name || name === 'Player' || /team total/i.test(name)) continue;
+    const o = {}; for (const k in idx) o[k] = get(r, k);
+    o.Player = name; out.push(o);
+  }
+  const kind = ('Rnd' in idx || 'Pick' in idx) ? 'draft' : (('AV' in idx || 'GS' in idx || 'Wt' in idx) ? 'roster' : 'unknown');
+  if (kind === 'unknown') throw new Error('This doesn\'t look like a roster or draft table.');
+  if (!out.length) throw new Error('The table has a header but no player rows.');
+  return { kind, rows: out };
+}
+
+function playerFromRoster(L, r, tid) {
+  const grp = grpOf(r.Pos, r.Wt);
+  const age = num(r.Age) || 25, g = num(r.G), gs = num(r.GS), av = num(r.AV);
+  const yrs = /rook/i.test(r.Yrs) ? 0 : num(r.Yrs);
+  let ovr;
+  if (grp === 'K' || grp === 'P') ovr = 58 + av * 3 + (g >= 10 ? 6 : 0) + R.int(-3, 3);
+  else ovr = 44 + av * 2.6 + Math.min(gs, 14) * 0.7 + (g > 0 ? 2 : 0) + R.int(-2, 2);
+  ovr = clamp(Math.round(ovr), 38, 97);
+  const growth = age <= 25 ? R.int(2, 12) * (27 - age) / 5 : R.int(0, 2);
+  const pot = clamp(Math.round(ovr + growth), ovr, 99);
+  const pos = String(r.Pos || '').toUpperCase().split(/[-\/]/)[0] || '';
+  return mkPlayer(L, { name: r.Player, pos: pos || undefined, grp, age, ovr, pot, team: tid, yrs, college: r['College/Univ'] || '', real: true });
+}
+
+function prospectFromDraft(L, r, year) {
+  const grp = grpOf(r.Pos, 0);
+  const wav = Math.max(0, num(r.wAV)), pb = num(r.PB), ap = num(r.AP1);
+  const pot = clamp(Math.round(45 + Math.sqrt(wav) * 4.2 + pb * 0.8 + ap * 1.0 + R.int(-2, 2)), 42, 99);
+  const ovr = clamp(pot - R.int(8, 18), 38, 80);
+  const pos = String(r.Pos || '').toUpperCase().split(/[-\/]/)[0];
+  return mkPlayer(L, {
+    name: r.Player, pos: pos || undefined, grp, age: num(r.Age) || 22, ovr, pot, team: -3, yrs: 0,
+    college: r['College/Univ'] || '', real: true,
+    scout: clamp(Math.round(pot + R.norm() * 6), 40, 99),
+    realPick: { rnd: num(r.Rnd), pick: num(r.Pick), tm: r.Tm || '' }
+  });
+}
+
+function genProspect(L, year) {
+  const grp = R.pick(['QB','RB','RB','WR','WR','TE','OL','OL','OL','DL','DL','DL','LB','LB','DB','DB','DB','K','P'].filter(g => g !== 'K' && g !== 'P' || Math.random() < 0.3));
+  const pot = clamp(Math.round(52 + R.norm() * 10), 40, 96);
+  const ovr = clamp(pot - R.int(8, 18), 36, 78);
+  return mkPlayer(L, { grp, age: R.int(21, 23), ovr, pot, team: -3, college: R.pick(COLLEGES), real: false, scout: clamp(Math.round(pot + R.norm() * 6), 40, 99) });
+}
+
+/* ---------- league creation ---------- */
+function mkTeam(id, a) {
+  const [pfr, abbr, city, name, conf, div] = a;
+  return { id, pfr, abbr, city, name, conf, div, w: 0, l: 0, t: 0, pf: 0, pa: 0, home: 0,
+    coach: { off: 'bal', def: 'bal', aggr: 50, youth: false }, hist: [] };
+}
+
+function newLeague(imports, userPfr) {
+  const L = { v: 1, year: 1970, phase: 'preseason', week: 0, teams: [], players: {}, nextId: 1,
+    schedule: [], playoffs: null, draft: null, news: [], champs: [], user: 0 };
+  TEAMS_1970.forEach((a, i) => L.teams.push(mkTeam(i, a)));
+  const u = L.teams.find(t => t.pfr === userPfr); L.user = u ? u.id : 0;
+  const gen = [];
+  for (const t of L.teams) {
+    const rows = imports && imports.rosters && imports.rosters[t.pfr];
+    if (rows && rows.length) rows.forEach(r => playerFromRoster(L, r, t.id));
+    else { genRoster(L, t.id, rules(1970).rosterMax); gen.push(t.abbr); }
+  }
+  addNews(L, 'The 1970 season begins. The AFL and NFL have merged into one 26-team league.');
+  if (gen.length) addNews(L, 'Generated placeholder rosters for: ' + gen.join(', ') + '.');
+  aiCutdowns(L);
+  return L;
+}
+
+function addNews(L, s) { L.news.unshift({ y: L.year, w: L.phase === 'regular' ? L.week + 1 : null, s }); if (L.news.length > 150) L.news.length = 150; }
+
+/* ---------- rosters ---------- */
+function roster(L, tid) { const out = []; for (const id in L.players) { const p = L.players[id]; if (p.team === tid) out.push(p); } return out; }
+function freeAgents(L) { return roster(L, -1); }
+
+function value(p) {
+  return p.ovr + Math.max(0, p.pot - p.ovr) * (p.age < 26 ? 0.6 : 0.2) - Math.max(0, p.age - 29) * 2.5 + (p.grp === 'QB' ? 4 : 0) - (p.grp === 'K' || p.grp === 'P' ? 8 : 0);
+}
+
+function depth(L, tid) {
+  const d = {}; GRPS.forEach(g => d[g] = []);
+  for (const p of roster(L, tid)) if (!p.inj) d[p.grp].push(p);
+  GRPS.forEach(g => d[g].sort((a, b) => b.ovr - a.ovr));
+  return d;
+}
+
+function groupCounts(L, tid) { const c = {}; GRPS.forEach(g => c[g] = 0); roster(L, tid).forEach(p => c[p.grp]++); return c; }
+
+function release(L, pid) { const p = L.players[pid]; if (!p) return; const t = L.teams[p.team]; p.team = -1; if (t) addNews(L, `${t.abbr} released ${p.pos} ${p.name}.`); }
+
+function aiCutdowns(L) {
+  const max = rules(L.year).rosterMax;
+  for (const t of L.teams) {
+    if (t.id === L.user) continue;
+    cutTo(L, t.id, max, true);
+  }
+}
+
+function cutTo(L, tid, max, quiet) {
+  const r = roster(L, tid);
+  if (r.length <= max) return [];
+  const counts = groupCounts(L, tid);
+  const keep = g => STARTERS[g] + (g === 'K' || g === 'P' ? 0 : 1);
+  const order = r.slice().sort((a, b) => value(a) - value(b));
+  const cut = [];
+  for (const p of order) {
+    if (r.length - cut.length <= max) break;
+    if (counts[p.grp] <= keep(p.grp)) continue;
+    counts[p.grp]--; cut.push(p); p.team = -1;
+  }
+  if (!quiet && cut.length) addNews(L, `${L.teams[tid].abbr} trimmed ${cut.length} players to reach ${max}.`);
+  return cut;
+}
+
+function aiSignings(L) {
+  const max = rules(L.year).rosterMax;
+  const fa = freeAgents(L).sort((a, b) => value(b) - value(a));
+  for (const t of R.shuffle(L.teams.slice())) {
+    if (t.id === L.user) continue;
+    let size = roster(L, t.id).length;
+    const counts = groupCounts(L, t.id);
+    while (size < max && fa.length) {
+      const needG = GRPS.find(g => counts[g] < STARTERS[g] + (g === 'K' || g === 'P' ? 0 : 1));
+      let i = needG ? fa.findIndex(p => p.grp === needG) : 0;
+      if (i < 0) i = 0;
+      const p = fa.splice(i, 1)[0];
+      if (p.grp === 'K' || p.grp === 'P') { if (counts[p.grp] >= 1) continue; }
+      p.team = t.id; counts[p.grp]++; size++;
+    }
+  }
+}
+
+function sign(L, pid) {
+  const p = L.players[pid]; const max = rules(L.year).rosterMax;
+  if (!p || p.team !== -1) return 'That player is no longer available.';
+  if (roster(L, L.user).length >= max) return `Your roster is full (${max}). Release someone first.`;
+  p.team = L.user; addNews(L, `${L.teams[L.user].abbr} signed ${p.pos} ${p.name}.`); return null;
+}
+
+function proposeTrade(L, giveIds, getIds) {
+  const give = giveIds.map(i => L.players[i]), get = getIds.map(i => L.players[i]);
+  if (!give.length || !get.length) return { ok: false, msg: 'Pick at least one player on each side.' };
+  const other = get[0].team;
+  if (get.some(p => p.team !== other) || give.some(p => p.team !== L.user)) return { ok: false, msg: 'Those players are not on the right teams.' };
+  const vGive = give.reduce((s, p) => s + value(p) ** 1.5, 0), vGet = get.reduce((s, p) => s + value(p) ** 1.5, 0);
+  const t = L.teams[other];
+  if (vGive < vGet * 1.05) return { ok: false, msg: `${t.city} turned it down. They want more value back.` };
+  give.forEach(p => p.team = other); get.forEach(p => p.team = L.user);
+  addNews(L, `TRADE: ${L.teams[L.user].abbr} sent ${give.map(p => p.name).join(', ')} to ${t.abbr} for ${get.map(p => p.name).join(', ')}.`);
+  if (L.phase !== 'regular' && L.phase !== 'playoffs') cutTo(L, other, rules(L.year).rosterMax + 0, true);
+  return { ok: true, msg: `${t.city} accepted the trade.` };
+}
+
+/* ---------- schedule ---------- */
+function divKey(t) { return t.conf + t.div; }
+
+function makeSchedule(L) {
+  const n = rules(L.year).games, T = L.teams;
+  const need = {}, met = {}, cnt = {}, home = {};
+  const key = (a, b) => a < b ? a + '-' + b : b + '-' + a;
+  T.forEach(a => { cnt[a.id] = 0; home[a.id] = 0; T.forEach(b => { if (a.id < b.id && divKey(a) === divKey(b)) need[key(a.id, b.id)] = 2; }); });
+  const weeks = [];
+  for (let w = 0; w < n + 6 && T.some(t => cnt[t.id] < n); w++) {
+    let games = null;
+    for (let attempt = 0; attempt < 60 && !games; attempt++) {
+      const pool = R.shuffle(T.filter(t => cnt[t.id] < n).map(t => t.id));
+      const used = new Set(), g = [];
+      for (const a of pool) {
+        if (used.has(a)) continue;
+        let best = null, bs = -1e9;
+        for (const b of pool) {
+          if (b === a || used.has(b)) continue;
+          const k = key(a, b);
+          const s = (need[k] || 0) * 60 - (met[k] || 0) * 45 + (T[a].conf === T[b].conf ? 8 : 0) + Math.random() * 12;
+          if (s > bs) { bs = s; best = b; }
+        }
+        if (best === null) continue;
+        used.add(a); used.add(best); g.push([a, best]);
+      }
+      if (g.length >= Math.floor(pool.length / 2) - (attempt > 40 ? 1 : 0)) games = g;
+    }
+    const wk = [];
+    for (const [a, b] of games || []) {
+      const k = key(a, b);
+      if (need[k]) need[k]--; met[k] = (met[k] || 0) + 1; cnt[a]++; cnt[b]++;
+      const h = home[a] <= home[b] ? a : b, aw = h === a ? b : a; home[h]++;
+      wk.push({ h, a: aw, hs: null, as: null, done: false });
+    }
+    weeks.push(wk);
+  }
+  L.schedule = weeks;
+}
+
+/* ---------- game simulation ---------- */
+const PW = { run: 0.8, bal: 1, pass: 1.2 };
+
+function ratings(L, tid) {
+  const d = depth(L, tid), r = { d };
+  for (const g of GRPS) {
+    let s = 0; for (let i = 0; i < STARTERS[g]; i++) s += d[g][i] ? d[g][i].ovr : 35;
+    r[g] = s / STARTERS[g];
+  }
+  const c = L.teams[tid].coach, pw = PW[c.off], rw = 2 - pw;
+  r.off = (r.QB * 0.30 * pw + r.WR * 0.18 * pw + r.TE * 0.08 + r.RB * 0.16 * rw + r.OL * 0.28) / (0.30 * pw + 0.18 * pw + 0.08 + 0.16 * rw + 0.28);
+  r.def = r.DL * 0.32 + r.LB * 0.28 + r.DB * 0.40;
+  return r;
+}
+
+function teamOverall(L, tid) { const r = ratings(L, tid); return Math.round((r.off + r.def) / 2); }
+
+function genScore(exp, mult) {
+  const e = Math.max(2, exp * (1 + R.norm() * 0.28 * mult));
+  const td = R.poisson(e * 0.70 / 7), fg = R.poisson(e * 0.30 / 3);
+  let pts = 0; for (let i = 0; i < td; i++) pts += Math.random() < 0.96 ? 7 : 6;
+  pts += fg * 3; if (Math.random() < 0.03) pts += 2;
+  return { pts, td, fg };
+}
+
+function expected(L, oRat, dRat, oCoach, dCoach, isHome, neutral) {
+  let e = 19.5 + (oRat.off - dRat.def) * 0.6 + (isHome && !neutral ? 1.4 : 0) + (oRat.K - 60) * 0.04;
+  if (dCoach.def === 'blitz') e -= oCoach.off === 'pass' ? 2 : 0.6;
+  if (dCoach.def === 'soft') e += 0.8;
+  return clamp(e, 5, 42);
+}
+
+function variance(oCoach, dCoach) {
+  return 1 + (oCoach.aggr - 50) / 200 + (dCoach.def === 'blitz' ? 0.15 : 0) - (dCoach.def === 'soft' ? 0.1 : 0);
+}
+
+function stat(p, y, k, v) { if (!p) return; const h = p.hist[y] || (p.hist[y] = { g: 0 }); h[k] = (h[k] || 0) + v; }
+
+function share(list, weights) {
+  const pool = list.map((p, i) => [p, weights[i]]).filter(x => x[0]);
+  const tot = pool.reduce((s, x) => s + x[1], 0) || 1;
+  return pool.map(x => [x[0], x[1] / tot]);
+}
+function pickWeighted(sh) { let r = Math.random(); for (const [p, w] of sh) { r -= w; if (r <= 0) return p; } return sh.length ? sh[sh.length - 1][0] : null; }
+
+function creditStats(L, tid, sc, rat, oppRat, coach) {
+  const y = L.year, d = rat.d, pw = PW[coach.off];
+  const starters = [];
+  GRPS.forEach(g => d[g].slice(0, STARTERS[g]).forEach(p => starters.push(p)));
+  starters.forEach(p => stat(p, y, 'g', 1));
+  const total = clamp(Math.round(262 + (rat.off - oppRat.def) * 4 + sc.td * 18 + R.norm() * 55), 80, 600);
+  const pshare = clamp(0.47 * pw + R.norm() * 0.07, 0.22, 0.78);
+  const py = Math.round(total * pshare), ry = total - py;
+  let ptd = 0; for (let i = 0; i < sc.td; i++) if (Math.random() < pshare + 0.05) ptd++;
+  const rtd = sc.td - ptd;
+  const qb = d.QB[0];
+  if (qb) {
+    const att = Math.max(8, Math.round(py / 6.9 + R.int(-3, 4)));
+    const cmp = Math.round(att * clamp(0.50 + (qb.ovr - 60) * 0.004 + R.norm() * 0.05, 0.3, 0.75));
+    stat(qb, y, 'att', att); stat(qb, y, 'cmp', cmp); stat(qb, y, 'py', py); stat(qb, y, 'ptd', ptd);
+    stat(qb, y, 'int', R.poisson(clamp(1.5 - (qb.ovr - 60) * 0.025, 0.4, 2.6)));
+  }
+  const rec = share([d.WR[0], d.WR[1], d.TE[0], d.RB[0], d.RB[1], d.WR[2]], [0.32, 0.22, 0.18, 0.14, 0.06, 0.08]);
+  for (const [p, w] of rec) {
+    const yds = Math.round(py * w * (0.75 + Math.random() * 0.5));
+    stat(p, y, 'recy', yds); stat(p, y, 'rec', Math.max(0, Math.round(yds / 13 + R.norm())));
+  }
+  for (let i = 0; i < ptd; i++) stat(pickWeighted(rec), y, 'rectd', 1);
+  const rush = share([d.RB[0], d.RB[1], qb], [0.66, 0.26, 0.08]);
+  for (const [p, w] of rush) { const yds = Math.round(ry * w * (0.8 + Math.random() * 0.4)); stat(p, y, 'ry', yds); stat(p, y, 'ra', Math.max(1, Math.round(yds / 4.1))); }
+  for (let i = 0; i < rtd; i++) stat(pickWeighted(rush), y, 'rtd', 1);
+  stat(d.K[0], y, 'fgm', sc.fg);
+}
+
+function creditDefense(L, tid, rat, oppRat, oppQB) {
+  const y = L.year, d = rat.d;
+  const sacks = R.poisson(clamp(2.2 + (rat.DL - oppRat.OL) * 0.06, 0.6, 5));
+  const rushers = share([d.DL[0], d.DL[1], d.DL[2], d.DL[3], d.LB[0], d.LB[1]], [0.25, 0.25, 0.15, 0.15, 0.1, 0.1]);
+  for (let i = 0; i < sacks; i++) stat(pickWeighted(rushers), y, 'sk', 1);
+  const ints = oppQB && oppQB.hist[y] ? (oppQB._lastInt || 0) : 0;
+  const cover = share([d.DB[0], d.DB[1], d.DB[2], d.DB[3], d.LB[0]], [0.24, 0.24, 0.2, 0.2, 0.12]);
+  for (let i = 0; i < ints; i++) stat(pickWeighted(cover), y, 'dint', 1);
+}
+
+function injuries(L, rat) {
+  if (Math.random() < 0.38) {
+    const pool = []; ['QB','RB','WR','TE','OL','DL','LB','DB'].forEach(g => rat.d[g].slice(0, STARTERS[g]).forEach(p => pool.push(p)));
+    const p = R.pick(pool); if (!p) return;
+    p.inj = Math.random() < 0.04 ? 20 : 1 + R.poisson(1.4);
+    if (p.team === L.user || p.ovr >= 80) addNews(L, `${L.teams[p.team].abbr} ${p.pos} ${p.name} injured, out ${p.inj >= 20 ? 'for the season' : p.inj + ' week' + (p.inj > 1 ? 's' : '')}.`);
+  }
+}
+
+function playGame(L, g, opts) {
+  opts = opts || {};
+  const H = L.teams[g.h], A = L.teams[g.a];
+  const hr = ratings(L, g.h), ar = ratings(L, g.a);
+  const hs = genScore(expected(L, hr, ar, H.coach, A.coach, true, opts.neutral), variance(H.coach, A.coach));
+  const as = genScore(expected(L, ar, hr, A.coach, H.coach, false, opts.neutral), variance(A.coach, H.coach));
+  let hp = hs.pts, ap = as.pts, ot = false;
+  if (hp === ap) {
+    if (opts.playoff || (rules(L.year).regOT && Math.random() > 0.08)) {
+      ot = true; const ph = 0.5 + ((hr.off + hr.def) - (ar.off + ar.def)) * 0.01;
+      if (Math.random() < clamp(ph, 0.2, 0.8)) hp += 3; else ap += 3;
+    }
+  }
+  g.hs = hp; g.as = ap; g.done = true; g.ot = ot;
+  // capture QB ints so the other defense gets credit
+  const hQB = hr.d.QB[0], aQB = ar.d.QB[0];
+  const hBefore = hQB && hQB.hist[L.year] ? (hQB.hist[L.year].int || 0) : 0;
+  const aBefore = aQB && aQB.hist[L.year] ? (aQB.hist[L.year].int || 0) : 0;
+  if (!opts.noStats) {
+    creditStats(L, g.h, hs, hr, ar, H.coach); creditStats(L, g.a, as, ar, hr, A.coach);
+    if (hQB) hQB._lastInt = (hQB.hist[L.year].int || 0) - hBefore;
+    if (aQB) aQB._lastInt = (aQB.hist[L.year].int || 0) - aBefore;
+    creditDefense(L, g.h, hr, ar, aQB); creditDefense(L, g.a, ar, hr, hQB);
+    if (hQB) delete hQB._lastInt; if (aQB) delete aQB._lastInt;
+  }
+  if (!opts.playoff) {
+    H.pf += hp; H.pa += ap; A.pf += ap; A.pa += hp;
+    if (hp > ap) { H.w++; A.l++; } else if (ap > hp) { A.w++; H.l++; } else { H.t++; A.t++; }
+  }
+  injuries(L, hr); injuries(L, ar);
+  return g;
+}
+
+function healWeek(L) { for (const id in L.players) { const p = L.players[id]; if (p.inj > 0) p.inj--; } }
+
+/* ---------- season flow ---------- */
+function canStartSeason(L) {
+  const n = roster(L, L.user).length, max = rules(L.year).rosterMax;
+  if (n > max) return `Your roster has ${n} players. Cut down to ${max} before kickoff.`;
+  return null;
+}
+
+function startRegular(L) {
+  const err = canStartSeason(L); if (err) return err;
+  aiCutdowns(L); aiSignings(L);
+  L.teams.forEach(t => { t.w = t.l = t.t = t.pf = t.pa = 0; });
+  makeSchedule(L); L.week = 0; L.phase = 'regular';
+  return null;
+}
+
+function simWeek(L) {
+  if (L.phase !== 'regular') return;
+  healWeek(L);
+  for (const g of L.schedule[L.week]) if (!g.done) playGame(L, g);
+  const ug = L.schedule[L.week].find(g => g.h === L.user || g.a === L.user);
+  if (ug) {
+    const me = ug.h === L.user, my = me ? ug.hs : ug.as, op = me ? ug.as : ug.hs, opp = L.teams[me ? ug.a : ug.h];
+    addNews(L, `Week ${L.week + 1}: ${my > op ? 'W' : my < op ? 'L' : 'T'} ${my}-${op} ${me ? 'vs' : 'at'} ${opp.city}${ug.ot ? ' (OT)' : ''}.`);
+  }
+  L.week++;
+  if (L.week >= L.schedule.length) startPlayoffs(L);
+}
+
+function pct(L, t) {
+  const g = t.w + t.l + t.t; if (!g) return 0;
+  return rules(L.year).tiesCountHalf ? (t.w + 0.5 * t.t) / g : (t.w + t.l ? t.w / (t.w + t.l) : 0.5);
+}
+
+function sortTeams(L, list) { return list.slice().sort((a, b) => (pct(L, b) - pct(L, a)) || ((b.pf - b.pa) - (a.pf - a.pa)) || (b.pf - a.pf)); }
+
+function divisions(L) {
+  const m = {};
+  L.teams.forEach(t => { (m[t.conf + '|' + t.div] = m[t.conf + '|' + t.div] || []).push(t); });
+  return m;
+}
+
+function seeds(L, conf) {
+  const n = rules(L.year).playoffPerConf, divs = divisions(L), winners = [];
+  for (const k in divs) if (k.startsWith(conf + '|')) winners.push(sortTeams(L, divs[k])[0]);
+  const ws = sortTeams(L, winners);
+  const rest = sortTeams(L, L.teams.filter(t => t.conf === conf && !winners.includes(t)));
+  return ws.concat(rest.slice(0, Math.max(0, n - ws.length))).map(t => t.id);
+}
+
+function startPlayoffs(L) {
+  L.phase = 'playoffs';
+  const s = { AFC: seeds(L, 'AFC'), NFC: seeds(L, 'NFC') };
+  L.playoffs = { seeds: s, alive: { AFC: s.AFC.slice(), NFC: s.NFC.slice() }, rounds: [], champ: null };
+  const inIt = s.AFC.concat(s.NFC).includes(L.user);
+  addNews(L, inIt ? `${L.teams[L.user].city} clinched a playoff spot!` : `${L.teams[L.user].city} missed the playoffs at ${L.teams[L.user].w}-${L.teams[L.user].l}${L.teams[L.user].t ? '-' + L.teams[L.user].t : ''}.`);
+}
+
+function prevPow2(n) { let p = 1; while (p * 2 <= n) p *= 2; return p; }
+
+function roundName(L) {
+  const a = L.playoffs.alive.AFC.length;
+  if (a === 1) return 'Super Bowl';
+  if (a === 2) return 'Conference Championships';
+  if (a <= 4 && (a & (a - 1)) === 0) return 'Divisional Round';
+  return 'Wild Card Round';
+}
+
+function simPlayoffRound(L) {
+  if (L.phase !== 'playoffs') return;
+  const P = L.playoffs, name = roundName(L), games = [];
+  healWeek(L);
+  if (name === 'Super Bowl') {
+    const a = P.alive.AFC[0], n = P.alive.NFC[0];
+    const g = playGame(L, { h: L.year % 2 ? n : a, a: L.year % 2 ? a : n }, { playoff: true, neutral: true, noStats: true });
+    const w = g.hs > g.as ? g.h : g.a; games.push(g);
+    P.champ = w; L.champs.unshift({ y: L.year, champ: w, sb: L.year - 1965, score: Math.max(g.hs, g.as) + '-' + Math.min(g.hs, g.as), loser: w === g.h ? g.a : g.h });
+    addNews(L, `Super Bowl ${roman(L.year - 1965)}: ${L.teams[w].city} ${L.teams[w].name} win ${Math.max(g.hs, g.as)}-${Math.min(g.hs, g.as)}.`);
+    P.rounds.push({ name, games });
+    finishSeason(L);
+    return;
+  }
+  for (const c of ['AFC', 'NFC']) {
+    const alive = P.alive[c].slice().sort((x, y) => P.seeds[c].indexOf(x) - P.seeds[c].indexOf(y));
+    const n = alive.length, p2 = prevPow2(n);
+    let playing;
+    if (n === p2) playing = alive;
+    else { const k = n - p2; playing = alive.slice(n - 2 * k); }
+    const losers = [];
+    for (let i = 0; i < playing.length / 2; i++) {
+      const hi = playing[i], lo = playing[playing.length - 1 - i];
+      const g = playGame(L, { h: hi, a: lo }, { playoff: true, noStats: true });
+      games.push(g); losers.push(g.hs > g.as ? lo : hi);
+    }
+    P.alive[c] = alive.filter(t => !losers.includes(t));
+  }
+  P.rounds.push({ name, games });
+  const mine = games.find(g => g.h === L.user || g.a === L.user);
+  if (mine) {
+    const won = (mine.h === L.user) === (mine.hs > mine.as);
+    addNews(L, `${name}: ${L.teams[L.user].city} ${won ? 'advance' : 'are eliminated'}, ${Math.max(mine.hs, mine.as)}-${Math.min(mine.hs, mine.as)}.`);
+  }
+}
+
+function roman(n) { const m = [[10,'X'],[9,'IX'],[5,'V'],[4,'IV'],[1,'I']]; let s = ''; for (const [v, r] of m) while (n >= v) { s += r; n -= v; } return s; }
+
+function finishSeason(L) {
+  const P = L.playoffs;
+  for (const t of L.teams) {
+    let res = 'Missed playoffs';
+    const conf = P.seeds[t.conf];
+    if (conf.includes(t.id)) {
+      res = 'Lost in playoffs';
+      if (P.champ === t.id) res = 'Won Super Bowl';
+      else if (L.champs[0].loser === t.id) res = 'Lost Super Bowl';
+    }
+    t.hist.push({ y: L.year, w: t.w, l: t.l, t: t.t, pf: t.pf, pa: t.pa, res });
+  }
+  L.phase = 'season-over';
+}
+
+/* ---------- draft ---------- */
+function draftOrder(L) {
+  const P = L.playoffs, all = P.seeds.AFC.concat(P.seeds.NFC);
+  // elimination round index: higher = went further
+  const went = {}; all.forEach(t => went[t] = 0);
+  P.rounds.forEach((r, i) => r.games.forEach(g => { went[g.h] = Math.max(went[g.h], i + 1); went[g.a] = Math.max(went[g.a], i + 1); }));
+  if (P.champ != null) went[P.champ] += 1;
+  const non = sortTeams(L, L.teams.filter(t => !all.includes(t.id))).reverse();
+  const po = L.teams.filter(t => all.includes(t.id)).sort((a, b) => (went[a.id] - went[b.id]) || (pct(L, a) - pct(L, b)));
+  return non.concat(po).map(t => t.id);
+}
+
+function startDraft(L, imports) {
+  const dy = L.year + 1, rounds = rules(dy).draftRounds, order = draftOrder(L);
+  const rows = imports && imports.drafts && imports.drafts[dy];
+  const pool = [];
+  if (rows && rows.length) rows.forEach(r => pool.push(prospectFromDraft(L, r, dy).id));
+  const target = rounds * order.length + 30;
+  let genCount = 0;
+  while (pool.length < target) { pool.push(genProspect(L, dy).id); genCount++; }
+  L.draft = { year: dy, order, rounds, pick: 0, pool, log: [] };
+  L.phase = 'draft';
+  addNews(L, `The ${dy} draft is open: ${rounds} rounds, ${order.length} teams.` + (rows ? '' : ' No real class imported, so this class is generated.') + (rows && genCount > 30 ? ` Added ${genCount} generated prospects to fill the board.` : ''));
+}
+
+function onClock(L) {
+  const D = L.draft; if (!D) return null;
+  if (D.pick >= D.order.length * D.rounds) return null;
+  return D.order[D.pick % D.order.length];
+}
+
+function makePick(L, pid) {
+  const D = L.draft, tid = onClock(L); if (tid == null) return;
+  const p = L.players[pid]; if (!p || p.team !== -3) return;
+  p.team = tid; p.draft = { year: D.year, rnd: Math.floor(D.pick / D.order.length) + 1, pick: D.pick + 1 };
+  D.pool = D.pool.filter(i => i !== pid);
+  D.log.push({ n: D.pick + 1, tid, pid });
+  D.pick++;
+}
+
+function aiPick(L) {
+  const tid = onClock(L), D = L.draft; if (tid == null) return;
+  const counts = groupCounts(L, tid);
+  let best = null, bs = -1e9;
+  for (const id of D.pool) {
+    const p = L.players[id];
+    let s = p.pot + R.norm() * 6 + p.ovr * 0.15;
+    if (counts[p.grp] < STARTERS[p.grp] + 1) s += 3;
+    if ((p.grp === 'K' || p.grp === 'P') && counts[p.grp] >= 1) s -= 12;
+    if (p.grp === 'QB' && counts.QB >= 3) s -= 4;
+    if (s > bs) { bs = s; best = p; }
+  }
+  if (best) makePick(L, best.id);
+}
+
+function draftUntilUser(L) { let c; while ((c = onClock(L)) !== null && c !== L.user) aiPick(L); }
+function draftAll(L) { while (onClock(L) !== null) aiPick(L); }
+
+function endDraft(L) {
+  const D = L.draft;
+  D.pool.forEach(id => { const p = L.players[id]; if (p) p.team = -1; });
+  const mine = D.log.filter(x => x.tid === L.user).slice(0, 3).map(x => L.players[x.pid].name);
+  addNews(L, `Draft complete. ${L.teams[L.user].abbr} top picks: ${mine.join(', ') || 'none'}.`);
+  L.draft = null; L.phase = 'offseason';
+}
+
+/* ---------- offseason ---------- */
+function progress(L) {
+  const youth = {}; L.teams.forEach(t => youth[t.id] = t.coach.youth);
+  const retired = [];
+  for (const id in L.players) {
+    const p = L.players[id];
+    if (p.team === -2 || p.team === -3) continue;
+    const rookie = p.draft && p.draft.year === L.year + 1;
+    if (!rookie) { p.age++; p.yrs++; }
+    const h = p.hist[L.year], played = h && h.g >= 8;
+    let d;
+    if (p.age <= 24) d = R.int(1, 6) + (played && youth[p.team] ? 2 : 0);
+    else if (p.age <= 28) d = R.int(-1, 3) + (played && youth[p.team] && p.age <= 26 ? 1 : 0);
+    else if (p.age <= 31) d = R.int(-4, 1);
+    else d = R.int(-8, 0);
+    if (d > 0) p.ovr = Math.min(p.pot, p.ovr + d); else p.ovr = Math.max(30, p.ovr + d);
+    if (p.ovr >= p.pot) p.pot = p.ovr;
+    p.inj = 0;
+    let rp = 0;
+    if (p.age >= 33) rp = 0.25 + (p.age - 33) * 0.15;
+    else if (p.age >= 28 && p.ovr < 48) rp = 0.35;
+    if ((p.grp === 'K' || p.grp === 'P') && p.age < 38) rp *= 0.4;
+    if (p.team === -1) rp += p.age >= 29 ? 0.5 : (p.age >= 24 ? 0.35 : 0.15);
+    if (Math.random() < rp) { retired.push(p); p.team = -2; p.retiredYear = L.year + 1; }
+  }
+  const notable = retired.filter(p => p.ovr >= 78 || p.real && p.ovr >= 72).slice(0, 6);
+  if (notable.length) addNews(L, 'Retired: ' + notable.map(p => `${p.pos} ${p.name}`).join(', ') + '.');
+  // prune long-retired generated players to keep saves small
+  for (const id in L.players) { const p = L.players[id]; if (p.team === -2 && !p.real && Object.keys(p.hist).length === 0) delete L.players[id]; }
+}
+
+function applyEvents(L) {
+  for (const e of EVENTS[L.year] || []) {
+    if (e.t === 'rename') {
+      const t = L.teams.find(x => x.pfr === e.pfr); if (!t) continue;
+      const old = `${t.city} ${t.name}`;
+      if (e.city) t.city = e.city; if (e.name) t.name = e.name; if (e.abbr) t.abbr = e.abbr; if (e.newPfr) t.pfr = e.newPfr;
+      addNews(L, `${old} are now the ${t.city} ${t.name}.`);
+    } else if (e.t === 'realign') {
+      const t = L.teams.find(x => x.pfr === e.pfr); if (!t) continue;
+      t.conf = e.conf; t.div = e.div; addNews(L, `${t.city} move to the ${e.conf} ${e.div}.`);
+    } else if (e.t === 'expand') {
+      const t = mkTeam(L.teams.length, e.team); L.teams.push(t);
+      expansionDraft(L, t.id);
+      addNews(L, `Expansion: the ${t.city} ${t.name} join the ${t.conf} ${t.div}.`);
+    }
+  }
+}
+
+function expansionDraft(L, tid) {
+  for (const t of L.teams) {
+    if (t.id === tid) continue;
+    const r = roster(L, t.id).sort((a, b) => value(b) - value(a)).slice(28);
+    R.shuffle(r).slice(0, 2).forEach(p => { p.team = tid; if (t.id === L.user) addNews(L, `Lost ${p.pos} ${p.name} in the expansion draft.`); });
+  }
+  const max = rules(L.year).rosterMax, have = groupCounts(L, tid);
+  let size = roster(L, tid).length;
+  for (const g of GRPS) while (have[g] < STARTERS[g] + 1 && size < max) { genPlayer(L, g, tid, 54, [22, 30]); have[g]++; size++; }
+  while (size < max) { genPlayer(L, R.pick(['OL','DL','LB','DB','WR','RB']), tid, 50, [22, 29]); size++; }
+}
+
+function startNextSeason(L) {
+  if (L.phase !== 'offseason') return 'Finish the draft first.';
+  progress(L);
+  L.year++;
+  applyEvents(L);
+  L.teams.forEach(t => { t.w = t.l = t.t = t.pf = t.pa = 0; });
+  L.playoffs = null; L.schedule = []; L.week = 0;
+  aiCutdowns(L); aiSignings(L);
+  L.phase = 'preseason';
+  const r = rules(L.year), p = rules(L.year - 1);
+  if (r.games !== p.games) addNews(L, `The regular season is now ${r.games} games.`);
+  if (r.playoffPerConf !== p.playoffPerConf) addNews(L, `The playoffs expand to ${r.playoffPerConf} teams per conference.`);
+  if (r.rosterMax !== p.rosterMax) addNews(L, `Roster limit changes to ${r.rosterMax}.`);
+  if (r.regOT && !p.regOT) addNews(L, 'Sudden-death overtime now applies to regular-season games.');
+  addNews(L, `Training camp opens for the ${L.year} season.`);
+  return null;
+}
+
+/* ---------- leaders ---------- */
+function leaders(L, key, n, year) {
+  const y = year || L.year, out = [];
+  for (const id in L.players) { const p = L.players[id]; const h = p.hist[y]; if (h && h[key]) out.push({ p, v: h[key] }); }
+  return out.sort((a, b) => b.v - a.v).slice(0, n || 10);
+}
+
+const API = { R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
+  value, release, sign, proposeTrade, cutTo, ratings, teamOverall, startRegular, canStartSeason, simWeek, simPlayoffRound, roundName,
+  sortTeams, divisions, pct, startDraft, onClock, makePick, aiPick, draftUntilUser, draftAll, endDraft, startNextSeason, leaders, roman, addNews };
+if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.GG = API;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
+/* Gridiron GM — interface */
+(function () {
+'use strict';
+const G = window.GG;
+let L = null;                       // league
+let IM = { rosters: {}, drafts: {} }; // imported PFR data
+const ui = { tab: 'home', grp: 'ALL', lg: 'stand', leadKey: 'py', resWeek: null, open: null, confirm: null,
+  tradeTeam: null, give: [], get: [], faGrp: 'ALL', draftGrp: 'ALL', msg: null, impKind: 'roster', impTeam: 'nor', impYear: 1971 };
+
+/* ---------- storage (IndexedDB, falls back to localStorage) ---------- */
+const DB = {
+  db: null,
+  open() {
+    return new Promise(res => {
+      try {
+        const rq = indexedDB.open('gridiron-gm', 1);
+        rq.onupgradeneeded = () => rq.result.createObjectStore('kv');
+        rq.onsuccess = () => { DB.db = rq.result; res(); };
+        rq.onerror = () => res();
+      } catch (e) { res(); }
+    });
+  },
+  get(k) {
+    return new Promise(res => {
+      try {
+        if (!DB.db) { const v = localStorage.getItem('gg-' + k); return res(v ? JSON.parse(v) : null); }
+        const rq = DB.db.transaction('kv').objectStore('kv').get(k);
+        rq.onsuccess = () => res(rq.result || null); rq.onerror = () => res(null);
+      } catch (e) { res(null); }
+    });
+  },
+  set(k, v) {
+    try {
+      if (!DB.db) { localStorage.setItem('gg-' + k, JSON.stringify(v)); return; }
+      DB.db.transaction('kv', 'readwrite').objectStore('kv').put(v, k);
+    } catch (e) { /* storage unavailable */ }
+  }
+};
+let saveT = null;
+function save() { clearTimeout(saveT); saveT = setTimeout(() => { if (L) DB.set('league', L); DB.set('imports', IM); }, 250); }
+
+/* ---------- helpers ---------- */
+const $ = s => document.querySelector(s);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const me = () => L.teams[L.user];
+const rec = t => `${t.w}-${t.l}${t.t ? '-' + t.t : ''}`;
+const tname = t => `${t.city} ${t.name}`;
+function grade(v) { return v >= 85 ? 'g-elite' : v >= 72 ? 'g-good' : v >= 58 ? 'g-avg' : 'g-low'; }
+function rating(v) { return `<span class="rt ${grade(v)}">${Math.round(v)}</span>`; }
+function flash(s) { ui.msg = s; }
+function statLine(p) {
+  const h = p.hist[L.year]; if (!h || !h.g) return '';
+  const parts = [];
+  if (h.att) parts.push(`${h.cmp}/${h.att}, ${h.py} yds, ${h.ptd} TD, ${h.int || 0} INT`);
+  if (h.ry) parts.push(`${h.ry} rush yds, ${h.rtd || 0} TD`);
+  if (h.recy) parts.push(`${h.rec} rec, ${h.recy} yds, ${h.rectd || 0} TD`);
+  if (h.sk) parts.push(`${h.sk} sacks`);
+  if (h.dint) parts.push(`${h.dint} INT`);
+  if (h.fgm) parts.push(`${h.fgm} FG`);
+  return parts.join(' · ') || `${h.g} games`;
+}
+function confirmBtn(id, label, cls) {
+  const armed = ui.confirm === id;
+  return `<button class="btn ${cls || ''} ${armed ? 'armed' : ''}" data-act="confirm" data-id="${id}">${armed ? 'Tap again to confirm' : label}</button>`;
+}
+
+/* ---------- top bar & tabs ---------- */
+const TABS = [['home', 'Office'], ['roster', 'Roster'], ['league', 'League'], ['moves', 'Moves'], ['coach', 'Coach'], ['data', 'Data']];
+function phaseLabel() {
+  if (!L) return 'No league yet';
+  switch (L.phase) {
+    case 'preseason': return `${L.year} Training Camp`;
+    case 'regular': return `${L.year} · Week ${Math.min(L.week + 1, L.schedule.length)} of ${L.schedule.length}`;
+    case 'playoffs': return `${L.year} Playoffs · ${G.roundName(L)}`;
+    case 'season-over': return `${L.year} Season Complete`;
+    case 'draft': return `${L.draft ? L.draft.year : ''} Draft`;
+    default: return `${L.year + 1} Offseason`;
+  }
+}
+function render() {
+  const t = L ? me() : null;
+  $('#top').innerHTML = `<div class="top-inner">
+    <div class="crest">${t ? esc(t.abbr) : 'GM'}</div>
+    <div class="top-txt"><div class="top-team">${t ? esc(tname(t)) : 'Gridiron GM'}</div><div class="top-sub">${esc(phaseLabel())}${t && L.phase !== 'preseason' ? ' · ' + rec(t) : ''}</div></div></div>`;
+  $('#tabs').innerHTML = TABS.map(([k, n]) => `<button class="tab ${ui.tab === k ? 'on' : ''}" data-act="tab" data-id="${k}"${!L && k !== 'data' && k !== 'home' ? ' disabled' : ''}>${n}</button>`).join('');
+  const view = { home: vHome, roster: vRoster, league: vLeague, moves: vMoves, coach: vCoach, data: vData }[ui.tab];
+  $('#main').innerHTML = (ui.msg ? `<div class="toast">${esc(ui.msg)}</div>` : '') + view();
+  ui.msg = null;
+}
+
+/* ---------- Front Office ---------- */
+function vHome() {
+  if (!L) return vSetup();
+  let h = '';
+  const max = G.rules(L.year).rosterMax, n = G.roster(L, L.user).length;
+  if (L.phase === 'preseason') {
+    const over = n > max;
+    h += `<section class="card hero"><div class="eyebrow">Training camp</div><h2>${L.year} roster cutdown</h2>
+      <p>You carry <b class="${over ? 'bad' : 'good'}">${n}</b> players. The ${L.year} limit is <b>${max}</b>. ${over ? 'Release players on the Roster tab, or let your staff make the cuts.' : 'You are ready for the season.'}</p>
+      <div class="row">${over ? `<button class="btn" data-act="autocut">Auto-cut to ${max}</button>` : ''}<button class="btn primary" data-act="startSeason"${over ? ' disabled' : ''}>Kick off the ${L.year} season</button></div></section>`;
+  }
+  if (L.phase === 'regular') {
+    const g = L.schedule[L.week] && L.schedule[L.week].find(x => x.h === L.user || x.a === L.user);
+    if (g) {
+      const home = g.h === L.user, o = L.teams[home ? g.a : g.h];
+      h += `<section class="card hero"><div class="eyebrow">Week ${L.week + 1} · ${home ? 'Home' : 'Away'}</div>
+        <div class="matchup"><div><div class="mu-abbr">${esc(me().abbr)}</div><div class="mu-rec">${rec(me())}</div>${rating(G.teamOverall(L, L.user))}</div>
+        <div class="mu-vs">${home ? 'vs' : 'at'}</div>
+        <div><div class="mu-abbr">${esc(o.abbr)}</div><div class="mu-rec">${rec(o)}</div>${rating(G.teamOverall(L, o.id))}</div></div>
+        <div class="row"><button class="btn primary" data-act="simWeek">Play week ${L.week + 1}</button><button class="btn" data-act="simSeason">Sim to playoffs</button></div></section>`;
+    } else h += `<section class="card hero"><div class="eyebrow">Week ${L.week + 1}</div><h2>Bye week</h2><div class="row"><button class="btn primary" data-act="simWeek">Sim week</button><button class="btn" data-act="simSeason">Sim to playoffs</button></div></section>`;
+    h += divTable(me().conf, me().div);
+  }
+  if (L.phase === 'playoffs') {
+    const P = L.playoffs, alive = P.alive.AFC.concat(P.alive.NFC);
+    h += `<section class="card hero"><div class="eyebrow">${esc(G.roundName(L))}</div><h2>${alive.includes(L.user) ? 'Still alive' : 'Watching from home'}</h2>
+      <p>Remaining: ${alive.map(id => `<b>${esc(L.teams[id].abbr)}</b>`).join(' · ')}</p>
+      <div class="row"><button class="btn primary" data-act="simRound">Play ${esc(G.roundName(L))}</button></div></section>`;
+    h += playoffResults();
+  }
+  if (L.phase === 'season-over') {
+    const c = L.champs[0];
+    h += `<section class="card hero"><div class="eyebrow">Super Bowl ${G.roman(c.sb)}</div><h2>${esc(tname(L.teams[c.champ]))}</h2>
+      <p>Beat the ${esc(L.teams[c.loser].name)} ${c.score}. Your ${esc(me().name)} finished ${rec(me())}: ${esc(me().hist[me().hist.length - 1].res.toLowerCase())}.</p>
+      <div class="row"><button class="btn primary" data-act="startDraft">Open the ${L.year + 1} draft</button></div>
+      ${IM.drafts[L.year + 1] ? `<p class="small">Using the real ${L.year + 1} class you imported.</p>` : `<p class="small warn">No ${L.year + 1} draft class imported. Import it on the Data tab first, or the class will be generated.</p>`}</section>`;
+    h += playoffResults();
+  }
+  if (L.phase === 'draft') h += vDraft();
+  if (L.phase === 'offseason') {
+    h += `<section class="card hero"><div class="eyebrow">Offseason</div><h2>Ready for ${L.year + 1}?</h2>
+      <p>Sign free agents or make trades on the Moves tab. Starting the new season ages every player, applies development, and processes retirements.</p>
+      <div class="row"><button class="btn primary" data-act="nextSeason">Start the ${L.year + 1} season</button></div></section>`;
+  }
+  h += `<section class="card"><h3>Wire</h3><ul class="news">${L.news.slice(0, 18).map(n => `<li><span class="nw">${n.y}${n.w ? ' W' + n.w : ''}</span>${esc(n.s)}</li>`).join('')}</ul></section>`;
+  return h;
+}
+
+function vSetup() {
+  const have = G.TEAMS_1970.filter(t => IM.rosters[t[0]]).length;
+  return `<section class="card hero"><div class="eyebrow">New league · 1970</div><h2>Take over a franchise</h2>
+    <p>The AFL-NFL merger season: 26 teams, 14 games, 40-man rosters. Real rosters load from what you import on the Data tab; any team you have not imported gets a placeholder roster.</p>
+    <p><b>${have}</b> of 26 rosters imported · draft classes: <b>${Object.keys(IM.drafts).sort().join(', ') || 'none'}</b></p>
+    <label class="fld">Your team<select id="pickTeam">${G.TEAMS_1970.map(t => `<option value="${t[0]}"${t[0] === 'nor' ? ' selected' : ''}>${esc(t[2] + ' ' + t[3])}${IM.rosters[t[0]] ? '' : ' (placeholder)'}</option>`).join('')}</select></label>
+    <div class="row"><button class="btn primary" data-act="newLeague">Start the 1970 league</button><button class="btn" data-act="tab" data-id="data">Import data</button></div></section>`;
+}
+
+function playoffResults() {
+  const P = L.playoffs; if (!P || !P.rounds.length) return '';
+  return `<section class="card"><h3>Playoff results</h3>${P.rounds.map(r => `<div class="pr"><div class="eyebrow">${esc(r.name)}</div>${r.games.map(gameLine).join('')}</div>`).join('')}</section>`;
+}
+function gameLine(g) {
+  const H = L.teams[g.h], A = L.teams[g.a], hw = g.hs > g.as, aw = g.as > g.hs, mine = g.h === L.user || g.a === L.user;
+  return `<div class="gl ${mine ? 'mine' : ''}"><span class="${aw ? 'win' : ''}">${esc(A.abbr)} ${g.as}</span><span class="at">@</span><span class="${hw ? 'win' : ''}">${esc(H.abbr)} ${g.hs}</span>${g.ot ? '<span class="ot">OT</span>' : ''}</div>`;
+}
+
+/* ---------- Draft ---------- */
+function vDraft() {
+  const D = L.draft, c = G.onClock(L), n = D.order.length;
+  if (c === null) return `<section class="card hero"><div class="eyebrow">${D.year} draft</div><h2>All ${D.rounds} rounds are complete</h2><div class="row"><button class="btn primary" data-act="endDraft">Finish the draft</button></div></section>` + myPicks();
+  const rnd = Math.floor(D.pick / n) + 1, pk = D.pick % n + 1, mine = c === L.user;
+  const myIdx = D.order.indexOf(L.user);
+  let h = `<section class="card hero"><div class="eyebrow">${D.year} draft · Round ${rnd} of ${D.rounds} · Pick ${pk} (#${D.pick + 1} overall)</div>
+    <h2>${mine ? 'You are on the clock' : esc(tname(L.teams[c])) + ' are picking'}</h2>
+    <p class="small">You pick ${myIdx + 1}${['st','nd','rd'][myIdx] || 'th'} in every round. Scout grade is your staff's estimate of a prospect's ceiling and can be wrong.</p>
+    <div class="row">${mine ? '<button class="btn" data-act="autoPick">Let scouts pick</button>' : '<button class="btn primary" data-act="toMyPick">Sim to my pick</button>'}<button class="btn" data-act="draftRest">Auto-draft the rest</button></div></section>`;
+  const pool = D.pool.map(i => L.players[i]).filter(p => ui.draftGrp === 'ALL' || p.grp === ui.draftGrp).sort((a, b) => b.scout - a.scout).slice(0, 60);
+  h += `<section class="card"><h3>Best available</h3>${chips('draftGrp', ui.draftGrp)}<div class="list">${pool.map(p => `
+    <div class="pl"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">${esc(p.college || '')} · age ${p.age}${p.realPick && p.realPick.rnd ? ` · real: R${p.realPick.rnd} #${p.realPick.pick} ${esc(p.realPick.tm)}` : ''}</div></div>
+    <div class="pl-r"><span class="lbl">Scout</span>${rating(p.scout)}</div></div>
+    ${mine ? `<button class="btn sm primary" data-act="draftPick" data-id="${p.id}">Draft</button>` : ''}</div>`).join('')}</div></section>`;
+  return h + myPicks();
+}
+function myPicks() {
+  const mine = L.draft.log.filter(x => x.tid === L.user);
+  if (!mine.length) return '';
+  return `<section class="card"><h3>Your class</h3><div class="list">${mine.map(x => { const p = L.players[x.pid]; return `<div class="pl"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">Round ${p.draft.rnd}, #${x.n} overall</div></div><div class="pl-r"><span class="lbl">Scout</span>${rating(p.scout)}</div></div></div>`; }).join('')}</div></section>`;
+}
+
+/* ---------- Roster ---------- */
+function chips(key, cur) {
+  return `<div class="chips">${['ALL'].concat(G.GRPS).map(g => `<button class="chip ${cur === g ? 'on' : ''}" data-act="chip" data-key="${key}" data-id="${g}">${g === 'ALL' ? 'All' : g}</button>`).join('')}</div>`;
+}
+function vRoster() {
+  const max = G.rules(L.year).rosterMax, all = G.roster(L, L.user), d = G.depth(L, L.user);
+  const starterIds = new Set(); G.GRPS.forEach(g => d[g].slice(0, G.STARTERS[g]).forEach(p => starterIds.add(p.id)));
+  const list = all.filter(p => ui.grp === 'ALL' || p.grp === ui.grp).sort((a, b) => G.GRPS.indexOf(a.grp) - G.GRPS.indexOf(b.grp) || b.ovr - a.ovr);
+  return `<section class="card"><div class="split"><h3>${esc(me().name)} roster</h3><span class="count ${all.length > max ? 'bad' : ''}">${all.length} / ${max}</span></div>
+    <p class="small">Starters are set automatically by rating. Tap a player for options.</p>${chips('grp', ui.grp)}
+    <div class="list">${list.map(p => `<div class="pl ${ui.open === p.id ? 'open' : ''}">
+      <button class="pl-main" data-act="open" data-id="${p.id}"><span class="pos ${starterIds.has(p.id) ? 'st' : ''}">${esc(p.pos)}</span>
+      <div class="pl-name">${esc(p.name)}${p.inj ? `<span class="inj">INJ ${p.inj >= 20 ? 'season' : p.inj + 'w'}</span>` : ''}<div class="pl-sub">Age ${p.age} · ${p.yrs ? p.yrs + ' yr' + (p.yrs > 1 ? 's' : '') : 'Rookie'}${statLine(p) ? ' · ' + statLine(p) : ''}</div></div>
+      <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">POT</span>${rating(p.pot)}</div></button>
+      ${ui.open === p.id ? `<div class="pl-act">${p.college ? `<span class="small">${esc(p.college)}${p.draft ? ` · drafted ${p.draft.year} R${p.draft.rnd}` : ''}</span>` : ''}${confirmBtn('rel' + p.id, 'Release')}<button class="btn sm" data-act="shop" data-id="${p.id}">Offer in trade</button></div>` : ''}
+    </div>`).join('')}</div></section>`;
+}
+
+/* ---------- League ---------- */
+function divTable(conf, div) {
+  const teams = G.sortTeams(L, L.teams.filter(t => t.conf === conf && t.div === div));
+  return `<section class="card"><h3>${conf} ${div}</h3><table class="tbl"><thead><tr><th>Team</th><th>W</th><th>L</th><th>T</th><th>PF</th><th>PA</th></tr></thead><tbody>
+    ${teams.map(t => `<tr class="${t.id === L.user ? 'me' : ''}"><td>${esc(t.city)}</td><td>${t.w}</td><td>${t.l}</td><td>${t.t}</td><td>${t.pf}</td><td>${t.pa}</td></tr>`).join('')}</tbody></table></section>`;
+}
+function vLeague() {
+  const seg = [['stand', 'Standings'], ['lead', 'Leaders'], ['res', 'Results'], ['hist', 'History']];
+  let h = `<div class="seg">${seg.map(([k, n]) => `<button class="${ui.lg === k ? 'on' : ''}" data-act="lg" data-id="${k}">${n}</button>`).join('')}</div>`;
+  if (ui.lg === 'stand') {
+    const divs = G.divisions(L);
+    Object.keys(divs).sort().forEach(k => { const [c, d] = k.split('|'); h += divTable(c, d); });
+  }
+  if (ui.lg === 'lead') {
+    const keys = [['py', 'Passing yards'], ['ptd', 'Passing TD'], ['ry', 'Rushing yards'], ['recy', 'Receiving yards'], ['rectd', 'Receiving TD'], ['sk', 'Sacks'], ['dint', 'Interceptions'], ['fgm', 'Field goals']];
+    h += `<div class="chips">${keys.map(([k, n]) => `<button class="chip ${ui.leadKey === k ? 'on' : ''}" data-act="lead" data-id="${k}">${n}</button>`).join('')}</div>`;
+    const top = G.leaders(L, ui.leadKey, 15);
+    h += `<section class="card"><table class="tbl"><thead><tr><th>#</th><th class="l">Player</th><th>Team</th><th>${esc(keys.find(k => k[0] === ui.leadKey)[1])}</th></tr></thead><tbody>
+      ${top.length ? top.map((x, i) => `<tr class="${x.p.team === L.user ? 'me' : ''}"><td>${i + 1}</td><td class="l">${esc(x.p.name)}</td><td>${x.p.team >= 0 ? esc(L.teams[x.p.team].abbr) : 'FA'}</td><td>${x.v}</td></tr>`).join('') : '<tr><td colspan="4">No games played yet this season.</td></tr>'}</tbody></table></section>`;
+  }
+  if (ui.lg === 'res') {
+    const played = L.schedule.filter(w => w.some(g => g.done)).length;
+    if (!played) h += '<section class="card"><p>No games played yet this season.</p></section>';
+    else {
+      const w = ui.resWeek == null ? played - 1 : Math.min(ui.resWeek, played - 1);
+      h += `<div class="chips">${L.schedule.slice(0, played).map((_, i) => `<button class="chip ${i === w ? 'on' : ''}" data-act="week" data-id="${i}">W${i + 1}</button>`).join('')}</div>
+        <section class="card">${L.schedule[w].map(gameLine).join('')}</section>`;
+    }
+  }
+  if (ui.lg === 'hist') {
+    h += `<section class="card"><h3>Super Bowl champions</h3>${L.champs.length ? `<table class="tbl"><tbody>${L.champs.map(c => `<tr class="${c.champ === L.user ? 'me' : ''}"><td>${c.y}</td><td class="l">${G.roman(c.sb)}</td><td class="l">${esc(tname(L.teams[c.champ]))}</td><td>${c.score}</td></tr>`).join('')}</tbody></table>` : '<p>No champions crowned yet.</p>'}</section>`;
+    h += `<section class="card"><h3>${esc(me().name)} by season</h3>${me().hist.length ? `<table class="tbl"><tbody>${me().hist.slice().reverse().map(s => `<tr><td>${s.y}</td><td>${s.w}-${s.l}${s.t ? '-' + s.t : ''}</td><td>${s.pf}-${s.pa}</td><td class="l">${esc(s.res)}</td></tr>`).join('')}</tbody></table>` : '<p>Your first season is under way.</p>'}</section>`;
+  }
+  return h;
+}
+
+/* ---------- Moves: free agents & trades ---------- */
+function vMoves() {
+  const max = G.rules(L.year).rosterMax, n = G.roster(L, L.user).length;
+  const fa = G.freeAgents(L).filter(p => ui.faGrp === 'ALL' || p.grp === ui.faGrp).sort((a, b) => G.value(b) - G.value(a)).slice(0, 40);
+  let h = `<section class="card"><div class="split"><h3>Free agents</h3><span class="count">${n} / ${max}</span></div>
+    <p class="small">Players released, cut, or left undrafted. In this era there is no open free agency, only the waiver pool.</p>${chips('faGrp', ui.faGrp)}
+    <div class="list">${fa.length ? fa.map(p => `<div class="pl"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">Age ${p.age}</div></div>
+      <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">POT</span>${rating(p.pot)}</div></div>
+      <button class="btn sm" data-act="sign" data-id="${p.id}"${n >= max ? ' disabled' : ''}>Sign</button></div>`).join('') : '<p>No free agents at this position.</p>'}</div></section>`;
+  const others = L.teams.filter(t => t.id !== L.user);
+  const tt = ui.tradeTeam == null ? others[0].id : ui.tradeTeam;
+  const theirs = G.roster(L, tt).sort((a, b) => b.ovr - a.ovr), mine = G.roster(L, L.user).sort((a, b) => b.ovr - a.ovr);
+  const pick = (p, side) => { const on = ui[side].includes(p.id); return `<button class="tp ${on ? 'on' : ''}" data-act="tp" data-side="${side}" data-id="${p.id}"><span class="pos">${esc(p.pos)}</span><span class="tp-n">${esc(p.name)}</span><span class="tp-a">${p.age}</span>${rating(p.ovr)}</button>`; };
+  h += `<section class="card"><h3>Trade</h3>
+    <label class="fld">Trade partner<select id="tradeTeam">${others.map(t => `<option value="${t.id}"${t.id === tt ? ' selected' : ''}>${esc(tname(t))} (${rec(t)})</option>`).join('')}</select></label>
+    <div class="trade"><div><div class="eyebrow">You send (${ui.give.length})</div><div class="tlist">${mine.map(p => pick(p, 'give')).join('')}</div></div>
+    <div><div class="eyebrow">You receive (${ui.get.length})</div><div class="tlist">${theirs.map(p => pick(p, 'get')).join('')}</div></div></div>
+    <div class="row"><button class="btn primary" data-act="propose"${ui.give.length && ui.get.length ? '' : ' disabled'}>Propose trade</button><button class="btn" data-act="clearTrade">Clear</button></div></section>`;
+  return h;
+}
+
+/* ---------- Coach ---------- */
+function vCoach() {
+  const c = me().coach, r = G.ratings(L, L.user);
+  const segc = (key, opts) => `<div class="seg">${opts.map(([v, n]) => `<button class="${c[key] === v ? 'on' : ''}" data-act="coach" data-key="${key}" data-id="${v}">${n}</button>`).join('')}</div>`;
+  const bar = (n, v) => `<div class="bar"><span class="bar-l">${n}</span><span class="bar-t"><span class="bar-f ${grade(v)}" style="width:${Math.max(4, Math.min(100, (v - 30) / 0.65))}%"></span></span><span class="bar-v">${Math.round(v)}</span></div>`;
+  return `<section class="card"><h3>Offensive philosophy</h3>${segc('off', [['run', 'Ground game'], ['bal', 'Balanced'], ['pass', 'Air it out']])}
+      <p class="small">Run-first leans on your backs and line. Pass-first leans on your quarterback and receivers.</p></section>
+    <section class="card"><h3>Defensive scheme</h3>${segc('def', [['soft', 'Bend, don\'t break'], ['bal', 'Base 4-3'], ['blitz', 'Blitz']])}
+      <p class="small">Blitzing hurts pass-happy opponents but makes your results swingier.</p></section>
+    <section class="card"><h3>Aggressiveness: ${c.aggr}</h3><input type="range" id="aggr" min="0" max="100" step="5" value="${c.aggr}">
+      <p class="small">Higher means more fourth-down tries and deep shots: bigger wins and bigger losses.</p></section>
+    <section class="card"><label class="tog"><input type="checkbox" id="youth"${c.youth ? ' checked' : ''}> Develop young starters</label>
+      <p class="small">Starters 26 and under who play most of the season get an extra development bump in the offseason.</p></section>
+    <section class="card"><h3>Unit ratings</h3>${bar('Offense', r.off)}${bar('Defense', r.def)}${G.GRPS.map(g => bar(g, r[g])).join('')}</section>`;
+}
+
+/* ---------- Data ---------- */
+function vData() {
+  const teamsOpt = G.TEAMS_1970.map(t => `<option value="${t[0]}"${ui.impTeam === t[0] ? ' selected' : ''}>${esc(t[2] + ' ' + t[3])} (${t[0]})</option>`).join('');
+  let h = `<section class="card"><h3>Import from Pro-Football-Reference</h3>
+    <p class="small">On the PFR page, open Share &amp; Export → Get table as CSV, copy the text, and paste it here. Rosters only matter when you start a new league. Draft classes can be added any time before that year's draft.</p>
+    <div class="seg"><button class="${ui.impKind === 'roster' ? 'on' : ''}" data-act="impKind" data-id="roster">1970 team roster</button><button class="${ui.impKind === 'draft' ? 'on' : ''}" data-act="impKind" data-id="draft">Draft class</button></div>
+    ${ui.impKind === 'roster' ? `<label class="fld">Team<select id="impTeam">${teamsOpt}</select></label>` : `<label class="fld">Draft year<input id="impYear" type="number" inputmode="numeric" min="1971" max="2030" value="${ui.impYear}"></label>`}
+    <label class="fld">CSV text<textarea id="impText" rows="5" placeholder="Paste the CSV here"></textarea></label>
+    <div class="row"><button class="btn primary" data-act="import">Import</button></div>
+    <label class="fld">Or choose files (name them like nor.csv or draft1971.csv)<input id="impFiles" type="file" accept=".csv,.txt,text/csv,text/plain" multiple></label></section>`;
+  h += `<section class="card"><h3>1970 rosters imported</h3><div class="grid26">${G.TEAMS_1970.map(t => `<span class="cell ${IM.rosters[t[0]] ? 'ok' : ''}" title="${esc(t[2])}">${esc(t[1])}<small>${IM.rosters[t[0]] ? IM.rosters[t[0]].length : '–'}</small></span>`).join('')}</div>
+    <p class="small">Draft classes: ${Object.keys(IM.drafts).sort().map(y => `<b>${y}</b> (${IM.drafts[y].length})`).join(', ') || 'none yet'}</p></section>`;
+  h += `<section class="card"><h3>Save file</h3><p class="small">Your league saves on this device automatically. Back it up before clearing Safari data or switching devices.</p>
+    <div class="row"><button class="btn" data-act="exportSave"${L ? '' : ' disabled'}>Download backup</button><label class="btn filebtn">Restore backup<input id="loadSave" type="file" accept=".json,application/json"></label></div>
+    ${L ? `<div class="row">${confirmBtn('reset', 'Delete this league', 'danger')}</div>` : ''}</section>`;
+  return h;
+}
+
+/* ---------- actions ---------- */
+function importText(text, kind, key) {
+  const res = G.parsePFR(text);
+  if (kind && res.kind !== kind) throw new Error(`That looks like a ${res.kind} table, not a ${kind} table.`);
+  if (res.kind === 'roster') { IM.rosters[key] = res.rows; return `Imported ${res.rows.length} players for ${key}.`; }
+  IM.drafts[key] = res.rows; return `Imported ${res.rows.length} prospects for the ${key} draft.`;
+}
+
+async function onFiles(files) {
+  const out = [];
+  for (const f of files) {
+    const text = await f.text(), base = f.name.toLowerCase().replace(/\.[a-z]+$/, '');
+    try {
+      const res = G.parsePFR(text);
+      if (res.kind === 'roster') {
+        const code = G.TEAMS_1970.find(t => base.includes(t[0]));
+        if (!code) { out.push(`${f.name}: name it with the team code, like nor.csv.`); continue; }
+        IM.rosters[code[0]] = res.rows; out.push(`${code[0]} ✓`);
+      } else {
+        const y = (base.match(/(19|20)\d\d/) || [])[0];
+        if (!y) { out.push(`${f.name}: include the year in the name, like draft1971.csv.`); continue; }
+        IM.drafts[+y] = res.rows; out.push(`draft ${y} ✓`);
+      }
+    } catch (e) { out.push(`${f.name}: ${e.message}`); }
+  }
+  flash(out.join(' · ')); save(); render();
+}
+
+function act(a, el) {
+  const id = el.dataset.id;
+  switch (a) {
+    case 'tab': ui.tab = id; ui.open = null; window.scrollTo(0, 0); break;
+    case 'confirm':
+      if (ui.confirm !== id) { ui.confirm = id; render(); return; }
+      ui.confirm = null;
+      if (id === 'reset') { L = null; DB.set('league', null); ui.tab = 'home'; flash('League deleted. Your imported data is still here.'); }
+      else if (id.startsWith('rel')) { G.release(L, +id.slice(3)); ui.open = null; flash('Player released to the waiver pool.'); }
+      break;
+    case 'newLeague': L = G.newLeague(IM, $('#pickTeam').value); ui.tab = 'home'; flash(`Welcome to ${tname(me())}.`); break;
+    case 'autocut': G.cutTo(L, L.user, G.rules(L.year).rosterMax); break;
+    case 'startSeason': { const e = G.startRegular(L); if (e) flash(e); break; }
+    case 'simWeek': G.simWeek(L); break;
+    case 'simSeason': while (L.phase === 'regular') G.simWeek(L); break;
+    case 'simRound': G.simPlayoffRound(L); break;
+    case 'startDraft': G.startDraft(L, IM); G.draftUntilUser(L); break;
+    case 'toMyPick': G.draftUntilUser(L); break;
+    case 'autoPick': G.aiPick(L); G.draftUntilUser(L); break;
+    case 'draftPick': G.makePick(L, +id); G.draftUntilUser(L); break;
+    case 'draftRest': G.draftAll(L); break;
+    case 'endDraft': G.endDraft(L); break;
+    case 'nextSeason': { const e = G.startNextSeason(L); if (e) flash(e); break; }
+    case 'chip': ui[el.dataset.key] = id; break;
+    case 'open': ui.open = ui.open === +id ? null : +id; ui.confirm = null; break;
+    case 'lg': ui.lg = id; break;
+    case 'lead': ui.leadKey = id; break;
+    case 'week': ui.resWeek = +id; break;
+    case 'sign': { const e = G.sign(L, +id); flash(e || 'Signed.'); break; }
+    case 'shop': ui.give = [+id]; ui.get = []; ui.tab = 'moves'; break;
+    case 'tp': { const side = el.dataset.side, arr = ui[side], n = +id; const i = arr.indexOf(n); if (i >= 0) arr.splice(i, 1); else if (arr.length < 3) arr.push(n); break; }
+    case 'clearTrade': ui.give = []; ui.get = []; break;
+    case 'propose': { const r = G.proposeTrade(L, ui.give, ui.get); flash(r.msg); if (r.ok) { ui.give = []; ui.get = []; } break; }
+    case 'coach': me().coach[el.dataset.key] = id; break;
+    case 'impKind': ui.impKind = id; break;
+    case 'import': {
+      const text = $('#impText').value;
+      try { flash(importText(text, ui.impKind, ui.impKind === 'roster' ? ui.impTeam : +ui.impYear)); } catch (e) { flash(e.message); }
+      break;
+    }
+    case 'exportSave': {
+      const blob = new Blob([JSON.stringify({ league: L, imports: IM })], { type: 'application/json' });
+      const a2 = document.createElement('a'); a2.href = URL.createObjectURL(blob); a2.download = `gridiron-gm-${L.year}.json`;
+      document.body.appendChild(a2); a2.click(); a2.remove();
+      flash('Backup created. If nothing downloaded, open the installed app rather than this preview.');
+      break;
+    }
+    default: return;
+  }
+  if (a !== 'confirm') ui.confirm = null;
+  save(); render();
+}
+
+document.addEventListener('click', e => { const el = e.target.closest('[data-act]'); if (el && !el.disabled) act(el.dataset.act, el); });
+document.addEventListener('change', e => {
+  const t = e.target;
+  if (t.id === 'tradeTeam') { ui.tradeTeam = +t.value; ui.get = []; render(); }
+  else if (t.id === 'aggr') { me().coach.aggr = +t.value; save(); render(); }
+  else if (t.id === 'youth') { me().coach.youth = t.checked; save(); }
+  else if (t.id === 'impTeam') ui.impTeam = t.value;
+  else if (t.id === 'impYear') ui.impYear = +t.value;
+  else if (t.id === 'impFiles' && t.files.length) onFiles([...t.files]);
+  else if (t.id === 'loadSave' && t.files[0]) {
+    t.files[0].text().then(s => {
+      try { const o = JSON.parse(s); if (!o.league || !o.league.teams) throw 0; L = o.league; IM = o.imports || IM; ui.tab = 'home'; flash(`Restored your ${L.year} league.`); save(); }
+      catch (err) { flash('That file is not a Gridiron GM backup.'); }
+      render();
+    });
+  }
+});
+document.addEventListener('input', e => { if (e.target.id === 'aggr') { const h = e.target.closest('.card').querySelector('h3'); if (h) h.textContent = 'Aggressiveness: ' + e.target.value; } });
+
+(async function boot() {
+  await DB.open();
+  const [l, im] = await Promise.all([DB.get('league'), DB.get('imports')]);
+  if (im) IM = im; if (l && l.teams) L = l;
+  render();
+  if ('serviceWorker' in navigator && location.protocol === 'https:' && !/claude\.ai|claudeusercontent/.test(location.host)) {
+    try { navigator.serviceWorker.register('sw.js'); } catch (e) { /* offline install unavailable */ }
+  }
+})();
+})();
+
+</script>
+</body>
+</html>
