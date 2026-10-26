@@ -77,6 +77,14 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
 .aw-k { flex-basis: 100%; font-family: var(--cond); font-weight: 600; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .aw.mine .aw-p { color: var(--gold); }
 @media (max-width: 430px) { .tab { font-size: 11.5px; letter-spacing: .02em; } }
+.card h3.sub { margin-top: 14px; font-size: 14px; }
+.bar-t.cap { display: block; height: 12px; margin: 6px 0; }
+.tlist.protect { max-height: 300px; }
+.faround { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 10px 0; background: var(--bg); }
+.bid { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.bidctl { display: flex; flex-wrap: wrap; gap: 6px; }
+.pl.wide .pl-btns { flex-basis: 100%; flex-wrap: wrap; padding-left: 48px; }
+.pl-btns .btn { white-space: nowrap; }
 .sortrow { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
 .sortrow .seg { flex: 1; margin: 0; }
 .dc { flex-wrap: wrap; }
@@ -458,6 +466,9 @@ function randomCoach() { return { off: R.pick(['run', 'bal', 'bal', 'pass']), de
 function ensureLeague(L) {
   ensurePicks(L);
   if (!L.diff) L.diff = 'pro';
+  if (!L.retired) archivePlayers(L);
+  ensureContracts(L);
+  if (L.phase === 'offseason') ensureFA(L);
   if (L.styles !== 2) { aiStyles(L, false); L.styles = 2; }
 }
 function mkTeam(id, a) {
@@ -485,6 +496,7 @@ function newLeague(imports, userPfr, opts) {
   aiCutdowns(L);
   ensurePicks(L);
   aiStyles(L, false);
+  ensureContracts(L);
   return L;
 }
 
@@ -543,7 +555,7 @@ function setPlayHurt(L, pid, on) {
 
 function groupCounts(L, tid) { const c = {}; GRPS.forEach(g => c[g] = 0); roster(L, tid).forEach(p => c[p.grp]++); return c; }
 
-function release(L, pid) { const p = L.players[pid]; if (!p) return; const t = L.teams[p.team]; p.team = -1; if (t) addNews(L, `${t.abbr} released ${p.pos} ${p.name}.`); }
+function release(L, pid) { const p = L.players[pid]; if (!p) return; const t = L.teams[p.team]; p.team = -1; delete p.con; if (t) addNews(L, `${t.abbr} released ${p.pos} ${p.name}.`); }
 
 function aiCutdowns(L) {
   const max = rules(L.year).rosterMax;
@@ -563,15 +575,15 @@ function cutTo(L, tid, max, quiet) {
   for (const p of order) {
     if (r.length - cut.length <= max) break;
     if (counts[p.grp] <= keep(p.grp)) continue;
-    counts[p.grp]--; cut.push(p); p.team = -1;
+    counts[p.grp]--; cut.push(p); p.team = -1; delete p.con;
   }
   if (!quiet && cut.length) addNews(L, `${L.teams[tid].abbr} trimmed ${cut.length} players to reach ${max}.`);
   return cut;
 }
 
-function aiSignings(L) {
-  const max = rules(L.year).rosterMax;
-  const fa = freeAgents(L).sort((a, b) => value(b) - value(a));
+function aiSignings(L, offseason) {
+  const max = rules(L.year).rosterMax, y = capYear(L), cap = capFor(y);
+  const fa = freeAgents(L).filter(p => p.retiredYear == null).sort((a, b) => value(b) - value(a));
   for (const t of R.shuffle(L.teams.slice())) {
     if (t.id === L.user) continue;
     let size = roster(L, t.id).length;
@@ -582,17 +594,14 @@ function aiSignings(L) {
       if (i < 0) i = 0;
       const p = fa.splice(i, 1)[0];
       if (p.grp === 'K' || p.grp === 'P') { if (counts[p.grp] >= 1) continue; }
-      p.team = t.id; counts[p.grp]++; size++;
+      const sal = marketValue(L, p, y) * (offseason ? 1 : 0.6);
+      if (cap != null && payroll(L, t.id, y) + sal > cap) continue;
+      p.team = t.id; setContract(p, sal, y, offseason ? contractYears(p) : 1); counts[p.grp]++; size++;
     }
   }
 }
 
-function sign(L, pid) {
-  const p = L.players[pid]; const max = rules(L.year).rosterMax;
-  if (!p || p.team !== -1) return 'That player is no longer available.';
-  if (roster(L, L.user).length >= max) return `Your roster is full (${max}). Release someone first.`;
-  p.team = L.user; addNews(L, `${L.teams[L.user].abbr} signed ${p.pos} ${p.name}.`); return null;
-}
+function sign(L, pid) { return signFA(L, pid); }
 
 /* ---------- draft picks & trades ---------- */
 // Teams own picks for the next 3 drafts that have not been held yet.
@@ -674,6 +683,12 @@ function tradeVerdict(L, partner, give, get) {
   return { give: g, get: r, ask: diff(L).tradeAsk, ok: r > 0 && g >= r * diff(L).tradeAsk };
 }
 // give = what the user sends, get = what the user receives; each is {players:[ids], picks:[ids]}
+function tradeCapMsg(L, a, b, aGive, bGive) {
+  const y = capYear(L); if (capFor(y) == null) return null;
+  const sal = ids => (ids || []).reduce((s, id) => s + (salFor(L.players[id], y) || 0), 0);
+  const da = sal(bGive.players) - sal(aGive.players);
+  return capMsg(L, a, da) || capMsg(L, b, -da);
+}
 function proposeTrade(L, partner, give, get) {
   ensurePicks(L);
   const n = x => (x.players || []).length + (x.picks || []).length;
@@ -683,6 +698,7 @@ function proposeTrade(L, partner, give, get) {
   if ((L.phase === 'regular' || L.phase === 'playoffs') && after > max) return { ok: false, msg: `That would put you at ${after} players, over the ${max} limit. Release someone first.` };
   const t = L.teams[partner], v = tradeVerdict(L, partner, give, get);
   if (!v.ok) return { ok: false, msg: `${t.city} turned it down. They want more value back.` };
+  const cm = tradeCapMsg(L, L.user, partner, give, get); if (cm) return { ok: false, msg: cm };
   execTrade(L, L.user, partner, give, get);
   return { ok: true, msg: `${t.city} accepted the trade.` };
 }
@@ -754,6 +770,7 @@ function acceptOffer(L, id) {
   if (!offerValid(L, o)) { L.offers = L.offers.filter(x => x !== o); return 'That offer is no longer valid. Someone involved has moved.'; }
   const max = rules(L.year).rosterMax, after = roster(L, L.user).length - o.get.players.length + o.give.players.length;
   if ((L.phase === 'regular' || L.phase === 'playoffs') && after > max) return `Accepting would put you at ${after} players, over the ${max} limit. Release someone first.`;
+  const cm = tradeCapMsg(L, L.user, o.from, o.get, o.give); if (cm) return cm;
   L.offers = L.offers.filter(x => x !== o);
   execTrade(L, o.from, L.user, o.give, o.get);
   L.offers = L.offers.filter(x => offerValid(L, x));
@@ -1042,6 +1059,8 @@ function healWeek(L) { for (const id in L.players) { const p = L.players[id]; if
 function canStartSeason(L) {
   const n = roster(L, L.user).length, max = rules(L.year).rosterMax;
   if (n > max) return `Your roster has ${n} players. Cut down to ${max} before kickoff.`;
+  const c = capFor(L.year);
+  if (c != null && payroll(L, L.user, L.year) > c) return `Your payroll is ${money(payroll(L, L.user, L.year))}, over the ${L.year} cap of ${money(c)}. Release or trade players first.`;
   return null;
 }
 
@@ -1305,6 +1324,7 @@ function makePick(L, pid) {
   const D = L.draft, tid = onClock(L); if (tid == null) return;
   const p = L.players[pid]; if (!p || p.team !== -3) return;
   p.team = tid; p.draft = { year: D.year, rnd: Math.floor(D.pick / D.order.length) + 1, pick: D.pick + 1 };
+  rookieDeal(L, p, D.year, D.pick + 1, p.draft.rnd);
   D.pool = D.pool.filter(i => i !== pid);
   D.log.push({ n: D.pick + 1, tid, pid });
   if (D.slotPick) L.picks = L.picks.filter(k => k.id !== D.slotPick[D.pick]);
@@ -1331,7 +1351,7 @@ function draftAll(L) { while (onClock(L) !== null) aiPick(L); }
 
 function endDraft(L) {
   const D = L.draft;
-  D.pool.forEach(id => { const p = L.players[id]; if (p) p.team = -1; });
+  D.pool.forEach(id => { const p = L.players[id]; if (p) { p.team = -1; delete p.con; } });
   const mine = D.log.filter(x => x.tid === L.user).slice(0, 3).map(x => L.players[x.pid].name);
   addNews(L, `Draft complete. ${L.teams[L.user].abbr} top picks: ${mine.join(', ') || 'none'}.`);
   L.picks = (L.picks || []).filter(k => k.y !== D.year);
@@ -1339,6 +1359,7 @@ function endDraft(L) {
   ensurePicks(L);
   L.offers = [];
   makeOffers(L, 1, 10);
+  openFreeAgency(L);
 }
 
 /* ---------- offseason ---------- */
@@ -1368,9 +1389,20 @@ function progress(L) {
   }
   const notable = retired.filter(p => p.ovr >= 78 || p.real && p.ovr >= 72).slice(0, 6);
   if (notable.length) addNews(L, 'Retired: ' + notable.map(p => `${p.pos} ${p.name}`).join(', ') + '.');
-  // prune long-retired generated players to keep saves small
-  for (const id in L.players) { const p = L.players[id]; if (p.team === -2 && !p.real && Object.keys(p.hist).length === 0) delete L.players[id]; }
+  archivePlayers(L);
 }
+// Keep the active player list small so the sim stays fast: retired players with a stat
+// history move to an archive (still shown in stats and awards); the rest are dropped.
+function archivePlayers(L) {
+  L.retired = L.retired || {};
+  for (const id in L.players) {
+    const p = L.players[id], played = Object.keys(p.hist).length > 0 || (p.awards && p.awards.length);
+    if (p.team === -2) { if (played) { delete p.con; L.retired[id] = p; } delete L.players[id]; continue; }
+    if (p.team === -1 && !played) { p.faYears = (p.faYears || 0) + 1; if (p.faYears >= 2) delete L.players[id]; }
+  }
+}
+function getP(L, id) { return L.players[id] || (L.retired || {})[id]; }
+function allPlayers(L) { return Object.values(L.players).concat(Object.values(L.retired || {})); }
 
 function applyEvents(L) {
   for (const e of EVENTS[L.year] || []) {
@@ -1405,15 +1437,19 @@ function expansionDraft(L, tid) {
 
 function startNextSeason(L) {
   if (L.phase !== 'offseason') return 'Finish the draft first.';
+  closeFreeAgency(L);
   progress(L);
   L.year++;
+  L.phase = 'preseason';
   applyEvents(L);
   L.teams.forEach(t => { t.w = t.l = t.t = t.pf = t.pa = 0; });
   L.playoffs = null; L.schedule = []; L.week = 0;
   ensurePicks(L);
   aiTrades(L, R.int(2, 4), 40);
   makeOffers(L, R.int(1, 2), 20);
-  aiCutdowns(L); aiSignings(L);
+  aiCutdowns(L); aiSignings(L, true);
+  ensureContracts(L);
+  aiCapCompliance(L); aiSignings(L, true);
   aiStyles(L, true);
   L.phase = 'preseason';
   const r = rules(L.year), p = rules(L.year - 1);
@@ -1421,8 +1457,415 @@ function startNextSeason(L) {
   if (r.playoffPerConf !== p.playoffPerConf) addNews(L, `The playoffs expand to ${r.playoffPerConf} teams per conference.`);
   if (r.rosterMax !== p.rosterMax) addNews(L, `Roster limit changes to ${r.rosterMax}.`);
   if (r.regOT && !p.regOT) addNews(L, 'Sudden-death overtime now applies to regular-season games.');
+  if (faEra(L.year) !== faEra(L.year - 1)) addNews(L, `New labor rules: ${ERA_INFO[faEra(L.year)].name}.`);
+  if (capFor(L.year) != null && capFor(L.year - 1) == null) addNews(L, `The salary cap ${L.year === 1994 ? 'arrives' : 'returns'}: ${money(capFor(L.year))} per team.`);
   addNews(L, `Training camp opens for the ${L.year} season.`);
   return null;
+}
+
+/* ---------- contracts, salary cap & free agency ---------- */
+// Salary figures are in thousands of dollars.
+// Real salary caps (millions). 2010 was an uncapped year. Later years grow 7% a year.
+const CAP = { 1994: 34.6, 1995: 37.1, 1996: 40.753, 1997: 41.454, 1998: 52.388, 1999: 57.288, 2000: 62.172, 2001: 67.405, 2002: 71.101, 2003: 75.007,
+  2004: 80.582, 2005: 85.5, 2006: 102, 2007: 109, 2008: 116, 2009: 123, 2011: 120.375, 2012: 120.6, 2013: 123, 2014: 133, 2015: 143.28,
+  2016: 155.27, 2017: 167, 2018: 177.2, 2019: 188.2, 2020: 198.2, 2021: 182.5, 2022: 208.2, 2023: 224.8, 2024: 255.4, 2025: 279.2 };
+function capFor(y) {
+  if (y < 1994 || y === 2010) return null;
+  if (CAP[y]) return CAP[y] * 1000;
+  return CAP[2025] * 1000 * Math.pow(1.07, y - 2025);
+}
+// Approximate average player salary before the cap era (thousands).
+const AVG_PRE = [[1970, 25], [1974, 38], [1977, 55], [1980, 80], [1982, 95], [1984, 165], [1986, 200], [1988, 240], [1990, 350], [1992, 490], [1993, 650]];
+function avgSalary(y) {
+  if (y >= 1994) return (capFor(y) || capFor(y - 1) || capFor(2009)) * 0.9 / 53;
+  if (y <= AVG_PRE[0][0]) return AVG_PRE[0][1];
+  for (let i = 1; i < AVG_PRE.length; i++) {
+    const [y1, v1] = AVG_PRE[i - 1], [y2, v2] = AVG_PRE[i];
+    if (y <= y2) return v1 + (v2 - v1) * (y - y1) / (y2 - y1);
+  }
+  return AVG_PRE[AVG_PRE.length - 1][1];
+}
+// The season whose payroll and rules apply right now (after the season ends, it's next season's).
+function capYear(L) { return (L.phase === 'season-over' || L.phase === 'draft' || L.phase === 'offseason') ? L.year + 1 : L.year; }
+function faEra(y) { return y <= 1976 ? 'rozelle' : (y <= 1988 ? 'comp' : (y <= 1992 ? 'planb' : 'ufa')); }
+const ERA_INFO = {
+  rozelle: { name: 'Rozelle Rule', text: 'A team that signs another club\'s player owes compensation set by the commissioner, so players re-sign with their own team. Expiring contracts are renewed automatically unless you let a player go.' },
+  comp: { name: 'Right of first refusal', text: 'Players with expiring deals can sign offer sheets with other teams. Their team can match, or take draft-pick compensation. Unhandled expiring players re-sign at their asking price.' },
+  planb: { name: 'Plan B free agency', text: 'Each team protects 37 players. Unprotected players are free to sign anywhere with no compensation. Expiring contracts still follow right of first refusal.' },
+  ufa: { name: 'Unrestricted free agency', text: 'Players with 4 or more seasons whose contracts expire hit the open market unless you re-sign or franchise-tag them. Younger players are restricted and stay at a tender price.' }
+};
+function multFor(p) { return Math.min(13, Math.max(0.3, Math.pow(1.09, value(p) - 62))); }
+function leagueNorm(L) {
+  const y = capYear(L);
+  if (L._norm && L._norm.y === y && L._norm.n === Object.keys(L.players).length) return L._norm.v;
+  let s = 0, n = 0;
+  for (const t of L.teams) for (const p of roster(L, t.id)) { s += multFor(p); n++; }
+  const v = n ? s / n : 1; L._norm = { y, v, n: Object.keys(L.players).length }; return v;
+}
+function marketValue(L, p, y) { return Math.max(avgSalary(y || capYear(L)) * 0.3, avgSalary(y || capYear(L)) * multFor(p) / leagueNorm(L)); }
+function contractYears(p) { return p.age <= 26 ? 4 : (p.age <= 29 ? 3 : (p.age <= 31 ? 2 : 1)); }
+function setContract(p, sal, firstYear, yrs) { p.con = { sal: Math.round(sal), exp: firstYear + yrs - 1, signed: firstYear }; }
+function salFor(p, y) {
+  if (!p || !p.con) return null;
+  if (y <= p.con.exp) return p.con.sal;
+  if (p.con.ext && y <= p.con.ext.exp) return p.con.ext.sal;
+  return null;
+}
+function onBooks(p, y) { return salFor(p, y) != null; }
+function payroll(L, tid, y) { y = y || capYear(L); return roster(L, tid).reduce((s, p) => s + (salFor(p, y) || 0), 0); }
+function capSpace(L, tid, y) { const c = capFor(y || capYear(L)); return c == null ? Infinity : c - payroll(L, tid, y); }
+function capMsg(L, tid, adding) {
+  const y = capYear(L), c = capFor(y); if (c == null) return null;
+  const after = payroll(L, tid, y) + adding;
+  return after > c ? `That would put ${tid === L.user ? 'you' : L.teams[tid].city} at ${money(after)}, over the ${y} cap of ${money(c)}.` : null;
+}
+function money(k) { return k >= 1000 ? '$' + (k / 1000).toFixed(k >= 10000 ? 1 : 2).replace(/\.?0+$/, '') + 'M' : '$' + Math.round(k) + 'K'; }
+function expiring(L, tid) { const y = capYear(L); return roster(L, tid).filter(p => !onBooks(p, y)); }
+function userAskMult(L) {
+  const t = L.teams[L.user], last = t.hist[t.hist.length - 1];
+  const wp = last ? (last.w + last.t / 2) / Math.max(1, last.w + last.l + last.t) : 0.5;
+  return (1 + (0.5 - wp) * 0.3) * ({ rookie: 0.9, pro: 1, allpro: 1.1 }[L.diff] || 1);
+}
+// Rookie deals: big money for top picks until the 2011 rookie wage scale.
+function rookieDeal(L, p, year, overall, rnd) {
+  const top = year >= 2011 ? 2.6 : 4.5;
+  const sal = avgSalary(year) * (0.35 + top * Math.exp(-(overall - 1) / 18));
+  setContract(p, sal, year, rnd === 1 ? 4 : 3);
+}
+function ensureContracts(L) {
+  const y = capYear(L);
+  for (const t of L.teams) for (const p of roster(L, t.id)) {
+    if (p.con && p.con.ext && p.con.exp < y) p.con = { sal: p.con.ext.sal, exp: p.con.ext.exp, signed: p.con.exp + 1 };
+    if (!p.con) setContract(p, marketValue(L, p, y) * (0.85 + Math.random() * 0.3), y, R.int(1, 4));
+  }
+}
+function retireIfUnsigned(L, p) { p.team = -1; delete p.con; }
+
+// How much a player likes a team: record, scheme, role, familiarity. Positive = he'll take less.
+const SCHEME_FIT = {
+  QB: { off: { pass: 0.06, run: -0.06 } }, WR: { off: { pass: 0.06, run: -0.06 } }, TE: { off: { pass: 0.03, run: -0.02 } },
+  RB: { off: { run: 0.06, pass: -0.04 } }, OL: { off: { run: 0.03, pass: -0.01 } },
+  DL: { def: { blitz: 0.05, soft: -0.03 } }, LB: { def: { blitz: 0.04, soft: -0.02 } }, DB: { def: { soft: 0.05, blitz: -0.03 } }
+};
+const OFF_TXT = { run: 'run-first offense', bal: 'balanced offense', pass: 'pass-first offense' };
+const DEF_TXT = { soft: "bend-don't-break defense", bal: 'base defense', blitz: 'blitzing defense' };
+// Per-team snapshot (payroll, size, ratings by position) so a free-agency round stays fast.
+function teamCache(L, y) {
+  const c = {};
+  for (const t of L.teams) c[t.id] = { pay: 0, size: 0, g: {} };
+  for (const id in L.players) {
+    const p = L.players[id], e = c[p.team]; if (!e) continue;
+    e.pay += salFor(p, y) || 0; e.size++; (e.g[p.grp] = e.g[p.grp] || []).push(p.ovr);
+  }
+  for (const k in c) for (const g in c[k].g) c[k].g[g].sort((a, b) => b - a);
+  return c;
+}
+function fitFor(L, p, tid, cache) {
+  const t = L.teams[tid], last = t.hist[t.hist.length - 1], reasons = [];
+  let v = 0;
+  const wp = last ? (last.w + last.t / 2) / Math.max(1, last.w + last.l + last.t) : 0.5;
+  const rec = 0.3 * (wp - 0.5); v += rec;
+  if (wp >= 0.6) reasons.push(['+', 'likes that you win']); else if (wp <= 0.4) reasons.push(['-', 'worried about your record']);
+  const sf = SCHEME_FIT[p.grp];
+  if (sf && sf.off) { const x = sf.off[t.coach.off] || 0; v += x; if (x > 0) reasons.push(['+', 'fits your ' + OFF_TXT[t.coach.off]]); if (x < 0) reasons.push(['-', 'doesn\'t fit your ' + OFF_TXT[t.coach.off]]); }
+  if (sf && sf.def) { const x = sf.def[t.coach.def] || 0; v += x; if (x > 0) reasons.push(['+', 'fits your ' + DEF_TXT[t.coach.def]]); if (x < 0) reasons.push(['-', 'doesn\'t fit your ' + DEF_TXT[t.coach.def]]); }
+  if (p.grp !== 'K' && p.grp !== 'P') {
+    let others;
+    if (cache) { others = (cache[tid].g[p.grp] || []).slice(); if (p.team === tid) { const i = others.indexOf(p.ovr); if (i >= 0) others.splice(i, 1); } }
+    else others = roster(L, tid).filter(x => x.grp === p.grp && x.id !== p.id).map(x => x.ovr).sort((a, b) => b - a);
+    const bar = others[STARTERS[p.grp] - 1] || 0;
+    if (p.ovr > bar) { v += 0.08; reasons.push(['+', 'would start']); } else { v -= 0.06; reasons.push(['-', 'would be a backup']); }
+  }
+  if (p.team === tid || p.prevTeam === tid) { v += 0.05; reasons.push(['+', 'loyal to your team']); }
+  if (tid === L.user) v += ({ rookie: 0.05, pro: 0, allpro: -0.05 }[L.diff] || 0);
+  return { v, reasons };
+}
+// What he asks from a given team: market value, adjusted by how much he likes them.
+function priceFor(L, p, tid, y) { return Math.round(marketValue(L, p, y) * clamp(1.08 - fitFor(L, p, tid).v, 0.75, 1.4)); }
+function baseAsk(L, p) { return marketValue(L, p, capYear(L)) * (p.askMult || 1); }
+function offerScore(L, p, tid, sal, yrs, cache) {
+  const want = contractYears(p), yf = 1 + (p.age >= 30 ? 0.06 : 0.03) * clamp(yrs - want, -3, 3);
+  return sal / baseAsk(L, p) * yf + fitFor(L, p, tid, cache).v;
+}
+const FA_ROUNDS = 3, ROUND_MIN = [1.0, 0.92, 0.84], ROUND_DISC = [1, 0.92, 0.85];
+function interestedTeams(L, p, cache) {
+  const y = capYear(L), cap = capFor(y), ask = baseAsk(L, p);
+  cache = cache || teamCache(L, y);
+  return L.teams.filter(t => {
+    if (t.id === L.user) return false;
+    if (cap != null && cache[t.id].pay + ask * 0.9 > cap) return false;
+    const others = cache[t.id].g[p.grp] || [];
+    const bar = others[STARTERS[p.grp]] != null ? others[STARTERS[p.grp] - 1] : 0;
+    return p.ovr >= bar - 2 || others.length < STARTERS[p.grp] + 1;
+  });
+}
+function isMarketFA(p) { return p.team === -1 && p.retiredYear == null; }
+function placeBid(L, pid, sal, yrs) {
+  ensureFA(L); const F = L.fa, p = L.players[pid], y = capYear(L);
+  if (!F || F.era !== 'ufa' || F.round > FA_ROUNDS) return 'Bidding is closed.';
+  if (!p || !isMarketFA(p)) return 'He is not on the market.';
+  F.bids = F.bids || {};
+  const others = Object.entries(F.bids).filter(([id]) => +id !== pid).reduce((s, [, b]) => s + b.sal, 0);
+  const cap = capFor(y);
+  if (cap != null && payroll(L, L.user, y) + others + sal > cap) return `Your bids would total more than your cap space (${money(cap - payroll(L, L.user, y))}).`;
+  F.bids[pid] = { sal: Math.round(sal), yrs: clamp(yrs, 1, 5) }; return null;
+}
+function withdrawBid(L, pid) { if (L.fa && L.fa.bids) delete L.fa.bids[pid]; }
+function bidOutlook(L, pid) {
+  const p = L.players[pid], b = L.fa && L.fa.bids && L.fa.bids[pid]; if (!p || !b) return null;
+  const sc = offerScore(L, p, L.user, b.sal, b.yrs), r = Math.max(1, L.fa.round || 1), min = ROUND_MIN[r - 1];
+  const n = Math.min(interestedTeams(L, p).length, value(p) >= 75 ? 5 : 3);
+  return { score: sc, teams: n, label: sc < min ? 'Below what he will accept' : (sc >= min + 0.15 ? 'Strong offer' : (n >= 3 ? 'Competitive, others are bidding' : 'Fair offer')) };
+}
+function resolveRound(L) {
+  const F = L.fa, y = capYear(L), cap = capFor(y), r = F.round, max = rules(y).rosterMax;
+  const pool = freeAgents(L).filter(isMarketFA).sort((a, b) => value(b) - value(a)).slice(0, 220);
+  const signed = [], C = teamCache(L, y);
+  for (const p of pool) {
+    const ask = baseAsk(L, p), bids = [];
+    const teams = interestedTeams(L, p, C).sort(() => Math.random() - 0.5).slice(0, value(p) >= 75 ? 5 : 3);
+    for (const t of teams) {
+      if (C[t.id].size >= max + 8) continue;
+      const sal = Math.round(ask * (0.85 + Math.random() * 0.35) * ROUND_DISC[r - 1]), yrs = clamp(contractYears(p) + R.int(-1, 1), 1, 5);
+      if (cap != null && C[t.id].pay + sal > cap) continue;
+      bids.push({ tid: t.id, sal, yrs });
+    }
+    const ub = F.bids && F.bids[p.id];
+    if (ub && (cap == null || C[L.user].pay + ub.sal <= cap)) bids.push({ tid: L.user, sal: ub.sal, yrs: ub.yrs });
+    if (!bids.length) { p.askMult = (p.askMult || 1) * 0.92; continue; }
+    bids.forEach(b => b.score = offerScore(L, p, b.tid, b.sal, b.yrs, C));
+    bids.sort((a, b) => b.score - a.score);
+    const best = bids[0];
+    const userIn = bids.some(b => b.tid === L.user);
+    if (best.score < ROUND_MIN[r - 1]) { p.askMult = (p.askMult || 1) * 0.92; if (userIn) addNews(L, `${p.pos} ${p.name} turned down every offer this round, including yours.`); continue; }
+    const from = p.prevTeam;
+    p.team = best.tid; setContract(p, best.sal, y, best.yrs); delete p.askMult;
+    const ce = C[best.tid]; ce.pay += best.sal; ce.size++; (ce.g[p.grp] = ce.g[p.grp] || []).push(p.ovr); ce.g[p.grp].sort((a, b) => b - a);
+    signed.push({ pid: p.id, tid: best.tid, sal: best.sal, yrs: best.yrs, bidders: bids.map(b => b.tid) });
+    if (userIn || from === L.user || value(p) >= 72) {
+      const others = bids.filter(b => b.tid !== best.tid).map(b => L.teams[b.tid].abbr);
+      addNews(L, `FREE AGENCY: ${p.pos} ${p.name}${from != null && L.teams[from] ? ' (formerly ' + L.teams[from].abbr + ')' : ''} signs with ${L.teams[best.tid].abbr}, ${best.yrs} yrs at ${money(best.sal)}.${others.length ? ' Also bid: ' + others.join(', ') + '.' : ''}`);
+    }
+  }
+  if (F.bids) for (const id in F.bids) if (!L.players[id] || !isMarketFA(L.players[id])) delete F.bids[id];
+  F.last = signed;
+}
+// Opening the market: unhandled unrestricted players leave; restricted ones take their tender.
+function startMarket(L) {
+  const y = capYear(L);
+  for (const p of expiring(L, L.user)) {
+    if (isRestricted(L, p)) { setContract(p, tenderPrice(L, p), y, 1); continue; }
+    p.prevTeam = L.user; retireIfUnsigned(L, p);
+    addNews(L, `${p.pos} ${p.name} hits the open market.`);
+  }
+}
+function advanceFA(L) {
+  ensureFA(L); const F = L.fa;
+  if (F.era !== 'ufa') return 'Bidding rounds start in 1993.';
+  if (F.round > FA_ROUNDS) return 'Free agency is over for this year.';
+  if (F.round === 0) startMarket(L);
+  F.round++;
+  resolveRound(L);
+  if (F.round >= FA_ROUNDS) F.round = FA_ROUNDS + 1;
+  return null;
+}
+// Extensions: re-sign a player in the last year of his deal before he reaches free agency.
+function extInfo(L, p) {
+  const y = capYear(L);
+  if (!p || p.team !== L.user || !p.con || p.con.ext || p.con.exp !== y) return null;
+  if (faEra(y + 1) !== 'ufa') return null;
+  const ny = y + 1, fit = fitFor(L, p, L.user);
+  return { from: ny, yrs: contractYears(Object.assign({}, p, { age: p.age + 1 })), sal: priceFor(L, p, L.user, ny), fit };
+}
+function extend(L, pid) {
+  const p = L.players[pid], x = extInfo(L, p); if (!x) return 'He is not in the last year of his contract.';
+  const cap = capFor(x.from);
+  if (cap != null && payroll(L, L.user, x.from) + x.sal > cap) return `That would put your ${x.from} payroll over the ${money(cap)} cap.`;
+  p.con.ext = { sal: x.sal, exp: x.from + x.yrs - 1 };
+  addNews(L, `${L.teams[L.user].abbr} extended ${p.pos} ${p.name}: ${x.yrs} yrs at ${money(x.sal)} starting in ${x.from}.`);
+  return null;
+}
+
+// Called when the offseason opens (after the draft).
+function openFreeAgency(L) {
+  ensureContracts(L);
+  const y = capYear(L), era = faEra(y), cap = capFor(y);
+  L.fa = { y, era, tagged: null, sheets: [], done: {}, protect: null, round: 0, bids: {} };
+  // AI teams handle their own expiring players.
+  for (const t of L.teams) {
+    if (t.id === L.user) continue;
+    const exp = expiring(L, t.id);
+    if (!exp.length) continue;
+    const keepN = rules(y).rosterMax + 3;
+    const ranked = roster(L, t.id).slice().sort((a, b) => value(b) - value(a));
+    for (const p of exp) {
+      const rank = ranked.indexOf(p), ask = marketValue(L, p, y);
+      let keep = rank < keepN && p.age < 35;
+      if (era === 'ufa' && keep && (p.yrs || 0) >= 4) keep = Math.random() < 0.6 && (cap == null || payroll(L, t.id, y) + ask <= cap * 0.97);
+      if (era === 'comp' && keep && value(p) >= 72 && Math.random() < 0.5) continue; // leave a few stars unsigned: offer-sheet targets
+      if (keep) setContract(p, ask, y, contractYears(p));
+      else { p.prevTeam = t.id; retireIfUnsigned(L, p); if (era === 'ufa' && value(p) >= 70) addNews(L, `${p.pos} ${p.name} hits free agency after leaving ${t.abbr}.`); }
+    }
+  }
+  // Right of first refusal era: rival clubs occasionally send offer sheets to your stars.
+  if (era === 'comp' || era === 'planb') {
+    for (const p of expiring(L, L.user)) {
+      if (value(p) < 72 || Math.random() > 0.2) continue;
+      const from = R.pick(L.teams.filter(t => t.id !== L.user)).id;
+      L.fa.sheets.push({ pid: p.id, from, sal: Math.round(marketValue(L, p, y) * (1.2 + Math.random() * 0.3)), yrs: contractYears(p) });
+      addNews(L, `${L.teams[from].city} signed your ${p.pos} ${p.name} to an offer sheet. Match it or take compensation.`);
+    }
+  }
+  if (era === 'planb') {
+    L.fa.protect = roster(L, L.user).slice().sort((a, b) => value(b) - value(a)).slice(0, 37).map(p => p.id);
+    L.fa.aiProtect = {};
+    for (const t of L.teams) if (t.id !== L.user) L.fa.aiProtect[t.id] = roster(L, t.id).slice().sort((a, b) => value(b) - value(a)).slice(0, 37).map(p => p.id);
+  }
+  addNews(L, `${y} offseason: ${ERA_INFO[era].name}.${cap != null ? ` The salary cap is ${money(cap)}.` : (y === 2010 ? ' 2010 is an uncapped year.' : '')}`);
+}
+function ensureFA(L) { if (L.phase === 'offseason' && (!L.fa || L.fa.y !== capYear(L))) openFreeAgency(L); if (L.fa) { if (L.fa.round == null) L.fa.round = 0; if (!L.fa.bids) L.fa.bids = {}; } }
+
+function askPrice(L, p) {
+  const y = capYear(L), base = marketValue(L, p, y);
+  return Math.round(base * (p.team === L.user ? 1 : userAskMult(L)));
+}
+function resignPrice(L, p) { return faEra(capYear(L)) === 'ufa' ? priceFor(L, p, L.user, capYear(L)) : askPrice(L, p); }
+function tenderPrice(L, p) { return Math.round(marketValue(L, p, capYear(L)) * 0.75); }
+function isRestricted(L, p) { return faEra(capYear(L)) === 'ufa' && (p.yrs || 0) < 4; }
+function compPicks(L, sal) {
+  const r = sal / avgSalary(capYear(L));
+  const rounds = r >= 4 ? [1, 1] : (r >= 2.5 ? [1] : (r >= 1.5 ? [2] : [3]));
+  return rounds;
+}
+function takePicks(L, from, to, rounds) {
+  const got = [];
+  for (const rnd of rounds) {
+    const k = (L.picks || []).filter(x => x.own === from && x.rnd === rnd && !got.includes(x.id)).sort((a, b) => a.y - b.y)[0]
+      || (L.picks || []).filter(x => x.own === from && x.rnd >= rnd && !got.includes(x.id)).sort((a, b) => a.y - b.y || a.rnd - b.rnd)[0];
+    if (k) { k.own = to; got.push(k.id); }
+  }
+  return got.map(id => pickLabel(L, pickById(L, id))).join(' and ');
+}
+function resign(L, pid) {
+  ensureFA(L);
+  const p = L.players[pid], y = capYear(L);
+  if (!p || p.team !== L.user || onBooks(p, y)) return 'He is not an expiring player on your team.';
+  if ((L.fa.sheets || []).some(s => s.pid === pid)) return 'He has an offer sheet. Match it or take the compensation.';
+  const sal = isRestricted(L, p) ? tenderPrice(L, p) : resignPrice(L, p);
+  const e = capMsg(L, L.user, sal); if (e) return e;
+  setContract(p, sal, y, contractYears(p));
+  addNews(L, `${L.teams[L.user].abbr} re-signed ${p.pos} ${p.name}: ${contractYears(p)} yrs, ${money(sal)} a year.`);
+  return null;
+}
+function franchiseTag(L, pid) {
+  ensureFA(L);
+  const p = L.players[pid], y = capYear(L);
+  if (faEra(y) !== 'ufa') return 'The franchise tag starts in 1993.';
+  if (L.fa.tagged) return 'You already used your franchise tag this year.';
+  if (!p || p.team !== L.user || onBooks(p, y)) return 'Only an expiring player on your team can be tagged.';
+  const top = Object.values(L.players).filter(x => x.grp === p.grp && x.team >= 0 && onBooks(x, y)).map(x => salFor(x, y)).sort((a, b) => b - a).slice(0, 5);
+  const sal = Math.round(Math.max(marketValue(L, p, y) * 1.15, top.length ? top.reduce((a, b) => a + b, 0) / top.length : 0));
+  const e = capMsg(L, L.user, sal); if (e) return e;
+  setContract(p, sal, y, 1); L.fa.tagged = pid;
+  addNews(L, `${L.teams[L.user].abbr} placed the franchise tag on ${p.pos} ${p.name}: 1 yr, ${money(sal)}.`);
+  return null;
+}
+function letGo(L, pid) {
+  const p = L.players[pid]; if (!p || p.team !== L.user) return 'He is not on your team.';
+  L.fa.sheets = (L.fa.sheets || []).filter(s => s.pid !== pid);
+  addNews(L, `${L.teams[L.user].abbr} let ${p.pos} ${p.name} go.`); retireIfUnsigned(L, p); return null;
+}
+function matchSheet(L, i) {
+  const sh = L.fa.sheets[i]; if (!sh) return 'That offer sheet is gone.';
+  const p = L.players[sh.pid], e = capMsg(L, L.user, sh.sal); if (e) return e;
+  setContract(p, sh.sal, capYear(L), sh.yrs); L.fa.sheets.splice(i, 1);
+  addNews(L, `${L.teams[L.user].abbr} matched ${L.teams[sh.from].city}'s offer for ${p.pos} ${p.name}.`); return null;
+}
+function declineSheet(L, i) {
+  const sh = L.fa.sheets[i]; if (!sh) return 'That offer sheet is gone.';
+  const p = L.players[sh.pid]; p.team = sh.from; setContract(p, sh.sal, capYear(L), sh.yrs); L.fa.sheets.splice(i, 1);
+  const got = takePicks(L, sh.from, L.user, compPicks(L, sh.sal));
+  addNews(L, `${p.pos} ${p.name} leaves for ${L.teams[sh.from].city}. Compensation: ${got || 'none available'}.`); return null;
+}
+// Comp era: offer sheet to another team's unsigned player.
+function sheetTargets(L) { ensureFA(L); const y = capYear(L); return L.teams.filter(t => t.id !== L.user).flatMap(t => expiring(L, t.id)); }
+function sendSheet(L, pid) {
+  ensureFA(L);
+  const p = L.players[pid], y = capYear(L);
+  if (!p || p.team < 0 || p.team === L.user || onBooks(p, y)) return 'He is not available for an offer sheet.';
+  if (L.fa.done[pid]) return 'His team already decided on your offer.';
+  const sal = Math.round(askPrice(L, p) * 1.2), rounds = compPicks(L, sal);
+  const owner = p.team, matchP = { rookie: 0.5, pro: 0.7, allpro: 0.85 }[L.diff] || 0.7;
+  L.fa.done[pid] = true;
+  if (Math.random() < matchP) { setContract(p, Math.round(sal), y, contractYears(p)); addNews(L, `${L.teams[owner].abbr} matched your offer sheet for ${p.pos} ${p.name}.`); return `${L.teams[owner].city} matched. He stays there.`; }
+  const roundsTxt = takePicks(L, L.user, owner, rounds);
+  p.team = L.user; setContract(p, sal, y, contractYears(p));
+  addNews(L, `${L.teams[L.user].abbr} landed ${p.pos} ${p.name} on an offer sheet (${money(sal)} a year). ${L.teams[owner].abbr} receive ${roundsTxt || 'no picks'}.`);
+  return null;
+}
+// Plan B
+function toggleProtect(L, pid) {
+  ensureFA(L); const pr = L.fa.protect; if (!pr) return 'Plan B protection runs from 1989 to 1992.';
+  const i = pr.indexOf(pid);
+  if (i >= 0) pr.splice(i, 1); else { if (pr.length >= 37) return 'You can protect 37 players. Unprotect someone first.'; pr.push(pid); }
+  return null;
+}
+function planBPool(L) { ensureFA(L); if (!L.fa.aiProtect) return []; const out = []; for (const tid in L.fa.aiProtect) { const pr = L.fa.aiProtect[tid]; roster(L, +tid).forEach(p => { if (!pr.includes(p.id)) out.push(p); }); } return out; }
+// Signing any free agent (open market or Plan B unprotected).
+function signFA(L, pid) {
+  ensureFA(L);
+  const p = L.players[pid], y = capYear(L), max = rules(L.year).rosterMax;
+  const planB = L.phase === 'offseason' && L.fa.aiProtect && p && p.team >= 0 && p.team !== L.user && !L.fa.aiProtect[p.team].includes(p.id);
+  if (!p || (p.team !== -1 && !planB)) return 'That player is no longer available.';
+  if (L.phase === 'offseason' && L.fa && L.fa.era === 'ufa' && L.fa.round <= FA_ROUNDS) return 'During free agency, place a bid instead. Players choose between offers each round.';
+  const inSeason = L.phase === 'regular' || L.phase === 'playoffs';
+  if (inSeason && roster(L, L.user).length >= max) return `Your roster is full (${max}). Release someone first.`;
+  const sal = askPrice(L, p) * (inSeason ? 0.6 : 1), e = capMsg(L, L.user, sal); if (e) return e;
+  const from = p.team;
+  p.team = L.user; setContract(p, sal, y, inSeason ? 1 : contractYears(p));
+  addNews(L, `${L.teams[L.user].abbr} signed ${p.pos} ${p.name}${planB ? ` from ${L.teams[from].abbr} (Plan B)` : ''}: ${p.con.exp - y + 1} yr${p.con.exp > y ? 's' : ''}, ${money(sal)} a year.`);
+  return null;
+}
+// Called from startNextSeason, before players age.
+function closeFreeAgency(L) {
+  ensureFA(L);
+  const y = capYear(L), era = L.fa.era;
+  // Offer sheets you ignored: you match by default.
+  for (let i = L.fa.sheets.length - 1; i >= 0; i--) if (matchSheet(L, i)) declineSheet(L, i);
+  if (era === 'ufa') while (L.fa.round <= FA_ROUNDS) advanceFA(L);
+  for (const p of expiring(L, L.user)) {
+    if (era === 'ufa' && !isRestricted(L, p)) { addNews(L, `${p.pos} ${p.name} left in free agency.`); retireIfUnsigned(L, p); continue; }
+    const sal = isRestricted(L, p) ? tenderPrice(L, p) : askPrice(L, p);
+    if (capMsg(L, L.user, sal)) { addNews(L, `No cap room to keep ${p.pos} ${p.name}. He left.`); retireIfUnsigned(L, p); continue; }
+    setContract(p, sal, y, contractYears(p));
+  }
+  // AI expiring players left unsigned in the comp era re-sign now.
+  for (const t of L.teams) if (t.id !== L.user) for (const p of expiring(L, t.id)) setContract(p, marketValue(L, p, y), y, contractYears(p));
+  if (era === 'planb') {
+    const mine = roster(L, L.user).filter(p => !L.fa.protect.includes(p.id));
+    for (const p of mine) if (value(p) >= 60 && Math.random() < 0.3) {
+      const to = R.pick(L.teams.filter(t => t.id !== L.user)); p.team = to.id; setContract(p, marketValue(L, p, y), y, contractYears(p));
+      addNews(L, `Plan B: ${to.city} signed your unprotected ${p.pos} ${p.name}.`);
+    }
+    for (const p of planBPool(L)) if (Math.random() < 0.15) {
+      const to = R.pick(L.teams.filter(t => t.id !== L.user && t.id !== p.team)); p.team = to.id; setContract(p, marketValue(L, p, y), y, contractYears(p));
+    }
+  }
+  // AI teams sign free agents they can afford.
+  aiSignings(L, true);
+  L.fa = null;
+}
+function aiCapCompliance(L) {
+  const y = L.year, c = capFor(y); if (c == null) return;
+  for (const t of L.teams) {
+    if (t.id === L.user) continue;
+    let over = payroll(L, t.id, y) - c; if (over <= 0) continue;
+    const d = depth(L, t.id), st = new Set(); GRPS.forEach(g => d[g].slice(0, STARTERS[g]).forEach(p => st.add(p.id)));
+    const cand = roster(L, t.id).filter(p => onBooks(p, y)).sort((a, b) => (st.has(a.id) - st.has(b.id)) || (value(a) / salFor(a, y) - value(b) / salFor(b, y)));
+    const cut = [];
+    for (const p of cand) { if (over <= 0) break; over -= salFor(p, y); cut.push(p); retireIfUnsigned(L, p); }
+    if (cut.length) addNews(L, `${t.abbr} released ${cut.length} player${cut.length > 1 ? 's' : ''} to get under the cap.`);
+  }
 }
 
 /* ---------- leaders ---------- */
@@ -1441,7 +1884,7 @@ function leaders(L, key, n, year) {
 
 function myDraftSlots(L) { const D = L.draft; if (!D || !D.slotPick) return []; const out = []; for (let i = D.pick; i < D.slotPick.length; i++) { const k = pickById(L, D.slotPick[i]); if (k && k.own === L.user) out.push(i + 1); } return out; }
 
-const API = { era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
+const API = { salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
   value, release, sign, proposeTrade, tradeVerdict, teamPicks, pickById, pickLabel, projectedOverall, pickWeight, playerWeight, ensurePicks, myDraftSlots, aiTrades, acceptOffer, rejectOffer, offerValid, cutTo, ratings, teamOverall, startRegular, canStartSeason, simWeek, simPlayoffRound, roundName,
   sortTeams, divisions, pct, startDraft, onClock, makePick, aiPick, draftUntilUser, draftAll, scoutPlayer, beginDraft, SCOUT_VISITS, endDraft, startNextSeason, leaders, potKnown, shownPot, roman, addNews };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.GG = API;
@@ -1582,7 +2025,8 @@ function vHome() {
   if (L.phase === 'draft') h += vDraft();
   if (L.phase === 'offseason') {
     h += `<section class="card hero"><div class="eyebrow">Offseason</div><h2>Ready for ${L.year + 1}?</h2>
-      <p>Sign free agents or make trades on the Moves tab. Starting the new season ages every player, applies development, and processes retirements.</p>
+      <p>${(() => { G.ensureFA(L); const ex = G.expiring(L, L.user).length, sh = L.fa.sheets.length; return `<b>${G.ERA_INFO[L.fa.era].name}.</b> You have ${ex} expiring contract${ex === 1 ? '' : 's'}${sh ? ` and ${sh} offer sheet${sh > 1 ? 's' : ''} to answer` : ''}. Handle them on the Moves tab.`; })()}</p>
+      <p class="small">Starting the new season settles free agency, ages every player, applies development, and processes retirements.</p>
       <div class="row"><button class="btn primary" data-act="nextSeason">Start the ${L.year + 1} season</button></div></section>`;
   }
   h += offersCard();
@@ -1690,6 +2134,99 @@ function myPicks() {
   return `<section class="card"><h3>Your class</h3><div class="list">${mine.map(x => { const p = L.players[x.pid]; return `<div class="pl"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">Round ${p.draft.rnd}, #${x.n} overall</div></div><div class="pl-r"><span class="lbl">${p.seen ? 'TRUE' : 'SCOUT'}</span>${rating(p.seen ? p.pot : p.scout)}</div></div></div>`; }).join('')}</div></section>`;
 }
 
+/* ---------- Contracts ---------- */
+function conText(p) {
+  if (!p.con) return 'No contract';
+  if (!G.onBooks(p, G.capYear(L))) return `<b class="warn">Expiring</b>`;
+  if (p.con.ext) return `${G.money(p.con.sal)} thru ${p.con.exp}, then ${G.money(p.con.ext.sal)} thru ${p.con.ext.exp}`;
+  return `${G.money(p.con.sal)} thru ${p.con.exp}${G.extInfo(L, p) ? ' · <b class="warn">final year</b>' : ''}`;
+}
+function payrollCard() {
+  const y = G.capYear(L), cap = G.capFor(y), pay = G.payroll(L, L.user, y);
+  const pct = cap ? Math.min(100, pay / cap * 100) : 0;
+  const note = cap ? `${G.money(cap - pay)} in cap space` : (y === 2010 ? '2010 is an uncapped year' : 'No salary cap until 1994');
+  return `<section class="card"><div class="split"><h3>${y} payroll</h3><span class="count">${G.money(pay)}${cap ? ' / ' + G.money(cap) : ''}</span></div>
+    ${cap ? `<div class="bar-t cap"><span class="bar-f ${pay > cap ? 'g-low bad' : 'g-good'}" style="width:${pct}%"></span></div>` : ''}
+    <p class="small ${cap && pay > cap ? 'bad' : ''}">${cap && pay > cap ? `Over the cap by ${G.money(pay - cap)}. You can't kick off until you get under.` : note}. League average salary is about ${G.money(G.avgSalary(y))}.</p></section>`;
+}
+function faCard() {
+  if (L.phase !== 'offseason') return '';
+  G.ensureFA(L);
+  const F = L.fa, y = F.y, info = G.ERA_INFO[F.era];
+  const prow = (p, extra, btns) => `<div class="pl wide"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">Age ${p.age + 1} in ${y} · ${(p.yrs || 0) + 1} yrs exp${extra ? ' · ' + extra : ''}</div></div>
+    <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></div><div class="pl-btns">${btns}</div></div>`;
+  let h = `<section class="card offers"><div class="eyebrow">${y} offseason · ${esc(info.name)}</div><h3>Contracts &amp; free agency</h3><p class="small">${esc(info.text)}</p>`;
+  // offer sheets on your players
+  F.sheets.forEach((sh, i) => {
+    const p = L.players[sh.pid], picks = G.compPicks(L, sh.sal).map(r => 'a round ' + r + ' pick').join(' and ');
+    h += `<div class="offer"><b>${esc(L.teams[sh.from].city)}</b> offer sheet for your ${esc(p.pos)} ${esc(p.name)}: ${sh.yrs} yrs, ${G.money(sh.sal)} a year.
+      <div class="row"><button class="btn sm primary" data-act="matchSheet" data-id="${i}">Match</button><button class="btn sm" data-act="declineSheet" data-id="${i}">Let him go for ${picks}</button></div></div>`;
+  });
+  const ufa = F.era === 'ufa';
+  if (ufa) h += marketHeader(F);
+  const exp = (ufa && F.round > 0) ? [] : G.expiring(L, L.user).filter(p => !F.sheets.some(s => s.pid === p.id)).sort((a, b) => b.ovr - a.ovr);
+  if (!(ufa && F.round > 0)) h += `<h3 class="sub">Your expiring contracts (${exp.length})</h3>`;
+  if (!(ufa && F.round > 0)) h += exp.length ? `<div class="list">${exp.map(p => {
+    const rfa = G.isRestricted(L, p), price = rfa ? G.tenderPrice(L, p) : G.resignPrice(L, p);
+    const why = ufa && !rfa ? reasonsText(G.fitFor(L, p, L.user).reasons) : '';
+    const btns = `<button class="btn sm primary" data-act="resign" data-id="${p.id}">${rfa ? 'Tender' : 'Re-sign'} ${G.money(price)}</button>${F.era === 'ufa' && !F.tagged && !rfa ? `<button class="btn sm" data-act="tag" data-id="${p.id}">Tag</button>` : ''}<button class="btn sm" data-act="letGo" data-id="${p.id}">Let go</button>`;
+    return prow(p, (rfa ? 'Restricted' : (ufa ? 'Unrestricted · market value ' + G.money(G.marketValue(L, p)) : 'Asking ' + G.money(price))) + why, btns);
+  }).join('')}</div><p class="small">${ufa ? 'This is your exclusive window. Once you start free agency, unrestricted players you haven\'t re-signed or tagged hit the open market, where you can still bid but other teams will too. Restricted players stay at their tender price.' : 'Anyone you don\'t handle re-signs at his asking price when the season starts.'}</p>` : '<p class="small">None. Everyone is signed for next season.</p>';
+  if (ufa) h += marketList(F);
+  if (F.era === 'planb') {
+    const pr = F.protect, mine = G.roster(L, L.user).slice().sort((a, b) => b.ovr - a.ovr);
+    h += `<h3 class="sub">Plan B protection (${pr.length} / 37)</h3><p class="small">Unprotected players worth keeping may sign elsewhere when the season starts.</p><div class="tlist protect">${mine.map(p => `<button class="tp ${pr.includes(p.id) ? 'on' : ''}" data-act="protect" data-id="${p.id}"><span class="pos">${esc(p.pos)}</span><span class="tp-n">${esc(p.name)}</span><span class="tp-a">${p.age}</span>${rating(p.ovr)}</button>`).join('')}</div>`;
+    const pool = G.planBPool(L).sort((a, b) => b.ovr - a.ovr).slice(0, 30);
+    h += `<h3 class="sub">Plan B market</h3><p class="small">Other teams' unprotected players. Sign them with no compensation.</p><div class="list">${pool.map(p => prow(p, esc(L.teams[p.team].abbr), `<button class="btn sm" data-act="sign" data-id="${p.id}">Sign ${G.money(G.askPrice(L, p))}</button>`)).join('')}</div>`;
+  }
+  if (F.era === 'comp' || F.era === 'planb') {
+    const tg = G.sheetTargets(L).filter(p => !F.done[p.id]).sort((a, b) => b.ovr - a.ovr).slice(0, 15);
+    if (tg.length) h += `<h3 class="sub">Offer sheet targets</h3><p class="small">Unsigned players on other teams. If his team doesn't match, he's yours and you give up the draft picks shown.</p><div class="list">${tg.map(p => { const sal = Math.round(G.askPrice(L, p) * 1.2); return prow(p, esc(L.teams[p.team].abbr) + ' · costs ' + G.compPicks(L, sal).map(r => 'R' + r).join('+'), `<button class="btn sm" data-act="sheet" data-id="${p.id}">Offer ${G.money(sal)}</button>`); }).join('')}</div>`;
+  }
+  return h + '</section>';
+}
+
+function reasonsText(rs) {
+  if (!rs || !rs.length) return '';
+  return '<br>' + rs.map(([s, t]) => `<span class="${s === '+' ? 'good' : 'bad'}">${s === '+' ? '▲' : '▼'} ${esc(t)}</span>`).join(' · ');
+}
+function marketHeader(F) {
+  const done = F.round > G.FA_ROUNDS;
+  const label = F.round === 0 ? 'Exclusive window' : (done ? 'Free agency is over' : `Bidding round ${F.round + 1} of ${G.FA_ROUNDS}`);
+  const btn = done ? '' : `<button class="btn primary" data-act="advanceFA">${F.round === 0 ? 'Start free agency (resolve round 1)' : `Resolve round ${F.round + 1}`}</button>`;
+  const mine = (F.last || []).filter(x => x.tid === L.user);
+  const lost = (F.last || []).filter(x => x.tid !== L.user && x.bidders.includes(L.user));
+  return `<div class="faround"><div class="split"><b>${label}</b><span class="small">${Object.keys(F.bids || {}).length} bid${Object.keys(F.bids || {}).length === 1 ? '' : 's'} placed</span></div>
+    ${F.last ? `<p class="small">Last round: ${F.last.length} players signed. ${mine.length ? `<span class="good">You signed ${mine.map(x => esc(L.players[x.pid].name)).join(', ')}.</span>` : ''} ${lost.length ? `<span class="bad">You lost ${lost.map(x => esc(L.players[x.pid].name) + ' to ' + esc(L.teams[x.tid].abbr)).join(', ')}.</span>` : ''}</p>` : ''}
+    <p class="small">Each round, every free agent picks the best offer: money and years, plus team record, scheme fit, playing time, and loyalty. Anyone who doesn't sign lowers his price for the next round. After round ${G.FA_ROUNDS}, leftovers sign cheaply with whoever has room.</p>
+    <div class="row">${btn}</div></div>`;
+}
+function marketList(F) {
+  if (F.round > G.FA_ROUNDS) return '';
+  const grp = ui.faGrp || 'ALL';
+  const list = G.freeAgents(L).filter(p => p.retiredYear == null && (grp === 'ALL' || p.grp === grp)).sort((a, b) => b.ovr - a.ovr).slice(0, ui.mktShow || 30);
+  const rows = list.map(p => {
+    const b = F.bids && F.bids[p.id], ask = G.baseAsk(L, p), o = b ? G.bidOutlook(L, p.id) : null;
+    const fit = G.fitFor(L, p, L.user);
+    const bidUI = b ? `<div class="bid"><span>Your bid <b>${G.money(b.sal)}</b> × <b>${b.yrs}</b> yr${b.yrs > 1 ? 's' : ''}</span>
+        <span class="bidctl"><button class="btn sm ar" data-act="bid" data-id="${p.id}" data-key="sal-">−$</button><button class="btn sm ar" data-act="bid" data-id="${p.id}" data-key="sal+">+$</button><button class="btn sm ar" data-act="bid" data-id="${p.id}" data-key="yrs-">−yr</button><button class="btn sm ar" data-act="bid" data-id="${p.id}" data-key="yrs+">+yr</button><button class="btn sm" data-act="bid" data-id="${p.id}" data-key="x">Withdraw</button></span>
+        <span class="small ${o && o.label.startsWith('Below') ? 'bad' : 'good'}">${o ? esc(o.label) + ` · ${o.teams ? `about ${o.teams} other team${o.teams === 1 ? '' : 's'} likely to bid` : 'no other teams likely to bid'}` : ''}</span></div>`
+      : `<button class="btn sm primary" data-act="bid" data-id="${p.id}" data-key="new">Bid ${G.money(ask)}</button>`;
+    return `<div class="pl wide"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">Age ${p.age + 1} · ${p.prevTeam != null && L.teams[p.prevTeam] ? 'was ' + esc(L.teams[p.prevTeam].abbr) + ' · ' : ''}asking ${G.money(ask)}${reasonsText(fit.reasons)}</div></div>
+      <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></div><div class="pl-btns">${bidUI}</div></div>`;
+  }).join('');
+  return `<h3 class="sub">Free agent market</h3>${chips('faGrp', grp)}<div class="list">${rows || '<p class="small">No free agents at this position.</p>'}</div>
+    <div class="row"><button class="btn" data-act="mktMore">Show more</button></div>`;
+}
+function extCard() {
+  const el = G.roster(L, L.user).map(p => [p, G.extInfo(L, p)]).filter(x => x[1]).sort((a, b) => b[0].ovr - a[0].ovr);
+  if (!el.length) return '';
+  return `<section class="card"><h3>Extensions</h3><p class="small">These players are in the last year of their deals. Extend them now, or they reach free agency after the season. Their price depends on how they feel about your team.</p>
+    <div class="list">${el.map(([p, x]) => `<div class="pl wide"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">Age ${p.age} · now ${G.money(p.con.sal)} · market ${G.money(G.marketValue(L, p, x.from))}${reasonsText(x.fit.reasons)}</div></div>
+      <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></div>
+      <div class="pl-btns"><button class="btn sm primary" data-act="extend" data-id="${p.id}">Extend ${x.yrs} yr${x.yrs > 1 ? 's' : ''} at ${G.money(x.sal)}</button></div></div>`).join('')}</div></section>`;
+}
+
 /* ---------- Sorting ---------- */
 // POT means what you can see: true potential once known, otherwise the scout grade.
 function cmp(key) {
@@ -1714,9 +2251,9 @@ function vRoster() {
     <p class="small">Green positions are starters, set on the Coach tab's depth chart. Tap a player for options.</p>${chips('grp', ui.grp)}${sortSeg('rSort')}
     <div class="list">${list.map(p => `<div class="pl ${ui.open === p.id ? 'open' : ''}">
       <button class="pl-main" data-act="open" data-id="${p.id}"><span class="pos ${starterIds.has(p.id) ? 'st' : ''}">${esc(p.pos)}</span>
-      <div class="pl-name">${esc(p.name)}${p.inj ? `<span class="inj">INJ ${p.inj >= 20 ? 'season' : p.inj + 'w'}</span>` : ''}<div class="pl-sub">Age ${p.age} · ${p.yrs ? p.yrs + ' yr' + (p.yrs > 1 ? 's' : '') : 'Rookie'}${statLine(p) ? ' · ' + statLine(p) : ''}</div></div>
+      <div class="pl-name">${esc(p.name)}${p.inj ? `<span class="inj">INJ ${p.inj >= 20 ? 'season' : p.inj + 'w'}</span>` : ''}<div class="pl-sub">Age ${p.age} · ${p.yrs ? p.yrs + ' yr' + (p.yrs > 1 ? 's' : '') : 'Rookie'} · ${conText(p)}${statLine(p) ? ' · ' + statLine(p) : ''}</div></div>
       <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></button>
-      ${ui.open === p.id ? `<div class="pl-act">${p.college ? `<span class="small">${esc(p.college)}${p.draft ? ` · drafted ${p.draft.year} R${p.draft.rnd}` : ''}</span>` : ''}${G.canPlayHurt(p) ? `<button class="btn sm" data-act="hurt" data-id="${p.id}">${p.playHurt ? 'Rest him' : 'Play through injury'}</button>` : ''}${confirmBtn('rel' + p.id, 'Release')}<button class="btn sm" data-act="shop" data-id="${p.id}">Offer in trade</button></div>` : ''}
+      ${ui.open === p.id ? `<div class="pl-act">${p.college ? `<span class="small">${esc(p.college)}${p.draft ? ` · drafted ${p.draft.year} R${p.draft.rnd}` : ''}</span>` : ''}${G.extInfo(L, p) ? `<button class="btn sm primary" data-act="extend" data-id="${p.id}">Extend ${G.money(G.extInfo(L, p).sal)}</button>` : ''}${G.canPlayHurt(p) ? `<button class="btn sm" data-act="hurt" data-id="${p.id}">${p.playHurt ? 'Rest him' : 'Play through injury'}</button>` : ''}${confirmBtn('rel' + p.id, 'Release')}<button class="btn sm" data-act="shop" data-id="${p.id}">Offer in trade</button></div>` : ''}
     </div>`).join('')}</div></section>`;
 }
 
@@ -1733,7 +2270,7 @@ function table(cols, rows, opts) {
 }
 function statYears() {
   const ys = new Set(Object.keys(L.tstats || {}).map(Number));
-  for (const id in L.players) { const p = L.players[id]; if (p.team === L.user || Object.values(p.hist).some(h => h.tm === L.user)) Object.keys(p.hist).forEach(y => ys.add(+y)); }
+  for (const p of G.allPlayers(L)) { if (p.team === L.user || Object.values(p.hist).some(h => h.tm === L.user)) Object.keys(p.hist).forEach(y => ys.add(+y)); }
   return [...ys].sort((a, b) => b - a);
 }
 function teamRecord(t, y) {
@@ -1778,7 +2315,7 @@ function playerCard(p) {
 function vStats() {
   const seg = [['team', 'Teams'], ['season', 'My players'], ['career', 'Careers'], ['awards', 'Awards']], mode = ui.st || 'team';
   let h = `<div class="seg">${seg.map(([k, n]) => `<button class="${mode === k ? 'on' : ''}" data-act="st" data-id="${k}">${n}</button>`).join('')}</div>`;
-  if (ui.statPid && L.players[ui.statPid]) h += playerCard(L.players[ui.statPid]);
+  if (ui.statPid && G.getP(L, ui.statPid)) h += playerCard(G.getP(L, ui.statPid));
   const years = statYears();
   const y = years.includes(ui.stYear) ? ui.stYear : (years[0] || L.year);
   const yearChips = years.length > 1 ? `<div class="chips">${years.map(v => `<button class="chip ${v === y ? 'on' : ''}" data-act="stYear" data-id="${v}">${v}</button>`).join('')}</div>` : '';
@@ -1804,7 +2341,7 @@ function vStats() {
     h += yearChips + `<section class="card"><h3>${y} team stats</h3><p class="small">Tap a column to sort. Allowed yards, points against, and giveaways sort best-first.</p>${table(cols, rows, { sortKey: sk, empty: 'No games played yet this season.' })}</section>`;
   }
   if (mode === 'season') {
-    const rows = []; for (const id in L.players) { const p = L.players[id], s = p.hist[y]; if (s && s.tm === L.user) rows.push({ p, s, me: false }); }
+    const rows = []; for (const p of G.allPlayers(L)) { const s = p.hist[y]; if (s && s.tm === L.user) rows.push({ p, s, me: false }); }
     h += yearChips + `<p class="small">${y} regular season, players who played for the ${esc(me().name)}. Tap a name for his career.</p>` + playerTables(rows, false);
   }
   if (mode === 'career') {
@@ -1858,11 +2395,14 @@ function vLeague() {
 function vMoves() {
   const max = G.rules(L.year).rosterMax, n = G.roster(L, L.user).length;
   const fa = G.freeAgents(L).filter(p => ui.faGrp === 'ALL' || p.grp === ui.faGrp).sort(ui.mSort ? cmp(ui.mSort) : (a, b) => G.value(b) - G.value(a)).slice(0, 40);
-  let h = offersCard() + `<section class="card"><div class="split"><h3>Free agents</h3><span class="count">${n} / ${max}</span></div>
-    <p class="small">Players released, cut, or left undrafted. In this era there is no open free agency, only the waiver pool.</p>${chips('faGrp', ui.faGrp)}${sortSeg('mSort')}
+  const faEra = G.faEra(G.capYear(L)), inSeason = L.phase === 'regular' || L.phase === 'playoffs';
+  const faNote = faEra === 'ufa' && L.phase === 'offseason' ? 'The open market: unrestricted free agents plus released and undrafted players. They sign for the price shown, which is higher if your team was bad last year.' : (inSeason ? 'Players released, cut, or left undrafted. In-season signings are 1-year deals at a discount.' : 'Players released, cut, or left undrafted.');
+  const bidding = L.phase === 'offseason' && L.fa && L.fa.era === 'ufa' && L.fa.round <= G.FA_ROUNDS;
+  let h = offersCard() + payrollCard() + faCard() + extCard() + (bidding ? '' : `<section class="card"><div class="split"><h3>Free agents</h3><span class="count">${n} / ${max}</span></div>
+    <p class="small">${faNote}</p>${chips('faGrp', ui.faGrp)}${sortSeg('mSort')}
     <div class="list">${fa.length ? fa.map(p => `<div class="pl"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">Age ${p.age}</div></div>
       <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></div>
-      <button class="btn sm" data-act="sign" data-id="${p.id}"${n >= max ? ' disabled' : ''}>Sign</button></div>`).join('') : '<p>No free agents at this position.</p>'}</div></section>`;
+      <button class="btn sm" data-act="sign" data-id="${p.id}"${inSeason && n >= max ? ' disabled' : ''}>Sign ${G.money(G.askPrice(L, p) * (inSeason ? 0.6 : 1))}</button></div>`).join('') : '<p>No free agents at this position.</p>'}</div></section>`);
   const others = L.teams.filter(t => t.id !== L.user);
   const tt = ui.tradeTeam == null ? others[0].id : ui.tradeTeam;
   const pkg = sel => ({ players: sel.filter(x => x[0] === 'p').map(x => +x.slice(2)), picks: sel.filter(x => x[0] === 'k').map(x => +x.slice(2)) });
@@ -2008,6 +2548,24 @@ function act(a, el) {
     case 'lead': ui.leadKey = id; break;
     case 'week': ui.resWeek = +id; break;
     case 'sign': { const e = G.sign(L, +id); flash(e || 'Signed.'); break; }
+    case 'resign': { const e = G.resign(L, +id); flash(e || 'Re-signed.'); break; }
+    case 'tag': { const e = G.franchiseTag(L, +id); flash(e || 'Franchise tag applied.'); break; }
+    case 'letGo': { const e = G.letGo(L, +id); flash(e || 'Released to free agency.'); break; }
+    case 'matchSheet': { const e = G.matchSheet(L, +id); flash(e || 'Offer matched. He stays.'); break; }
+    case 'declineSheet': { const e = G.declineSheet(L, +id); flash(e || 'He leaves. Compensation picks added.'); break; }
+    case 'sheet': { const e = G.sendSheet(L, +id); flash(e || 'His team did not match. He is yours.'); break; }
+    case 'protect': { const e = G.toggleProtect(L, +id); if (e) flash(e); break; }
+    case 'advanceFA': { const e = G.advanceFA(L); if (e) flash(e); break; }
+    case 'mktMore': ui.mktShow = (ui.mktShow || 30) + 30; break;
+    case 'extend': { const e = G.extend(L, +id); flash(e || 'Extension signed.'); break; }
+    case 'bid': {
+      const k = el.dataset.key, p = L.players[+id], b = (L.fa.bids || {})[+id], ask = G.baseAsk(L, p);
+      if (k === 'x') { G.withdrawBid(L, +id); break; }
+      let sal = b ? b.sal : ask, yrs = b ? b.yrs : Math.max(1, Math.min(5, p.age <= 26 ? 4 : p.age <= 29 ? 3 : p.age <= 31 ? 2 : 1));
+      if (k === 'sal+') sal += ask * 0.05; if (k === 'sal-') sal = Math.max(ask * 0.5, sal - ask * 0.05);
+      if (k === 'yrs+') yrs = Math.min(5, yrs + 1); if (k === 'yrs-') yrs = Math.max(1, yrs - 1);
+      const e = G.placeBid(L, +id, sal, yrs); if (e) flash(e); break;
+    }
     case 'shop': ui.give = ['p:' + id]; ui.get = []; ui.tview = 'p'; ui.tab = 'moves'; break;
     case 'tview': ui.tview = id; break;
     case 'acceptOffer': { const e = G.acceptOffer(L, +id); flash(e || 'Trade accepted.'); break; }
