@@ -64,6 +64,19 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
 .dc .pl-name { flex: 1; min-width: 0; }
 .btn.ar { padding: 4px 9px; min-width: 36px; }
 .fld .seg { margin-top: 2px; }
+.tscroll { overflow-x: auto; margin: 0 -4px; }
+.tbl.stat { white-space: nowrap; font-size: 14px; }
+.tbl.stat td, .tbl.stat th { padding: 6px 7px; }
+.tbl .l { text-align: left; }
+.th { background: none; border: 0; padding: 0; font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; }
+.lnk { background: none; border: 0; padding: 0; font: inherit; color: var(--field); font-weight: 600; text-align: left; }
+.award { display: inline-block; font-family: var(--cond); font-weight: 600; font-size: 13px; padding: 3px 8px; border-radius: 999px; background: var(--gold-soft); border: 1px solid var(--gold); }
+.awards { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+.aw-year + .aw-year { margin-top: 12px; }
+.aw { display: flex; flex-wrap: wrap; gap: 2px 10px; padding: 6px 0; border-top: 1px solid var(--line); }
+.aw-k { flex-basis: 100%; font-family: var(--cond); font-weight: 600; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.aw.mine .aw-p { color: var(--gold); }
+@media (max-width: 430px) { .tab { font-size: 11.5px; letter-spacing: .02em; } }
 .sortrow { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
 .sortrow .seg { flex: 1; margin: 0; }
 .dc { flex-wrap: wrap; }
@@ -750,6 +763,71 @@ function rejectOffer(L, id) { L.offers = (L.offers || []).filter(x => x.id !== i
 
 function aiTrades(L, wanted, tries) { let done = 0; for (let i = 0; i < tries && done < wanted; i++) if (aiTradeOnce(L)) done++; return done; }
 
+// Real NFL averages per team per game (Pro-Football-Reference): pts, cmp, att, pass yds, pass TD, INT, rush att, rush yds, rush TD
+const ERA_DATA = {
+  1970: [19.3, 13.8, 26.9, 161.4, 1.2, 1.4, 31.4, 120.4, 0.8],
+  1971: [19.4, 13.2, 25.9, 155.7, 1.1, 1.5, 32.4, 130.1, 0.9],
+  1972: [20.3, 12.8, 24.8, 152.1, 1.1, 1.3, 33.7, 139.4, 1.0],
+  1973: [19.5, 12.6, 24.3, 140.9, 1.0, 1.3, 35.5, 144.4, 0.9],
+  1974: [18.2, 13.8, 26.4, 153.2, 1.0, 1.4, 34.4, 133.3, 1.0],
+  1975: [20.6, 14.4, 27.4, 162.8, 1.2, 1.5, 36.3, 145.5, 1.1],
+  1976: [19.2, 13.7, 26.2, 152.0, 1.1, 1.3, 36.9, 150.7, 1.1],
+  1977: [17.2, 12.8, 25.0, 141.9, 1.0, 1.4, 37.4, 143.9, 0.9],
+  1978: [18.3, 14.0, 26.4, 158.8, 1.0, 1.4, 35.9, 141.8, 1.0],
+  1979: [20.1, 15.7, 29.0, 180.4, 1.2, 1.3, 33.9, 135.6, 1.1],
+  1980: [20.5, 17.2, 30.6, 196.0, 1.4, 1.4, 32.1, 127.5, 1.0],
+  1981: [20.7, 17.3, 31.7, 204.4, 1.3, 1.4, 32.4, 130.1, 1.0],
+  1982: [20.2, 17.8, 31.5, 199.4, 1.3, 1.4, 30.8, 117.8, 0.9],
+  1983: [21.8, 17.8, 31.4, 204.6, 1.4, 1.4, 31.7, 129.7, 1.0],
+  1984: [21.2, 18.0, 32.0, 205.9, 1.4, 1.3, 30.8, 123.9, 0.9],
+  1985: [21.5, 17.7, 32.2, 204.5, 1.3, 1.3, 30.4, 124.9, 1.0],
+  1986: [20.5, 17.9, 32.3, 205.5, 1.3, 1.3, 30.2, 118.7, 0.9],
+  1987: [21.6, 17.6, 32.1, 203.9, 1.5, 1.3, 31.4, 123.9, 0.9],
+  1988: [20.3, 17.1, 31.5, 200.7, 1.2, 1.2, 30.3, 121.4, 0.9],
+  1989: [20.6, 17.9, 32.0, 210.9, 1.3, 1.2, 29.2, 115.3, 0.9],
+  1990: [20.1, 16.9, 30.2, 194.8, 1.3, 1.1, 27.8, 113.9, 0.8],
+  1991: [19.0, 17.9, 31.1, 199.1, 1.1, 1.1, 27.4, 107.7, 0.8],
+  1992: [18.7, 17.2, 29.9, 187.6, 1.2, 1.2, 27.4, 110.5, 0.7],
+  1993: [18.7, 18.6, 32.2, 200.6, 1.2, 1.0, 28.3, 110.0, 0.7],
+  1994: [20.3, 19.5, 33.6, 213.6, 1.3, 1.1, 28.0, 104.3, 0.8],
+  1995: [21.5, 20.2, 34.8, 220.8, 1.4, 1.1, 27.5, 108.1, 0.8],
+  1996: [20.4, 19.2, 33.3, 207.4, 1.3, 1.1, 28.3, 109.0, 0.8],
+  1997: [20.7, 18.4, 32.8, 201.8, 1.3, 1.0, 28.4, 113.0, 0.8],
+  1998: [21.3, 18.3, 32.3, 205.0, 1.4, 1.1, 28.3, 112.7, 0.8],
+  1999: [20.8, 19.3, 33.8, 212.3, 1.3, 1.1, 27.3, 106.5, 0.7],
+  2000: [20.7, 19.1, 32.9, 206.9, 1.3, 1.1, 27.6, 112.6, 0.8],
+  2001: [20.2, 19.2, 32.6, 205.8, 1.3, 1.1, 27.6, 111.8, 0.7],
+  2002: [21.7, 20.1, 33.8, 212.2, 1.4, 1.0, 27.5, 116.1, 0.9],
+  2003: [20.8, 18.9, 32.2, 200.4, 1.3, 1.1, 28.3, 117.9, 0.8],
+  2004: [21.5, 19.1, 31.9, 210.5, 1.4, 1.0, 28.2, 116.6, 0.8],
+  2005: [20.6, 19.1, 32.2, 203.5, 1.3, 1.0, 28.1, 112.5, 0.8],
+  2006: [20.7, 19.1, 32.0, 204.8, 1.3, 1.0, 28.2, 117.3, 0.8],
+  2007: [21.7, 20.4, 33.3, 214.3, 1.4, 1.0, 27.3, 110.9, 0.8],
+  2008: [22.0, 19.7, 32.3, 211.3, 1.3, 0.9, 27.6, 116.0, 0.9],
+  2009: [21.5, 20.3, 33.3, 218.5, 1.4, 1.0, 27.5, 116.7, 0.8],
+  2010: [22.0, 20.5, 33.7, 221.5, 1.5, 1.0, 27.2, 114.5, 0.8],
+  2011: [22.2, 20.4, 34.0, 229.7, 1.5, 1.0, 27.3, 117.1, 0.8],
+  2012: [22.8, 21.2, 34.7, 231.3, 1.5, 0.9, 27.2, 115.9, 0.8],
+  2013: [23.4, 21.7, 35.4, 235.6, 1.6, 1.0, 27.1, 112.9, 0.8],
+  2014: [22.6, 21.9, 34.9, 236.8, 1.6, 0.9, 26.7, 111.3, 0.7],
+  2015: [22.8, 22.5, 35.7, 243.8, 1.6, 0.9, 26.3, 108.8, 0.7],
+  2016: [22.8, 22.5, 35.7, 241.5, 1.5, 0.8, 26.0, 108.9, 0.9],
+  2017: [21.7, 21.2, 34.2, 224.4, 1.4, 0.8, 26.9, 109.7, 0.7],
+  2018: [23.3, 22.4, 34.5, 237.8, 1.7, 0.8, 25.9, 114.5, 0.9],
+  2019: [22.8, 22.1, 34.9, 235.0, 1.6, 0.8, 26.1, 112.9, 0.9],
+  2020: [24.8, 23.0, 35.2, 240.2, 1.7, 0.8, 26.9, 118.9, 1.0],
+  2021: [23.0, 22.3, 34.4, 228.3, 1.5, 0.8, 26.6, 115.2, 0.9],
+  2022: [21.9, 21.4, 33.3, 218.5, 1.4, 0.8, 27.3, 121.6, 0.9],
+  2023: [21.8, 21.7, 33.7, 218.9, 1.4, 0.8, 26.8, 112.7, 0.9],
+  2024: [22.9, 21.4, 32.7, 217.6, 1.5, 0.7, 27.0, 119.8, 0.9],
+  2025: [23.0, 20.6, 32.1, 209.7, 1.5, 0.7, 26.8, 116.9, 0.9]
+};
+function era(y) {
+  const ys = Object.keys(ERA_DATA).map(Number), yy = Math.max(ys[0], Math.min(ys[ys.length - 1], y));
+  const [pts, cmp, att, pyds, ptd, int, ratt, ryds, rtd] = ERA_DATA[yy];
+  return { pts, cmp, att, pyds, ptd, int, ratt, ryds, rtd, tot: pyds + ryds, pshare: pyds / (pyds + ryds), tdPass: ptd / (ptd + rtd), ypa: pyds / att, ypc: pyds / cmp, ypr: ryds / ratt, cmpPct: cmp / att };
+}
+
 /* ---------- schedule ---------- */
 function divKey(t) { return t.conf + t.div; }
 
@@ -819,7 +897,7 @@ function genScore(exp, mult) {
 // Blitz beats the pass but gets run on; bend-don't-break slows the pass but gives up the run.
 const DEF_VS = { blitz: { pass: -2.5, bal: -0.8, run: 1.2 }, soft: { pass: -1.2, bal: 0.4, run: 1.6 }, bal: { pass: 0, bal: 0, run: 0 } };
 function expected(L, oRat, dRat, oCoach, dCoach, isHome, neutral) {
-  let e = 19.5 + (oRat.off - dRat.def) * 0.6 + (isHome && !neutral ? 1.4 : 0) + (oRat.K - 60) * 0.04;
+  let e = era(L.year).pts + (oRat.off - dRat.def) * 0.6 + (isHome && !neutral ? 1.4 : 0) + (oRat.K - 60) * 0.04;
   let m = (DEF_VS[dCoach.def] || DEF_VS.bal)[oCoach.off] || 0;
   // A scheme only works as well as the players running it: blitzing needs a strong front four,
   // bend-don't-break needs good cover men. Weak units get less of the benefit (penalties stay full).
@@ -833,7 +911,11 @@ function variance(oCoach, dCoach) {
   return 1 + (oCoach.aggr - 50) / 200 + (dCoach.def === 'blitz' ? 0.15 : 0) - (dCoach.def === 'soft' ? 0.1 : 0);
 }
 
-function stat(p, y, k, v) { if (!p) return; const h = p.hist[y] || (p.hist[y] = { g: 0 }); h[k] = (h[k] || 0) + v; }
+function stat(p, y, k, v) { if (!p) return; const h = p.hist[y] || (p.hist[y] = { g: 0 }); h[k] = (h[k] || 0) + v; if (p.team >= 0) h.tm = p.team; }
+function tstat(L, tid) {
+  L.tstats = L.tstats || {}; const Y = L.tstats[L.year] || (L.tstats[L.year] = {});
+  return Y[tid] || (Y[tid] = { g: 0, yds: 0, py: 0, ry: 0, td: 0, fg: 0, giv: 0, ydsA: 0, sk: 0, take: 0 });
+}
 
 function share(list, weights) {
   const pool = list.map((p, i) => [p, weights[i]]).filter(x => x[0]);
@@ -843,32 +925,38 @@ function share(list, weights) {
 function pickWeighted(sh) { let r = Math.random(); for (const [p, w] of sh) { r -= w; if (r <= 0) return p; } return sh.length ? sh[sh.length - 1][0] : null; }
 
 function creditStats(L, tid, sc, rat, oppRat, coach) {
-  const y = L.year, d = rat.d, pw = PW[coach.off];
+  const y = L.year, d = rat.d, pw = PW[coach.off], E = era(y);
   const starters = [];
   GRPS.forEach(g => d[g].slice(0, STARTERS[g]).forEach(p => starters.push(p)));
   starters.forEach(p => stat(p, y, 'g', 1));
-  const total = clamp(Math.round(262 + (rat.off - oppRat.def) * 4 + sc.td * 18 + R.norm() * 55), 80, 600);
-  const pshare = clamp(0.47 * pw + R.norm() * 0.07, 0.22, 0.78);
+  // Yardage and the pass/run mix follow the real league averages for this season.
+  const avgTD = E.pts * 0.7 / 7;
+  const total = clamp(Math.round(E.tot + (rat.off - oppRat.def) * 4 + (sc.td - avgTD) * 18 + R.norm() * 55), 80, 650);
+  const pshare = clamp(E.pshare * (1 + (pw - 1) * 0.7) + R.norm() * 0.06, 0.2, 0.88);
   const py = Math.round(total * pshare), ry = total - py;
-  let ptd = 0; for (let i = 0; i < sc.td; i++) if (Math.random() < pshare + 0.05) ptd++;
+  const tdPass = clamp(E.tdPass * pshare / E.pshare, 0.1, 0.92);
+  let ptd = 0; for (let i = 0; i < sc.td; i++) if (Math.random() < tdPass) ptd++;
   const rtd = sc.td - ptd;
-  const qb = d.QB[0];
+  const qb = d.QB[0]; let ints = 0;
   if (qb) {
-    const att = Math.max(8, Math.round(py / 6.9 + R.int(-3, 4)));
-    const cmp = Math.round(att * clamp(0.50 + (qb.ovr - 60) * 0.004 + R.norm() * 0.05, 0.3, 0.75));
+    const att = Math.max(8, Math.round(py / E.ypa + R.int(-3, 4)));
+    const cmp = Math.round(att * clamp(E.cmpPct + (qb.ovr - 60) * 0.004 + R.norm() * 0.05, 0.3, 0.8));
     stat(qb, y, 'att', att); stat(qb, y, 'cmp', cmp); stat(qb, y, 'py', py); stat(qb, y, 'ptd', ptd);
-    stat(qb, y, 'int', R.poisson(clamp(1.5 - (qb.ovr - 60) * 0.025, 0.4, 2.6)));
+    ints = R.poisson(clamp(E.int * (1 - (qb.ovr - 60) * 0.017), 0.2, 2.6));
+    stat(qb, y, 'int', ints);
   }
   const rec = share([d.WR[0], d.WR[1], d.TE[0], d.RB[0], d.RB[1], d.WR[2]], [0.32, 0.22, 0.18, 0.14, 0.06, 0.08]);
   for (const [p, w] of rec) {
     const yds = Math.round(py * w * (0.75 + Math.random() * 0.5));
-    stat(p, y, 'recy', yds); stat(p, y, 'rec', Math.max(0, Math.round(yds / 13 + R.norm())));
+    stat(p, y, 'recy', yds); stat(p, y, 'rec', Math.max(0, Math.round(yds / E.ypc + R.norm())));
   }
   for (let i = 0; i < ptd; i++) stat(pickWeighted(rec), y, 'rectd', 1);
-  const rush = share([d.RB[0], d.RB[1], qb], [0.66, 0.26, 0.08]);
-  for (const [p, w] of rush) { const yds = Math.round(ry * w * (0.8 + Math.random() * 0.4)); stat(p, y, 'ry', yds); stat(p, y, 'ra', Math.max(1, Math.round(yds / 4.1))); }
+  const rush = share([d.RB[0], d.RB[1], qb], [0.56, 0.32, 0.12]);
+  for (const [p, w] of rush) { const yds = Math.round(ry * w * (0.8 + Math.random() * 0.4)); stat(p, y, 'ry', yds); stat(p, y, 'ra', Math.max(1, Math.round(yds / E.ypr))); }
   for (let i = 0; i < rtd; i++) stat(pickWeighted(rush), y, 'rtd', 1);
   stat(d.K[0], y, 'fgm', sc.fg);
+  const T = tstat(L, tid); T.g++; T.yds += total; T.py += py; T.ry += ry; T.td += sc.td; T.fg += sc.fg; T.giv += ints;
+  return { total, ints };
 }
 
 function creditDefense(L, tid, rat, oppRat, oppQB) {
@@ -879,6 +967,7 @@ function creditDefense(L, tid, rat, oppRat, oppQB) {
   const ints = oppQB && oppQB.hist[y] ? (oppQB._lastInt || 0) : 0;
   const cover = share([d.DB[0], d.DB[1], d.DB[2], d.DB[3], d.LB[0]], [0.24, 0.24, 0.2, 0.2, 0.12]);
   for (let i = 0; i < ints; i++) stat(pickWeighted(cover), y, 'dint', 1);
+  const T = tstat(L, tid); T.sk += sacks; T.take += ints;
 }
 
 function injuries(L, rat) {
@@ -932,7 +1021,8 @@ function playGame(L, g, opts) {
   const hBefore = hQB && hQB.hist[L.year] ? (hQB.hist[L.year].int || 0) : 0;
   const aBefore = aQB && aQB.hist[L.year] ? (aQB.hist[L.year].int || 0) : 0;
   if (!opts.noStats) {
-    creditStats(L, g.h, hs, hr, ar, Hc); creditStats(L, g.a, as, ar, hr, Ac);
+    const hS = creditStats(L, g.h, hs, hr, ar, Hc), aS = creditStats(L, g.a, as, ar, hr, Ac);
+    tstat(L, g.h).ydsA += aS.total; tstat(L, g.a).ydsA += hS.total;
     if (hQB) hQB._lastInt = (hQB.hist[L.year].int || 0) - hBefore;
     if (aQB) aQB._lastInt = (aQB.hist[L.year].int || 0) - aBefore;
     creditDefense(L, g.h, hr, ar, aQB); creditDefense(L, g.a, ar, hr, hQB);
@@ -1002,7 +1092,64 @@ function seeds(L, conf) {
   return ws.concat(rest.slice(0, Math.max(0, n - ws.length))).map(t => t.id);
 }
 
+/* ---------- awards ---------- */
+const OFFG = ['QB', 'RB', 'WR', 'TE'], DEFG = ['DL', 'LB', 'DB'];
+function offScore(h) { return (h.py || 0) * 0.035 + (h.ptd || 0) * 5.5 - (h.int || 0) * 3 + (h.ry || 0) * 0.08 + (h.rtd || 0) * 5 + (h.recy || 0) * 0.08 + (h.rectd || 0) * 5 + (h.rec || 0) * 0.2; }
+function defScore(h, p) { return (h.sk || 0) * 4 + (h.dint || 0) * 5 + Math.max(0, p.ovr - 60) * 0.6 + (h.g || 0) * 0.5; }
+const fmt = n => Math.round(n).toLocaleString('en-US');
+function awardLine(p, h) {
+  if (p.grp === 'QB') return `${fmt(h.py || 0)} pass yds, ${h.ptd || 0} TD, ${h.int || 0} INT`;
+  if (p.grp === 'RB') return `${fmt(h.ry || 0)} rush yds, ${(h.rtd || 0) + (h.rectd || 0)} TD, ${fmt(h.recy || 0)} rec yds`;
+  if (p.grp === 'WR' || p.grp === 'TE') return `${h.rec || 0} rec, ${fmt(h.recy || 0)} yds, ${h.rectd || 0} TD`;
+  return `${h.sk || 0} sacks, ${h.dint || 0} INT`;
+}
+function giveAward(L, key, p, line, tid) {
+  const y = L.year; L.awards = L.awards || {}; const A = L.awards[y] || (L.awards[y] = {});
+  A[key] = { pid: p.id, tid, name: p.name, pos: p.pos, line };
+  (p.awards = p.awards || []).push({ y, a: key });
+}
+const AWARD_NAMES = { mvp: 'MVP', opoy: 'Offensive Player of the Year', dpoy: 'Defensive Player of the Year', roy: 'Rookie of the Year', sbmvp: 'Super Bowl MVP' };
+function seasonAwards(L) {
+  const y = L.year, minG = Math.ceil(rules(y).games / 2), cand = [];
+  for (const id in L.players) {
+    const p = L.players[id], h = p.hist[y];
+    if (!h || (h.g || 0) < minG || h.tm == null) continue;
+    const t = L.teams[h.tm], wp = pct(L, t);
+    const off = OFFG.includes(p.grp) ? offScore(h) : 0, def = DEFG.includes(p.grp) ? defScore(h, p) : 0;
+    cand.push({ p, h, off, def, wp, rookie: (p.yrs || 0) === 0 });
+  }
+  const best = f => cand.slice().sort((a, b) => f(b) - f(a))[0];
+  const mvp = best(c => c.off ? c.off + c.wp * 60 : c.def * 1.6 + c.wp * 60);
+  const opoy = best(c => c.off);
+  const dpoy = best(c => c.def);
+  const roy = best(c => c.rookie ? Math.max(c.off, c.def * 2.2) : -1);
+  const out = [];
+  for (const [k, c] of [['mvp', mvp], ['opoy', opoy], ['dpoy', dpoy], ['roy', roy]]) {
+    if (!c || (k === 'roy' && !c.rookie)) continue;
+    giveAward(L, k, c.p, awardLine(c.p, c.h), c.h.tm);
+    out.push(`${AWARD_NAMES[k]}: ${c.p.pos} ${c.p.name}, ${L.teams[c.h.tm].abbr}`);
+  }
+  if (out.length) addNews(L, `${y} awards. ` + out.join(' · ') + '.');
+}
+function superBowlMVP(L, w, pts) {
+  const d = depth(L, w), pool = [];
+  const add = (p, wgt) => { if (p) pool.push([p, wgt]); };
+  add(d.QB[0], 45); add(d.RB[0], 15); add(d.WR[0], 15);
+  add(d.DL.slice().sort((a, b) => b.ovr - a.ovr)[0], 10); add(d.LB[0], 5); add(d.DB.slice().sort((a, b) => b.ovr - a.ovr)[0], 10);
+  const tot = pool.reduce((s, x) => s + x[1], 0); let r = Math.random() * tot, p = pool[0][0];
+  for (const [pl, wgt] of pool) { r -= wgt; if (r <= 0) { p = pl; break; } }
+  const tds = Math.max(1, Math.floor(pts / 7));
+  let line;
+  if (p.grp === 'QB') { const att = R.int(18, 30); line = `${Math.round(att * (0.55 + Math.random() * 0.2))}/${att}, ${R.int(160, 290)} yds, ${R.int(1, Math.min(3, tds))} TD`; }
+  else if (p.grp === 'RB') line = `${R.int(18, 30)} carries, ${R.int(85, 165)} yds, ${R.int(1, Math.min(2, tds))} TD`;
+  else if (p.grp === 'WR' || p.grp === 'TE') line = `${R.int(4, 8)} rec, ${R.int(90, 170)} yds, ${R.int(1, Math.min(2, tds))} TD`;
+  else line = Math.random() < 0.5 ? `${R.int(2, 3)} sacks, forced fumble` : `${R.int(2, 3)} INT`;
+  giveAward(L, 'sbmvp', p, line, w);
+  addNews(L, `Super Bowl ${roman(L.year - 1965)} MVP: ${p.pos} ${p.name} (${line}).`);
+}
+
 function startPlayoffs(L) {
+  seasonAwards(L);
   L.phase = 'playoffs';
   L.offers = [];
   const s = { AFC: seeds(L, 'AFC'), NFC: seeds(L, 'NFC') };
@@ -1048,6 +1195,7 @@ function simPlayoffRound(L) {
     const w = g.hs > g.as ? g.h : g.a; games.push(g);
     P.champ = w; L.champs.unshift({ y: L.year, champ: w, sb: L.year - 1965, score: Math.max(g.hs, g.as) + '-' + Math.min(g.hs, g.as), loser: w === g.h ? g.a : g.h });
     addNews(L, `Super Bowl ${roman(L.year - 1965)}: ${L.teams[w].city} ${L.teams[w].name} win ${Math.max(g.hs, g.as)}-${Math.min(g.hs, g.as)}.`);
+    superBowlMVP(L, w, Math.max(g.hs, g.as));
     P.rounds.push({ name, games });
     finishSeason(L);
     return;
@@ -1293,7 +1441,7 @@ function leaders(L, key, n, year) {
 
 function myDraftSlots(L) { const D = L.draft; if (!D || !D.slotPick) return []; const out = []; for (let i = D.pick; i < D.slotPick.length; i++) { const k = pickById(L, D.slotPick[i]); if (k && k.own === L.user) out.push(i + 1); } return out; }
 
-const API = { DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
+const API = { era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
   value, release, sign, proposeTrade, tradeVerdict, teamPicks, pickById, pickLabel, projectedOverall, pickWeight, playerWeight, ensurePicks, myDraftSlots, aiTrades, acceptOffer, rejectOffer, offerValid, cutTo, ratings, teamOverall, startRegular, canStartSeason, simWeek, simPlayoffRound, roundName,
   sortTeams, divisions, pct, startDraft, onClock, makePick, aiPick, draftUntilUser, draftAll, scoutPlayer, beginDraft, SCOUT_VISITS, endDraft, startNextSeason, leaders, potKnown, shownPot, roman, addNews };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.GG = API;
@@ -1368,7 +1516,7 @@ function confirmBtn(id, label, cls) {
 }
 
 /* ---------- top bar & tabs ---------- */
-const TABS = [['home', 'Office'], ['roster', 'Roster'], ['league', 'League'], ['moves', 'Moves'], ['coach', 'Coach'], ['data', 'Data']];
+const TABS = [['home', 'Office'], ['roster', 'Roster'], ['stats', 'Stats'], ['league', 'League'], ['moves', 'Moves'], ['coach', 'Coach'], ['data', 'Data']];
 function phaseLabel() {
   if (!L) return 'No league yet';
   switch (L.phase) {
@@ -1387,7 +1535,7 @@ function render() {
     <div class="top-txt"><div class="top-team">${t ? esc(tname(t)) : 'Gridiron GM'}</div><div class="top-sub">${esc(phaseLabel())}${t && L.phase !== 'preseason' ? ' · ' + rec(t) : ''}</div></div></div>`;
   const nOff = L ? (L.offers || []).filter(o => G.offerValid(L, o)).length : 0;
   $('#tabs').innerHTML = TABS.map(([k, n]) => `<button class="tab ${ui.tab === k ? 'on' : ''}" data-act="tab" data-id="${k}"${!L && k !== 'data' && k !== 'home' ? ' disabled' : ''}>${n}${k === 'moves' && nOff ? `<span class="badge">${nOff}</span>` : ''}</button>`).join('');
-  const view = { home: vHome, roster: vRoster, league: vLeague, moves: vMoves, coach: vCoach, data: vData }[ui.tab];
+  const view = { home: vHome, roster: vRoster, stats: vStats, league: vLeague, moves: vMoves, coach: vCoach, data: vData }[ui.tab];
   $('#main').innerHTML = (ui.msg ? `<div class="toast">${esc(ui.msg)}</div>` : '') + view();
   ui.msg = null;
 }
@@ -1570,6 +1718,104 @@ function vRoster() {
       <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></button>
       ${ui.open === p.id ? `<div class="pl-act">${p.college ? `<span class="small">${esc(p.college)}${p.draft ? ` · drafted ${p.draft.year} R${p.draft.rnd}` : ''}</span>` : ''}${G.canPlayHurt(p) ? `<button class="btn sm" data-act="hurt" data-id="${p.id}">${p.playHurt ? 'Rest him' : 'Play through injury'}</button>` : ''}${confirmBtn('rel' + p.id, 'Release')}<button class="btn sm" data-act="shop" data-id="${p.id}">Offer in trade</button></div>` : ''}
     </div>`).join('')}</div></section>`;
+}
+
+/* ---------- Stats ---------- */
+const n0 = v => v || 0;
+const num = v => Math.round(n0(v)).toLocaleString('en-US');
+const avg = (a, b, d) => b ? (a / b).toFixed(d == null ? 1 : d) : '–';
+function table(cols, rows, opts) {
+  opts = opts || {};
+  if (!rows.length) return `<p class="small">${opts.empty || 'No stats yet.'}</p>`;
+  const head = cols.map((c, i) => `<th class="${i ? '' : 'l'}">${opts.sortKey ? `<button class="th" data-act="tsSort" data-id="${c.k || ''}">${c.h}${opts.sortKey === c.k ? ' ▾' : ''}</button>` : c.h}</th>`).join('');
+  const body = rows.map(r => `<tr class="${r.me ? 'me' : ''}">${cols.map((c, i) => `<td class="${i ? '' : 'l'}">${c.f(r)}</td>`).join('')}</tr>`).join('');
+  return `<div class="tscroll"><table class="tbl stat"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+function statYears() {
+  const ys = new Set(Object.keys(L.tstats || {}).map(Number));
+  for (const id in L.players) { const p = L.players[id]; if (p.team === L.user || Object.values(p.hist).some(h => h.tm === L.user)) Object.keys(p.hist).forEach(y => ys.add(+y)); }
+  return [...ys].sort((a, b) => b - a);
+}
+function teamRecord(t, y) {
+  if (y === L.year && L.phase !== 'preseason') return { w: t.w, l: t.l, t: t.t, pf: t.pf, pa: t.pa };
+  return t.hist.find(s => s.y === y) || null;
+}
+function sumHist(p) { const s = { seasons: 0 }; for (const y in p.hist) { s.seasons++; for (const k in p.hist[y]) if (k !== 'tm') s[k] = n0(s[k]) + p.hist[y][k]; } return s; }
+function playerTables(rows, career) {
+  const nm = r => `<button class="lnk" data-act="statPlayer" data-id="${r.p.id}">${esc(r.p.name)}</button>${career ? '' : ''}`;
+  const first = { h: 'Player', f: nm };
+  const yrs = career ? [{ h: 'Yrs', f: r => r.s.seasons }] : [];
+  const out = [];
+  const pass = rows.filter(r => n0(r.s.att) > 0).sort((a, b) => n0(b.s.py) - n0(a.s.py));
+  out.push(['Passing', table([first, ...yrs, { h: 'G', f: r => n0(r.s.g) }, { h: 'Cmp', f: r => num(r.s.cmp) }, { h: 'Att', f: r => num(r.s.att) }, { h: 'Pct', f: r => avg(n0(r.s.cmp) * 100, r.s.att) }, { h: 'Yds', f: r => num(r.s.py) }, { h: 'TD', f: r => n0(r.s.ptd) }, { h: 'INT', f: r => n0(r.s.int) }, { h: 'Y/A', f: r => avg(r.s.py, r.s.att) }], pass)]);
+  const rush = rows.filter(r => n0(r.s.ra) > 0).sort((a, b) => n0(b.s.ry) - n0(a.s.ry));
+  out.push(['Rushing', table([first, ...yrs, { h: 'G', f: r => n0(r.s.g) }, { h: 'Att', f: r => num(r.s.ra) }, { h: 'Yds', f: r => num(r.s.ry) }, { h: 'Avg', f: r => avg(r.s.ry, r.s.ra) }, { h: 'TD', f: r => n0(r.s.rtd) }], rush)]);
+  const recv = rows.filter(r => n0(r.s.rec) > 0 || n0(r.s.recy) > 0).sort((a, b) => n0(b.s.recy) - n0(a.s.recy));
+  out.push(['Receiving', table([first, ...yrs, { h: 'G', f: r => n0(r.s.g) }, { h: 'Rec', f: r => num(r.s.rec) }, { h: 'Yds', f: r => num(r.s.recy) }, { h: 'Avg', f: r => avg(r.s.recy, r.s.rec) }, { h: 'TD', f: r => n0(r.s.rectd) }], recv)]);
+  const def = rows.filter(r => ['DL', 'LB', 'DB'].includes(r.p.grp) && n0(r.s.g) > 0).sort((a, b) => (n0(b.s.sk) * 2 + n0(b.s.dint) * 3) - (n0(a.s.sk) * 2 + n0(a.s.dint) * 3) || n0(b.s.g) - n0(a.s.g));
+  out.push(['Defense', table([first, ...yrs, { h: 'Pos', f: r => esc(r.p.pos) }, { h: 'G', f: r => n0(r.s.g) }, { h: 'Sacks', f: r => n0(r.s.sk) }, { h: 'INT', f: r => n0(r.s.dint) }], def)]);
+  const kick = rows.filter(r => n0(r.s.fgm) > 0).sort((a, b) => n0(b.s.fgm) - n0(a.s.fgm));
+  out.push(['Kicking', table([first, ...yrs, { h: 'G', f: r => n0(r.s.g) }, { h: 'FG made', f: r => n0(r.s.fgm) }], kick)]);
+  return out.map(([t, tb]) => `<section class="card"><h3>${t}</h3>${tb}</section>`).join('');
+}
+function playerCard(p) {
+  const ys = Object.keys(p.hist).map(Number).sort((a, b) => a - b);
+  const rows = ys.map(y => ({ y, s: p.hist[y], me: p.hist[y].tm === L.user }));
+  const tm = r => r.s.tm != null ? esc(L.teams[r.s.tm].abbr) : '–';
+  let cols = [{ h: 'Year', f: r => r.y }, { h: 'Tm', f: tm }, { h: 'G', f: r => n0(r.s.g) }];
+  if (p.grp === 'QB') cols = cols.concat([{ h: 'Cmp', f: r => num(r.s.cmp) }, { h: 'Att', f: r => num(r.s.att) }, { h: 'Yds', f: r => num(r.s.py) }, { h: 'TD', f: r => n0(r.s.ptd) }, { h: 'INT', f: r => n0(r.s.int) }, { h: 'Rush', f: r => num(r.s.ry) }]);
+  else if (p.grp === 'RB') cols = cols.concat([{ h: 'Att', f: r => num(r.s.ra) }, { h: 'Rush', f: r => num(r.s.ry) }, { h: 'TD', f: r => n0(r.s.rtd) }, { h: 'Rec', f: r => num(r.s.rec) }, { h: 'RecYds', f: r => num(r.s.recy) }, { h: 'RecTD', f: r => n0(r.s.rectd) }]);
+  else if (p.grp === 'WR' || p.grp === 'TE') cols = cols.concat([{ h: 'Rec', f: r => num(r.s.rec) }, { h: 'Yds', f: r => num(r.s.recy) }, { h: 'TD', f: r => n0(r.s.rectd) }]);
+  else if (p.grp === 'K') cols = cols.concat([{ h: 'FG', f: r => n0(r.s.fgm) }]);
+  else cols = cols.concat([{ h: 'Sacks', f: r => n0(r.s.sk) }, { h: 'INT', f: r => n0(r.s.dint) }]);
+  const tot = sumHist(p);
+  const totRow = { y: 'Career', s: Object.assign({}, tot, { tm: null, g: tot.g }) };
+  const aw = (p.awards || []).map(a => `<span class="award">${a.y} ${esc(G.AWARD_NAMES[a.a])}</span>`).join('');
+  return `<section class="card hero"><div class="split"><div><div class="eyebrow">${esc(p.pos)} · age ${p.age} · ${p.team >= 0 ? esc(tname(L.teams[p.team])) : (p.team === -2 ? 'Retired' : 'Free agent')}</div><h2>${esc(p.name)}</h2></div><button class="btn sm" data-act="statPlayer" data-id="">Close</button></div>
+    ${aw ? `<div class="awards">${aw}</div>` : ''}
+    ${ys.length ? table(cols, rows.concat([totRow])) : '<p class="small">No NFL stats in this league yet. Stats before 1970 are not imported.</p>'}</section>`;
+}
+function vStats() {
+  const seg = [['team', 'Teams'], ['season', 'My players'], ['career', 'Careers'], ['awards', 'Awards']], mode = ui.st || 'team';
+  let h = `<div class="seg">${seg.map(([k, n]) => `<button class="${mode === k ? 'on' : ''}" data-act="st" data-id="${k}">${n}</button>`).join('')}</div>`;
+  if (ui.statPid && L.players[ui.statPid]) h += playerCard(L.players[ui.statPid]);
+  const years = statYears();
+  const y = years.includes(ui.stYear) ? ui.stYear : (years[0] || L.year);
+  const yearChips = years.length > 1 ? `<div class="chips">${years.map(v => `<button class="chip ${v === y ? 'on' : ''}" data-act="stYear" data-id="${v}">${v}</button>`).join('')}</div>` : '';
+  if (mode === 'team') {
+    const Y = (L.tstats || {})[y] || {};
+    const rows = L.teams.map(t => { const T = Y[t.id], r = teamRecord(t, y); return T && r ? { t, T, r, me: t.id === L.user } : null; }).filter(Boolean);
+    const pg = (v, g) => g ? (v / g).toFixed(1) : '–';
+    const cols = [
+      { h: 'Team', k: '', f: x => esc(x.t.abbr), v: x => x.t.abbr },
+      { h: 'W-L-T', k: 'w', f: x => `${x.r.w}-${x.r.l}-${x.r.t}`, v: x => x.r.w + x.r.t / 2 },
+      { h: 'PF', k: 'pf', f: x => x.r.pf, v: x => x.r.pf },
+      { h: 'PA', k: 'pa', f: x => x.r.pa, v: x => -x.r.pa },
+      { h: 'Yds/G', k: 'yds', f: x => pg(x.T.yds, x.T.g), v: x => x.T.yds / x.T.g },
+      { h: 'Pass/G', k: 'py', f: x => pg(x.T.py, x.T.g), v: x => x.T.py / x.T.g },
+      { h: 'Rush/G', k: 'ry', f: x => pg(x.T.ry, x.T.g), v: x => x.T.ry / x.T.g },
+      { h: 'Allow/G', k: 'ydsA', f: x => pg(x.T.ydsA, x.T.g), v: x => -x.T.ydsA / x.T.g },
+      { h: 'Sacks', k: 'sk', f: x => x.T.sk, v: x => x.T.sk },
+      { h: 'Take', k: 'take', f: x => x.T.take, v: x => x.T.take },
+      { h: 'Give', k: 'giv', f: x => x.T.giv, v: x => -x.T.giv }
+    ];
+    const sk = ui.tsSort || 'w', col = cols.find(c => c.k === sk) || cols[1];
+    rows.sort((a, b) => col.v(b) - col.v(a));
+    h += yearChips + `<section class="card"><h3>${y} team stats</h3><p class="small">Tap a column to sort. Allowed yards, points against, and giveaways sort best-first.</p>${table(cols, rows, { sortKey: sk, empty: 'No games played yet this season.' })}</section>`;
+  }
+  if (mode === 'season') {
+    const rows = []; for (const id in L.players) { const p = L.players[id], s = p.hist[y]; if (s && s.tm === L.user) rows.push({ p, s, me: false }); }
+    h += yearChips + `<p class="small">${y} regular season, players who played for the ${esc(me().name)}. Tap a name for his career.</p>` + playerTables(rows, false);
+  }
+  if (mode === 'career') {
+    const rows = G.roster(L, L.user).map(p => ({ p, s: sumHist(p), me: false })).filter(r => r.s.seasons > 0);
+    h += `<p class="small">Career totals for your current roster, counting only seasons played in this league. Tap a name for year-by-year stats.</p>` + playerTables(rows, true);
+  }
+  if (mode === 'awards') {
+    const A = L.awards || {}, ys = Object.keys(A).map(Number).sort((a, b) => b - a);
+    h += `<section class="card"><h3>Awards</h3><p class="small">Regular-season awards are given when the regular season ends. Super Bowl MVP is named after the Super Bowl.</p>${ys.length ? ys.map(yy => `<div class="aw-year"><div class="eyebrow">${yy}</div>${['mvp', 'opoy', 'dpoy', 'roy', 'sbmvp'].filter(k => A[yy][k]).map(k => { const a = A[yy][k]; return `<div class="aw ${a.tid === L.user ? 'mine' : ''}"><span class="aw-k">${esc(G.AWARD_NAMES[k])}</span><span class="aw-p"><button class="lnk" data-act="statPlayer" data-id="${a.pid}">${esc(a.pos)} ${esc(a.name)}</button>, ${esc(L.teams[a.tid].abbr)}</span><span class="small">${esc(a.line)}</span></div>`; }).join('')}</div>`).join('') : '<p>No awards yet. The first ones are given when the regular season ends.</p>'}</section>`;
+  }
+  return h;
 }
 
 /* ---------- League ---------- */
@@ -1775,6 +2021,10 @@ function act(a, el) {
     case 'dcReset': G.resetDepth(L, L.user, id); break;
     case 'dcSort': G.setDepth(L, L.user, id, G.depthChart(L, L.user, id).sort(cmp(el.dataset.key)).map(p => p.id)); flash(`${id} depth chart ordered by ${el.dataset.key === 'pot' ? 'potential' : 'overall'}.`); break;
     case 'sort': ui[el.dataset.key] = id; break;
+    case 'st': ui.st = id; ui.statPid = null; break;
+    case 'stYear': ui.stYear = +id; break;
+    case 'tsSort': ui.tsSort = id || 'w'; break;
+    case 'statPlayer': ui.statPid = id ? +id : null; if (id) { ui.tab = 'stats'; window.scrollTo(0, 0); } break;
     case 'hurt': { const p = L.players[+id]; const e = G.setPlayHurt(L, +id, !p.playHurt); if (e) flash(e); else flash(p.playHurt ? `${p.name} will play through the injury.` : `${p.name} will rest until healthy.`); break; }
     case 'impKind': ui.impKind = id; break;
     case 'import': {
