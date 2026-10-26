@@ -64,6 +64,9 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
 .dc .pl-name { flex: 1; min-width: 0; }
 .btn.ar { padding: 4px 9px; min-width: 36px; }
 .fld .seg { margin-top: 2px; }
+.sortrow { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.sortrow .seg { flex: 1; margin: 0; }
+.dc { flex-wrap: wrap; }
 .badge { position: absolute; top: 3px; right: 4px; min-width: 16px; padding: 0 4px; border-radius: 8px; background: var(--bad); color: #fff; font-size: 11px; line-height: 16px; }
 .offers { border-color: var(--gold); border-width: 2px; }
 .offer + .offer { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 10px; }
@@ -1290,7 +1293,7 @@ function leaders(L, key, n, year) {
 
 function myDraftSlots(L) { const D = L.draft; if (!D || !D.slotPick) return []; const out = []; for (let i = D.pick; i < D.slotPick.length; i++) { const k = pickById(L, D.slotPick[i]); if (k && k.own === L.user) out.push(i + 1); } return out; }
 
-const API = { DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
+const API = { DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
   value, release, sign, proposeTrade, tradeVerdict, teamPicks, pickById, pickLabel, projectedOverall, pickWeight, playerWeight, ensurePicks, myDraftSlots, aiTrades, acceptOffer, rejectOffer, offerValid, cutTo, ratings, teamOverall, startRegular, canStartSeason, simWeek, simPlayoffRound, roundName,
   sortTeams, divisions, pct, startDraft, onClock, makePick, aiPick, draftUntilUser, draftAll, scoutPlayer, beginDraft, SCOUT_VISITS, endDraft, startNextSeason, leaders, potKnown, shownPot, roman, addNews };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.GG = API;
@@ -1539,6 +1542,18 @@ function myPicks() {
   return `<section class="card"><h3>Your class</h3><div class="list">${mine.map(x => { const p = L.players[x.pid]; return `<div class="pl"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">Round ${p.draft.rnd}, #${x.n} overall</div></div><div class="pl-r"><span class="lbl">${p.seen ? 'TRUE' : 'SCOUT'}</span>${rating(p.seen ? p.pot : p.scout)}</div></div></div>`; }).join('')}</div></section>`;
 }
 
+/* ---------- Sorting ---------- */
+// POT means what you can see: true potential once known, otherwise the scout grade.
+function cmp(key) {
+  return key === 'pot'
+    ? (a, b) => G.shownPot(L, b) - G.shownPot(L, a) || b.ovr - a.ovr
+    : (a, b) => b.ovr - a.ovr || G.shownPot(L, b) - G.shownPot(L, a);
+}
+function sortSeg(stateKey) {
+  const cur = ui[stateKey] || 'ovr';
+  return `<div class="sortrow"><span class="lbl">SORT</span><div class="seg mini">${[['ovr', 'Overall'], ['pot', 'Potential / Scout']].map(([k, n]) => `<button class="${cur === k ? 'on' : ''}" data-act="sort" data-key="${stateKey}" data-id="${k}">${n}</button>`).join('')}</div></div>`;
+}
+
 /* ---------- Roster ---------- */
 function chips(key, cur) {
   return `<div class="chips">${['ALL'].concat(G.GRPS).map(g => `<button class="chip ${cur === g ? 'on' : ''}" data-act="chip" data-key="${key}" data-id="${g}">${g === 'ALL' ? 'All' : g}</button>`).join('')}</div>`;
@@ -1546,9 +1561,9 @@ function chips(key, cur) {
 function vRoster() {
   const max = G.rules(L.year).rosterMax, all = G.roster(L, L.user), d = G.depth(L, L.user);
   const starterIds = new Set(); G.GRPS.forEach(g => d[g].slice(0, G.STARTERS[g]).forEach(p => starterIds.add(p.id)));
-  const list = all.filter(p => ui.grp === 'ALL' || p.grp === ui.grp).sort((a, b) => G.GRPS.indexOf(a.grp) - G.GRPS.indexOf(b.grp) || b.ovr - a.ovr);
+  const rc = cmp(ui.rSort), list = all.filter(p => ui.grp === 'ALL' || p.grp === ui.grp).sort((a, b) => G.GRPS.indexOf(a.grp) - G.GRPS.indexOf(b.grp) || rc(a, b));
   return `<section class="card"><div class="split"><h3>${esc(me().name)} roster</h3><span class="count ${all.length > max ? 'bad' : ''}">${all.length} / ${max}</span></div>
-    <p class="small">Starters are set automatically by rating. Tap a player for options.</p>${chips('grp', ui.grp)}
+    <p class="small">Green positions are starters, set on the Coach tab's depth chart. Tap a player for options.</p>${chips('grp', ui.grp)}${sortSeg('rSort')}
     <div class="list">${list.map(p => `<div class="pl ${ui.open === p.id ? 'open' : ''}">
       <button class="pl-main" data-act="open" data-id="${p.id}"><span class="pos ${starterIds.has(p.id) ? 'st' : ''}">${esc(p.pos)}</span>
       <div class="pl-name">${esc(p.name)}${p.inj ? `<span class="inj">INJ ${p.inj >= 20 ? 'season' : p.inj + 'w'}</span>` : ''}<div class="pl-sub">Age ${p.age} · ${p.yrs ? p.yrs + ' yr' + (p.yrs > 1 ? 's' : '') : 'Rookie'}${statLine(p) ? ' · ' + statLine(p) : ''}</div></div>
@@ -1596,9 +1611,9 @@ function vLeague() {
 /* ---------- Moves: free agents & trades ---------- */
 function vMoves() {
   const max = G.rules(L.year).rosterMax, n = G.roster(L, L.user).length;
-  const fa = G.freeAgents(L).filter(p => ui.faGrp === 'ALL' || p.grp === ui.faGrp).sort((a, b) => G.value(b) - G.value(a)).slice(0, 40);
+  const fa = G.freeAgents(L).filter(p => ui.faGrp === 'ALL' || p.grp === ui.faGrp).sort(ui.mSort ? cmp(ui.mSort) : (a, b) => G.value(b) - G.value(a)).slice(0, 40);
   let h = offersCard() + `<section class="card"><div class="split"><h3>Free agents</h3><span class="count">${n} / ${max}</span></div>
-    <p class="small">Players released, cut, or left undrafted. In this era there is no open free agency, only the waiver pool.</p>${chips('faGrp', ui.faGrp)}
+    <p class="small">Players released, cut, or left undrafted. In this era there is no open free agency, only the waiver pool.</p>${chips('faGrp', ui.faGrp)}${sortSeg('mSort')}
     <div class="list">${fa.length ? fa.map(p => `<div class="pl"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">Age ${p.age}</div></div>
       <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></div>
       <button class="btn sm" data-act="sign" data-id="${p.id}"${n >= max ? ' disabled' : ''}>Sign</button></div>`).join('') : '<p>No free agents at this position.</p>'}</div></section>`;
@@ -1608,8 +1623,8 @@ function vMoves() {
   // drop anything that changed teams since it was selected
   ui.give = ui.give.filter(x => x[0] === 'p' ? (L.players[+x.slice(2)] || {}).team === L.user : (G.pickById(L, +x.slice(2)) || {}).own === L.user);
   ui.get = ui.get.filter(x => x[0] === 'p' ? (L.players[+x.slice(2)] || {}).team === tt : (G.pickById(L, +x.slice(2)) || {}).own === tt);
-  const theirs = G.roster(L, tt).sort((a, b) => b.ovr - a.ovr), mine = G.roster(L, L.user).sort((a, b) => b.ovr - a.ovr);
-  const btnP = (p, side) => { const key = 'p:' + p.id, on = ui[side].includes(key); return `<button class="tp ${on ? 'on' : ''}" data-act="tp" data-side="${side}" data-id="${key}"><span class="pos">${esc(p.pos)}</span><span class="tp-n">${esc(p.name)}</span><span class="tp-a">${p.age}</span>${rating(p.ovr)}</button>`; };
+  const tc = cmp(ui.tSort), theirs = G.roster(L, tt).sort(tc), mine = G.roster(L, L.user).sort(tc), showPot = ui.tSort === 'pot';
+  const btnP = (p, side) => { const key = 'p:' + p.id, on = ui[side].includes(key); return `<button class="tp ${on ? 'on' : ''}" data-act="tp" data-side="${side}" data-id="${key}"><span class="pos">${esc(p.pos)}</span><span class="tp-n">${esc(p.name)}</span><span class="tp-a">${p.age}</span>${rating(showPot ? G.shownPot(L, p) : p.ovr)}</button>`; };
   const btnK = (k, side) => { const key = 'k:' + k.id, on = ui[side].includes(key); return `<button class="tp ${on ? 'on' : ''}" data-act="tp" data-side="${side}" data-id="${key}"><span class="pos pk">PICK</span><span class="tp-n">${k.y} R${k.rnd}${k.orig !== k.own ? ' ' + esc(L.teams[k.orig].abbr) : ''}</span><span class="tp-a">≈#${G.projectedOverall(L, k)}</span></button>`; };
   const col = (side, players, tid, label) => {
     const picks = G.teamPicks(L, tid);
@@ -1627,7 +1642,7 @@ function vMoves() {
   h += `<section class="card"><h3>Trade</h3>
     <p class="small">Trade players and draft picks for the next three drafts. Picks show their projected overall slot.</p>
     <label class="fld">Trade partner<select id="tradeTeam">${others.map(t => `<option value="${t.id}"${t.id === tt ? ' selected' : ''}>${esc(tname(t))} (${rec(t)})</option>`).join('')}</select></label>
-    <div class="trade">${col('give', mine, L.user, 'You send')}${col('get', theirs, tt, 'You receive')}</div>
+    ${ui.tview === 'k' ? '' : sortSeg('tSort')}<div class="trade">${col('give', mine, L.user, 'You send')}${col('get', theirs, tt, 'You receive')}</div>
     <div class="trade summary"><div><div class="eyebrow">Sending</div>${chosen(ui.give)}</div><div><div class="eyebrow">Receiving</div>${chosen(ui.get)}</div></div>
     ${gauge}
     <div class="row"><button class="btn primary" data-act="propose"${ready ? '' : ' disabled'}>Propose trade</button><button class="btn" data-act="clearTrade">Clear</button></div></section>`;
@@ -1645,7 +1660,7 @@ function vCoach() {
     const out = p.inj && !(p.playHurt && G.canPlayHurt(p)), st = dep.includes(p.id);
     return `<div class="dc ${out ? 'out' : ''}"><span class="dc-n">${i + 1}</span><span class="pos ${st ? 'st' : ''}">${esc(p.pos)}</span>
       <div class="pl-name">${esc(p.name)}${p.inj ? `<span class="inj">${p.inj >= 20 ? 'OUT season' : (p.playHurt ? 'HURT ' : 'OUT ') + p.inj + 'w'}</span>` : ''}<div class="pl-sub">Age ${p.age}${p.playHurt && p.inj ? ` · plays at ${G.eff(p)}` : ''}</div></div>
-      ${rating(G.eff(p))}
+      <div class="pl-r"><span class="lbl">OVR</span>${rating(G.eff(p))}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div>
       ${G.canPlayHurt(p) ? `<button class="btn sm" data-act="hurt" data-id="${p.id}">${p.playHurt ? 'Rest' : 'Play hurt'}</button>` : ''}
       <button class="btn sm ar" data-act="dcMove" data-id="${p.id}" data-key="-1"${i === 0 ? ' disabled' : ''} aria-label="Move up">▲</button><button class="btn sm ar" data-act="dcMove" data-id="${p.id}" data-key="1"${i === chart.length - 1 ? ' disabled' : ''} aria-label="Move down">▼</button></div>`;
   }).join('');
@@ -1653,7 +1668,8 @@ function vCoach() {
       <div class="chips">${G.GRPS.map(g => `<button class="chip ${dg === g ? 'on' : ''}" data-act="chip" data-key="dcGrp" data-id="${g}">${g} ${G.STARTERS[g]}</button>`).join('')}</div>
       <p class="small">The top ${G.STARTERS[dg]} healthy players start (green). Injured players are skipped unless you let them play hurt, which costs ${G.HURT_PENALTY} rating points and risks a longer injury.</p>
       <div class="list">${dcRows || '<p>No players at this position.</p>'}</div>
-      ${custom ? `<div class="row"><button class="btn" data-act="dcReset" data-id="${dg}">Go back to sorting by rating</button></div>` : ''}</section>
+      <div class="row"><button class="btn sm" data-act="dcSort" data-key="ovr" data-id="${dg}">Order by overall</button><button class="btn sm" data-act="dcSort" data-key="pot" data-id="${dg}">Order by potential</button>${custom ? `<button class="btn sm" data-act="dcReset" data-id="${dg}">Auto (best healthy OVR)</button>` : ''}</div>
+      <p class="small">Ordering changes who starts. Ordering by potential plays your young players ahead of better veterans.</p></section>
     <section class="card"><h3>Offensive philosophy</h3>${segc('off', [['run', 'Ground game'], ['bal', 'Balanced'], ['pass', 'Air it out']])}
       <p class="small">Run-first leans on your backs and line. Pass-first leans on your quarterback and receivers.</p></section>
     <section class="card"><h3>Defensive scheme</h3>${segc('def', [['soft', 'Bend, don\'t break'], ['bal', 'Base 4-3'], ['blitz', 'Blitz']])}
@@ -1757,6 +1773,8 @@ function act(a, el) {
     case 'plan': G.setGamePlan(L, el.dataset.key, id || null); break;
     case 'dcMove': G.moveDepth(L, L.user, +id, +el.dataset.key); break;
     case 'dcReset': G.resetDepth(L, L.user, id); break;
+    case 'dcSort': G.setDepth(L, L.user, id, G.depthChart(L, L.user, id).sort(cmp(el.dataset.key)).map(p => p.id)); flash(`${id} depth chart ordered by ${el.dataset.key === 'pot' ? 'potential' : 'overall'}.`); break;
+    case 'sort': ui[el.dataset.key] = id; break;
     case 'hurt': { const p = L.players[+id]; const e = G.setPlayHurt(L, +id, !p.playHurt); if (e) flash(e); else flash(p.playHurt ? `${p.name} will play through the injury.` : `${p.name} will rest until healthy.`); break; }
     case 'impKind': ui.impKind = id; break;
     case 'import': {
