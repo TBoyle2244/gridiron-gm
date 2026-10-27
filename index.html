@@ -2275,7 +2275,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = API; else 
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-10-27c';
+const APP_VERSION = '2026-10-27e';
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
 const ui = { tab: 'home', grp: 'ALL', lg: 'stand', leadKey: 'py', resWeek: null, open: null, confirm: null,
@@ -2986,6 +2986,11 @@ function vData() {
   h += `<section class="card"><h3>1970 rosters imported</h3><div class="grid26">${G.TEAMS_1970.map(t => `<span class="cell ${IM.rosters[t[0]] ? 'ok' : ''}" title="${esc(t[2])}">${esc(t[1])}<small>${IM.rosters[t[0]] ? IM.rosters[t[0]].length : '–'}</small></span>`).join('')}</div>
     <p class="small">Draft classes: ${Object.keys(IM.drafts).sort().map(y => `<b>${y}</b> (${IM.drafts[y].length})`).join(', ') || 'none yet'}</p></section>`;
   if (L) h += `<section class="card"><h3>Difficulty</h3><div class="seg">${Object.keys(G.DIFF).map(k => `<button class="${(L.diff || 'pro') === k ? 'on' : ''}" data-act="setDiff" data-id="${k}">${G.DIFF[k].name}</button>`).join('')}</div><p class="small">${diffBlurb(L.diff || 'pro')} You can change this any time.</p></section>`;
+  const nR = Object.keys(IM.rosters).length, nD = Object.keys(IM.drafts).length;
+  h += `<section class="card"><h3>Share your data with a friend</h3>
+    <p class="small">Your imported rosters and draft classes live only on this device. Make a data pack and send it to a friend (AirDrop, Messages, email). They open the game, tap <b>Load data pack</b>, and pick the file. It contains only the imported tables, not your league.</p>
+    <p class="small">This device has <b>${nR}</b> of 26 rosters and <b>${nD}</b> draft class${nD === 1 ? '' : 'es'}${nD ? ` (${Object.keys(IM.drafts).sort()[0]}–${Object.keys(IM.drafts).sort().slice(-1)[0]})` : ''}.</p>
+    <div class="row"><button class="btn primary" data-act="exportData"${nR || nD ? '' : ' disabled'}>Make data pack</button><label class="btn filebtn">Load data pack<input id="loadData" type="file" accept=".json,application/json"></label></div></section>`;
   h += `<p class="small ver">Gridiron GM version ${APP_VERSION}</p>`;
   h += `<section class="card"><h3>Save file</h3><p class="small">Your league saves on this device automatically. Back it up before clearing Safari data or switching devices.</p>
     <div class="row"><button class="btn" data-act="exportSave"${L ? '' : ' disabled'}>Download backup</button><label class="btn filebtn">Restore backup<input id="loadSave" type="file" accept=".json,application/json"></label></div>
@@ -3103,6 +3108,13 @@ function act(a, el) {
       try { flash(importText(text, ui.impKind, ui.impKind === 'roster' ? ui.impTeam : +ui.impYear)); } catch (e) { flash(e.message); }
       break;
     }
+    case 'exportData': {
+      const blob = new Blob([JSON.stringify({ gridironData: 1, rosters: IM.rosters, drafts: IM.drafts })], { type: 'application/json' });
+      const a2 = document.createElement('a'); a2.href = URL.createObjectURL(blob); a2.download = 'gridiron-gm-data-pack.json';
+      document.body.appendChild(a2); a2.click(); a2.remove();
+      flash('Data pack created. Use Share → Save to Files, AirDrop, or Messages to send it.');
+      break;
+    }
     case 'exportSave': {
       const blob = new Blob([JSON.stringify({ league: L, imports: IM })], { type: 'application/json' });
       const a2 = document.createElement('a'); a2.href = URL.createObjectURL(blob); a2.download = `gridiron-gm-${L.year}.json`;
@@ -3127,6 +3139,21 @@ document.addEventListener('change', e => {
   else if (t.id === 'impTeam') ui.impTeam = t.value;
   else if (t.id === 'impYear') ui.impYear = +t.value;
   else if (t.id === 'impFiles' && t.files.length) onFiles([...t.files]);
+  else if (t.id === 'loadData' && t.files[0]) {
+    t.files[0].text().then(s => {
+      try {
+        const o = JSON.parse(s);
+        const src = o.gridironData ? o : (o.imports || null); // a full backup works too
+        if (!src || (!src.rosters && !src.drafts)) throw 0;
+        let r = 0, d = 0;
+        for (const k in src.rosters || {}) { IM.rosters[k] = src.rosters[k]; r++; }
+        for (const k in src.drafts || {}) { IM.drafts[k] = src.drafts[k]; d++; }
+        flash(`Loaded ${r} roster${r === 1 ? '' : 's'} and ${d} draft class${d === 1 ? '' : 'es'}.${L ? ' Draft classes apply to future drafts. Rosters only apply when you start a new league.' : ' Start a new league to use them.'}`);
+        save();
+      } catch (err) { flash('That file is not a Gridiron GM data pack.'); }
+      render();
+    });
+  }
   else if (t.id === 'loadSave' && t.files[0]) {
     t.files[0].text().then(s => {
       try { const o = JSON.parse(s); if (!o.league || !o.league.teams) throw 0; L = o.league; G.ensureLeague(L); IM = o.imports || IM; ui.tab = 'home'; flash(`Restored your ${L.year} league.`); save(); }
@@ -3137,11 +3164,26 @@ document.addEventListener('change', e => {
 });
 document.addEventListener('input', e => { if (e.target.id === 'aggr') { const h = e.target.closest('.card').querySelector('h3'); if (h) h.textContent = 'Aggressiveness: ' + e.target.value; } });
 
+// Rosters and draft classes published with the game (data.json next to index.html).
+// Anything this device doesn't have yet is added; your own imports are never overwritten.
+async function loadBuiltInData() {
+  if (!/^https?:/.test(location.protocol)) return;
+  try {
+    const res = await fetch('data.json', { cache: 'no-store' });
+    if (!res.ok) return;
+    const o = await res.json(); if (!o || !o.gridironData) return;
+    let r = 0, d = 0;
+    for (const k in o.rosters || {}) if (!IM.rosters[k]) { IM.rosters[k] = o.rosters[k]; r++; }
+    for (const k in o.drafts || {}) if (!IM.drafts[k]) { IM.drafts[k] = o.drafts[k]; d++; }
+    if (r || d) { flash(`Loaded the game's built-in data: ${r} roster${r === 1 ? '' : 's'} and ${d} draft class${d === 1 ? '' : 'es'}.`); save(); render(); }
+  } catch (e) { /* offline or no data file: use what's on this device */ }
+}
 (async function boot() {
   await DB.open();
   const [l, im] = await Promise.all([DB.get('league'), DB.get('imports')]);
   if (im) IM = im; if (l && l.teams) { L = l; G.ensureLeague(L); }
   render();
+  loadBuiltInData();
   if ('serviceWorker' in navigator && location.protocol === 'https:' && !/claude\.ai|claudeusercontent/.test(location.host)) {
     try { navigator.serviceWorker.register('sw.js'); } catch (e) { /* offline install unavailable */ }
   }
