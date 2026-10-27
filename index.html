@@ -90,6 +90,10 @@ button.gl { cursor: pointer; }
 .bidctl { display: flex; flex-wrap: wrap; gap: 6px; }
 .pl.wide .pl-btns { flex-basis: 100%; flex-wrap: wrap; padding-left: 48px; }
 .pl-btns .btn { white-space: nowrap; }
+.fld.tpos { margin-top: 6px; }
+.fld.tpos select { padding: 7px 8px; font-size: 15px; }
+.ctbar { margin: 8px 0 4px; }
+.ctbar > .lbl { display: block; margin-bottom: 2px; }
 .sortrow { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
 .sortrow .seg { flex: 1; margin: 0; }
 .dc { flex-wrap: wrap; }
@@ -2592,7 +2596,8 @@ function faCard() {
   const F = L.fa, y = F.y, info = G.ERA_INFO[F.era];
   const prow = (p, extra, btns) => `<div class="pl wide"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">Age ${p.age + 1} in ${y} · ${(p.yrs || 0) + 1} yrs exp${extra ? ' · ' + extra : ''}</div></div>
     <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></div><div class="pl-btns">${btns}</div></div>`;
-  let h = `<section class="card offers"><div class="eyebrow">${y} offseason · ${esc(info.name)}</div><h3>Contracts &amp; free agency</h3><p class="small">${esc(info.text)}</p>`;
+  let h = `<section class="card offers"><div class="eyebrow">${y} offseason · ${esc(info.name)}</div><h3>Contracts &amp; free agency</h3><p class="small">${esc(info.text)}</p>
+    <div class="ctbar"><span class="lbl">POSITION</span>${chips('ctGrp', ui.ctGrp || 'ALL')}${sortSeg('ctSort', true, 'pos')}</div>`;
   // offer sheets on your players
   F.sheets.forEach((sh, i) => {
     const p = L.players[sh.pid], picks = G.compPicks(L, sh.sal).map(r => 'a round ' + r + ' pick').join(' and ');
@@ -2601,7 +2606,7 @@ function faCard() {
   });
   const ufa = F.era === 'ufa';
   if (ufa) h += marketHeader(F);
-  const exp = (ufa && F.round > 0) ? [] : G.expiring(L, L.user).filter(p => !F.sheets.some(s => s.pid === p.id)).sort((a, b) => b.ovr - a.ovr);
+  const exp = (ufa && F.round > 0) ? [] : ctFilter(G.expiring(L, L.user).filter(p => !F.sheets.some(s => s.pid === p.id)));
   if (!(ufa && F.round > 0)) h += `<h3 class="sub">Your expiring contracts (${exp.length})</h3>`;
   if (!(ufa && F.round > 0)) h += exp.length ? `<div class="list">${exp.map(p => {
     const rfa = G.isRestricted(L, p), price = rfa ? G.tenderPrice(L, p) : G.resignPrice(L, p);
@@ -2611,13 +2616,13 @@ function faCard() {
   }).join('')}</div><p class="small">${ufa ? 'This is your exclusive window. Once you start free agency, unrestricted players you haven\'t re-signed or tagged hit the open market, where you can still bid but other teams will too. Restricted players stay at their tender price.' : 'Anyone you don\'t handle re-signs at his asking price when the season starts.'}</p>` : '<p class="small">None. Everyone is signed for next season.</p>';
   if (ufa) h += marketList(F);
   if (F.era === 'planb') {
-    const pr = F.protect, mine = G.roster(L, L.user).slice().sort((a, b) => b.ovr - a.ovr);
+    const pr = F.protect, mine = ctFilter(G.roster(L, L.user).slice());
     h += `<h3 class="sub">Plan B protection (${pr.length} / 37)</h3><p class="small">Unprotected players worth keeping may sign elsewhere when the season starts.</p><div class="tlist protect">${mine.map(p => `<button class="tp ${pr.includes(p.id) ? 'on' : ''}" data-act="protect" data-id="${p.id}"><span class="pos">${esc(p.pos)}</span><span class="tp-n">${esc(p.name)}</span><span class="tp-a">${p.age}</span>${rating(p.ovr)}</button>`).join('')}</div>`;
-    const pool = G.planBPool(L).sort((a, b) => b.ovr - a.ovr).slice(0, 30);
+    const pool = ctFilter(G.planBPool(L)).slice(0, 40);
     h += `<h3 class="sub">Plan B market</h3><p class="small">Other teams' unprotected players. Sign them with no compensation.</p><div class="list">${pool.map(p => prow(p, esc(L.teams[p.team].abbr), `<button class="btn sm" data-act="sign" data-id="${p.id}">Sign ${G.money(G.askPrice(L, p))}</button>`)).join('')}</div>`;
   }
   if (F.era === 'comp' || F.era === 'planb') {
-    const tg = G.sheetTargets(L).filter(p => !F.done[p.id]).sort((a, b) => b.ovr - a.ovr).slice(0, 15);
+    const tg = ctFilter(G.sheetTargets(L).filter(p => !F.done[p.id])).slice(0, 25);
     if (tg.length) h += `<h3 class="sub">Offer sheet targets</h3><p class="small">Unsigned players on other teams. If his team doesn't match, he's yours and you give up the draft picks shown.</p><div class="list">${tg.map(p => { const sal = Math.round(G.askPrice(L, p) * 1.2); return prow(p, esc(L.teams[p.team].abbr) + ' · costs ' + G.compPicks(L, sal).map(r => 'R' + r).join('+'), `<button class="btn sm" data-act="sheet" data-id="${p.id}">Offer ${G.money(sal)}</button>`); }).join('')}</div>`;
   }
   return h + '</section>';
@@ -2638,10 +2643,13 @@ function marketHeader(F) {
     <p class="small">Each round, every free agent picks the best offer: money and years, plus team record, scheme fit, playing time, and loyalty. Anyone who doesn't sign lowers his price for the next round. After round ${G.FA_ROUNDS}, leftovers sign cheaply with whoever has room.</p>
     <div class="row">${btn}</div></div>`;
 }
+function ctFilter(list) {
+  const g = ui.ctGrp || 'ALL';
+  return list.filter(p => g === 'ALL' || p.grp === g).sort(cmp(ui.ctSort || 'pos'));
+}
 function marketList(F) {
   if (F.round > G.FA_ROUNDS) return '';
-  const grp = ui.faGrp || 'ALL';
-  const list = G.freeAgents(L).filter(p => p.retiredYear == null && (grp === 'ALL' || p.grp === grp)).sort((a, b) => b.ovr - a.ovr).slice(0, ui.mktShow || 30);
+  const list = ctFilter(G.freeAgents(L).filter(p => p.retiredYear == null)).slice(0, ui.mktShow || 30);
   const rows = list.map(p => {
     const b = F.bids && F.bids[p.id], ask = G.baseAsk(L, p), o = b ? G.bidOutlook(L, p.id) : null;
     const fit = G.fitFor(L, p, L.user);
@@ -2652,7 +2660,7 @@ function marketList(F) {
     return `<div class="pl wide"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">Age ${p.age + 1} · ${p.prevTeam != null && L.teams[p.prevTeam] ? 'was ' + esc(L.teams[p.prevTeam].abbr) + ' · ' : ''}asking ${G.money(ask)}${reasonsText(fit.reasons)}</div></div>
       <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></div><div class="pl-btns">${bidUI}</div></div>`;
   }).join('');
-  return `<h3 class="sub">Free agent market</h3>${chips('faGrp', grp)}<div class="list">${rows || '<p class="small">No free agents at this position.</p>'}</div>
+  return `<h3 class="sub">Free agent market</h3><div class="list">${rows || '<p class="small">No free agents at this position.</p>'}</div>
     <div class="row"><button class="btn" data-act="mktMore">Show more</button></div>`;
 }
 function extCard() {
@@ -2667,13 +2675,15 @@ function extCard() {
 /* ---------- Sorting ---------- */
 // POT means what you can see: true potential once known, otherwise the scout grade.
 function cmp(key) {
+  if (key === 'pos') return (a, b) => G.GRPS.indexOf(a.grp) - G.GRPS.indexOf(b.grp) || b.ovr - a.ovr;
   return key === 'pot'
     ? (a, b) => G.shownPot(L, b) - G.shownPot(L, a) || b.ovr - a.ovr
     : (a, b) => b.ovr - a.ovr || G.shownPot(L, b) - G.shownPot(L, a);
 }
-function sortSeg(stateKey) {
-  const cur = ui[stateKey] || 'ovr';
-  return `<div class="sortrow"><span class="lbl">SORT</span><div class="seg mini">${[['ovr', 'Overall'], ['pot', 'Potential / Scout']].map(([k, n]) => `<button class="${cur === k ? 'on' : ''}" data-act="sort" data-key="${stateKey}" data-id="${k}">${n}</button>`).join('')}</div></div>`;
+function sortSeg(stateKey, withPos, def) {
+  const cur = ui[stateKey] || def || 'ovr';
+  const opts = (withPos ? [['pos', 'Position']] : []).concat([['ovr', 'Overall'], ['pot', 'Potential / Scout']]);
+  return `<div class="sortrow"><span class="lbl">SORT</span><div class="seg mini">${opts.map(([k, n]) => `<button class="${cur === k ? 'on' : ''}" data-act="sort" data-key="${stateKey}" data-id="${k}">${n}</button>`).join('')}</div></div>`;
 }
 
 /* ---------- Roster ---------- */
@@ -2882,14 +2892,20 @@ function vMoves() {
   // drop anything that changed teams since it was selected
   ui.give = ui.give.filter(x => x[0] === 'p' ? (L.players[+x.slice(2)] || {}).team === L.user : (G.pickById(L, +x.slice(2)) || {}).own === L.user);
   ui.get = ui.get.filter(x => x[0] === 'p' ? (L.players[+x.slice(2)] || {}).team === tt : (G.pickById(L, +x.slice(2)) || {}).own === tt);
-  const tc = cmp(ui.tSort), theirs = G.roster(L, tt).sort(tc), mine = G.roster(L, L.user).sort(tc), showPot = ui.tSort === 'pot';
+  // each side has its own position filter
+  const gGive = ui.tGrpGive || 'ALL', gGet = ui.tGrpGet || 'ALL';
+  const tc = cmp(ui.tSort || 'pos'), showPot = ui.tSort === 'pot';
+  const mine = G.roster(L, L.user).filter(p => gGive === 'ALL' || p.grp === gGive).sort(tc);
+  const theirs = G.roster(L, tt).filter(p => gGet === 'ALL' || p.grp === gGet).sort(tc);
+  const posSel = (side, cur) => `<label class="fld tpos">Position<select id="tGrp-${side}">${['ALL'].concat(G.GRPS).map(g => `<option value="${g}"${cur === g ? ' selected' : ''}>${g === 'ALL' ? 'All positions' : g}</option>`).join('')}</select></label>`;
   const btnP = (p, side) => { const key = 'p:' + p.id, on = ui[side].includes(key), lk = side === 'give' && G.tradeLocked(L, p); return `<button class="tp ${on ? 'on' : ''}" data-act="tp" data-side="${side}" data-id="${key}"${lk ? ' disabled title="Just signed"' : ''}><span class="pos">${esc(p.pos)}</span><span class="tp-n">${esc(p.name)}${lk ? ' (new)' : ''}</span><span class="tp-a">${p.age}</span>${rating(showPot ? G.shownPot(L, p) : p.ovr)}</button>`; };
   const btnK = (k, side) => { const key = 'k:' + k.id, on = ui[side].includes(key); return `<button class="tp ${on ? 'on' : ''}" data-act="tp" data-side="${side}" data-id="${key}"><span class="pos pk">PICK</span><span class="tp-n">${k.y} R${k.rnd}${k.orig !== k.own ? ' ' + esc(L.teams[k.orig].abbr) : ''}</span><span class="tp-a">≈#${G.projectedOverall(L, k)}</span></button>`; };
   const col = (side, players, tid, label) => {
     const picks = G.teamPicks(L, tid);
     return `<div><div class="eyebrow">${label} (${ui[side].length})</div>
       <div class="seg mini"><button class="${(ui.tview || 'p') === 'p' ? 'on' : ''}" data-act="tview" data-id="p">Players</button><button class="${ui.tview === 'k' ? 'on' : ''}" data-act="tview" data-id="k">Picks (${picks.length})</button></div>
-      <div class="tlist">${(ui.tview === 'k' ? picks.map(k => btnK(k, side)) : players.map(p => btnP(p, side))).join('') || '<p class="small">None.</p>'}</div></div>`;
+      ${ui.tview === 'k' ? '' : posSel(side, side === 'give' ? gGive : gGet)}
+      <div class="tlist">${(ui.tview === 'k' ? picks.map(k => btnK(k, side)) : players.map(p => btnP(p, side))).join('') || '<p class="small">No players at this position.</p>'}</div></div>`;
   };
   const give = pkg(ui.give), get = pkg(ui.get), ready = ui.give.length && ui.get.length;
   let gauge = '';
@@ -2901,7 +2917,7 @@ function vMoves() {
   h += `<section class="card"><h3>Trade</h3>${G.pastDeadline(L) ? '<p class="small bad"><b>The trade deadline has passed.</b> Trading reopens after the season.</p>' : (L.phase === 'regular' ? `<p class="small">Trade deadline: after week ${G.DEADLINE_WEEK}.</p>` : '')}
     <p class="small">Trade players and draft picks for the next three drafts. Picks show their projected overall slot.</p>
     <label class="fld">Trade partner<select id="tradeTeam">${others.map(t => `<option value="${t.id}"${t.id === tt ? ' selected' : ''}>${esc(tname(t))} (${rec(t)})</option>`).join('')}</select></label>
-    ${ui.tview === 'k' ? '' : sortSeg('tSort')}<div class="trade">${col('give', mine, L.user, 'You send')}${col('get', theirs, tt, 'You receive')}</div>
+    ${ui.tview === 'k' ? '' : sortSeg('tSort', true, 'pos')}<div class="trade">${col('give', mine, L.user, 'You send')}${col('get', theirs, tt, 'You receive')}</div>
     <div class="trade summary"><div><div class="eyebrow">Sending</div>${chosen(ui.give)}</div><div><div class="eyebrow">Receiving</div>${chosen(ui.get)}</div></div>
     ${gauge}
     <div class="row"><button class="btn primary" data-act="propose"${ready ? '' : ' disabled'}>Propose trade</button><button class="btn" data-act="clearTrade">Clear</button></div></section>`;
@@ -3101,7 +3117,8 @@ function act(a, el) {
 document.addEventListener('click', e => { const el = e.target.closest('[data-act]'); if (el && !el.disabled) act(el.dataset.act, el); });
 document.addEventListener('change', e => {
   const t = e.target;
-  if (t.id === 'startQB') { G.setStarterQB(L, +t.value); save(); render(); }
+  if (t.id === 'tGrp-give' || t.id === 'tGrp-get') { ui[t.id === 'tGrp-give' ? 'tGrpGive' : 'tGrpGet'] = t.value; render(); }
+  else if (t.id === 'startQB') { G.setStarterQB(L, +t.value); save(); render(); }
   else if (t.id === 'tradeTeam') { ui.tradeTeam = +t.value; ui.get = []; render(); }
   else if (t.id === 'aggr') { me().coach.aggr = +t.value; save(); render(); }
   else if (t.id === 'youth') { me().coach.youth = t.checked; save(); }
