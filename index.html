@@ -2275,6 +2275,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = API; else 
 (function () {
 'use strict';
 const G = window.GG;
+const APP_VERSION = '2026-10-27c';
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
 const ui = { tab: 'home', grp: 'ALL', lg: 'stand', leadKey: 'py', resWeek: null, open: null, confirm: null,
@@ -2985,6 +2986,7 @@ function vData() {
   h += `<section class="card"><h3>1970 rosters imported</h3><div class="grid26">${G.TEAMS_1970.map(t => `<span class="cell ${IM.rosters[t[0]] ? 'ok' : ''}" title="${esc(t[2])}">${esc(t[1])}<small>${IM.rosters[t[0]] ? IM.rosters[t[0]].length : '–'}</small></span>`).join('')}</div>
     <p class="small">Draft classes: ${Object.keys(IM.drafts).sort().map(y => `<b>${y}</b> (${IM.drafts[y].length})`).join(', ') || 'none yet'}</p></section>`;
   if (L) h += `<section class="card"><h3>Difficulty</h3><div class="seg">${Object.keys(G.DIFF).map(k => `<button class="${(L.diff || 'pro') === k ? 'on' : ''}" data-act="setDiff" data-id="${k}">${G.DIFF[k].name}</button>`).join('')}</div><p class="small">${diffBlurb(L.diff || 'pro')} You can change this any time.</p></section>`;
+  h += `<p class="small ver">Gridiron GM version ${APP_VERSION}</p>`;
   h += `<section class="card"><h3>Save file</h3><p class="small">Your league saves on this device automatically. Back it up before clearing Safari data or switching devices.</p>
     <div class="row"><button class="btn" data-act="exportSave"${L ? '' : ' disabled'}>Download backup</button><label class="btn filebtn">Restore backup<input id="loadSave" type="file" accept=".json,application/json"></label></div>
     ${L ? `<div class="row">${confirmBtn('reset', 'Delete this league', 'danger')}</div>` : ''}</section>`;
