@@ -1260,10 +1260,13 @@ function creditDefense(L, tid, rat, oppRat, ints) {
   return sacks;
 }
 
+// Weeks missed per season, used by retirement.
+function noteInjury(L, p, wks) { p.injY = p.injY || {}; p.injY[L.year] = (p.injY[L.year] || 0) + wks; }
+function recentInjuryWeeks(p, y) { let s = 0; for (let k = y - 2; k <= y; k++) s += (p.injY && p.injY[k]) || 0; return s; }
 function injuries(L, rat) {
   GRPS.forEach(g => rat.d[g].slice(0, STARTERS[g]).forEach(p => {
     if (p.inj && p.playHurt && Math.random() < 0.3) {
-      p.inj += R.int(1, 2);
+      const extra = R.int(1, 2); p.inj += extra; noteInjury(L, p, extra);
       if (p.team === L.user) addNews(L, `${p.pos} ${p.name} aggravated his injury playing hurt. Now out ${p.inj} weeks.`);
     }
   }));
@@ -1271,6 +1274,7 @@ function injuries(L, rat) {
     const pool = []; ['QB','RB','WR','TE','OL','DL','LB','DB'].forEach(g => rat.d[g].slice(0, STARTERS[g]).forEach(p => pool.push(p)));
     const p = R.pick(pool); if (!p) return;
     p.inj = Math.random() < 0.04 ? 20 : 1 + R.poisson(1.4);
+    noteInjury(L, p, Math.min(p.inj, rules(L.year).games));
     if (p.team === L.user || p.ovr >= 80) addNews(L, `${L.teams[p.team].abbr} ${p.pos} ${p.name} injured, out ${p.inj >= 20 ? 'for the season' : p.inj + ' week' + (p.inj > 1 ? 's' : '')}.`);
   }
 }
@@ -1743,7 +1747,10 @@ function progress(L) {
     if (p.age <= 24) d = R.int(1, 6) + (played && youth[p.team] ? 2 : 0);
     else if (p.age <= 28) d = R.int(-1, 3) + (played && youth[p.team] && p.age <= 26 ? 1 : 0);
     else if (p.age <= 31) d = R.int(-4, 1);
-    else d = R.int(-8, 0);
+    else if (p.age <= 34) d = R.int(-5, 1);
+    else d = R.int(-7, 0);
+    // quarterbacks, kickers and punters age more slowly
+    if (d < 0 && (p.grp === 'QB' || p.grp === 'K' || p.grp === 'P')) d = Math.round(d * 0.6);
     const hc = L.teams[p.team] && L.teams[p.team].staff && L.teams[p.team].staff.hc;
     if (hc && p.age <= 26 && Math.random() < (hc.r - 55) / 60) d += 1;
     if (d > 0) p.ovr = Math.min(p.pot, p.ovr + d); else p.ovr = Math.max(30, p.ovr + d);
@@ -1751,9 +1758,19 @@ function progress(L) {
     if (p.ovr >= p.pot) p.pot = p.ovr;
     p.inj = 0;
     let rp = 0;
-    if (p.age >= 33) rp = 0.25 + (p.age - 33) * 0.15;
-    else if (p.age >= 28 && p.ovr < 48) rp = 0.35;
-    if ((p.grp === 'K' || p.grp === 'P') && p.age < 38) rp *= 0.4;
+    if (p.age >= 33) {
+      rp = 0.25 + (p.age - 33) * 0.15;
+      // good players hang on longer: each point over 70 cuts the chance (85 OVR: about 40% of normal)
+      rp *= clamp(1 - (p.ovr - 65) * 0.04, 0.3, 1);
+      if (p.grp === 'K' || p.grp === 'P') rp *= 0.4;
+      if (p.grp === 'QB') rp *= 0.7;
+    } else if (p.age >= 28 && p.ovr < 48) rp = 0.35;
+    // only quarterbacks, kickers and punters can play past 38, and nobody past 45
+    const longCareer = p.grp === 'QB' || p.grp === 'K' || p.grp === 'P';
+    if (p.age >= 38 && !longCareer) rp = 1;
+    if (longCareer) rp = p.age >= 46 ? 1 : Math.min(rp, 0.95);
+    // players who keep getting hurt walk away sooner
+    if (p.age >= 26) { const w = recentInjuryWeeks(p, L.year); rp += clamp((w - 6) / 50, 0, 0.35) * (p.age >= 28 ? 1 : 0.5); }
     if (p.team === -1) rp += p.age >= 29 ? 0.5 : (p.age >= 24 ? 0.35 : 0.15);
     if (Math.random() < rp) { retired.push(p); p.team = -2; p.retiredYear = L.year + 1; }
   }
@@ -2275,7 +2292,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = API; else 
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-10-27e';
+const APP_VERSION = '2026-10-27g';
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
 const ui = { tab: 'home', grp: 'ALL', lg: 'stand', leadKey: 'py', resWeek: null, open: null, confirm: null,
