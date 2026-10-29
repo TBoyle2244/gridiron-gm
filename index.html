@@ -219,6 +219,7 @@ input[type=range] { width: 100%; accent-color: var(--field); }
 .cell small { font-weight: 500; font-size: 11px; }
 .cell.ok { border-style: solid; border-color: var(--field); color: var(--ink); }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+.scheme.on{border-color:var(--accent,#c9a227);box-shadow:inset 3px 0 0 var(--accent,#c9a227)}.fit{font-weight:700;font-variant-numeric:tabular-nums;min-width:2.6em;display:inline-block;text-align:center}
 .savewarn{border:2px solid #b3261e;background:color-mix(in srgb,#b3261e 8%,var(--card,#fff))}.savewarn .eyebrow{color:#b3261e}
 </style>
 <style>html{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
@@ -516,26 +517,48 @@ function bestStyle(L, tid, avg) {
   const aggr = clamp(Math.round((50 + (avg.ovr - ovr) * 4) / 10) * 10, 20, 80);
   return { off, def, aggr };
 }
-function aiStyles(L, announce) {
+function aiStyles(L, announce, fresh) {
+  ensureSchemes(L); resetShares(L);
   const all = L.teams.map(t => ratings(L, t.id, { off: 'bal', def: 'bal' }));
   const avg = {}; GRPS.forEach(g => avg[g] = all.reduce((s, r) => s + r[g], 0) / all.length);
   avg.ovr = all.reduce((s, r) => s + (r.off + r.def) / 2, 0) / all.length;
   const changes = [];
   for (const t of L.teams) {
     if (t.id === L.user) continue;
-    if (Math.random() > diff(L).smartStyles) continue;
-    const b = bestStyle(L, t.id, avg), c = t.coach, before = c.off + c.def;
-    if (announce && before !== b.off + b.def) changes.push(`${t.abbr} ${b.off !== c.off ? 'go ' + ({ run: 'run-first', bal: 'balanced', pass: 'pass-first' })[b.off] : ''}${b.off !== c.off && b.def !== c.def ? ', ' : ''}${b.def !== c.def ? ({ soft: 'bend-don\'t-break', bal: 'base 4-3', blitz: 'blitz-heavy' })[b.def] + ' on D' : ''}`);
-    c.off = b.off; c.def = b.def; c.aggr = b.aggr;
+    const c = t.coach, r = all[t.id] || ratings(L, t.id, { off: 'bal', def: 'bal' });
+    const st = t.staff || {};
+    // The team that invented a scheme runs it the year it appears.
+    const inv = side => (side === 'off' ? OFF_SCHEMES : DEF_SCHEMES).find(s => s.from === L.year && s.origin === t.pfr && !s.base);
+    const pickSide = side => {
+      const cur = side === 'off' ? c.os : c.ds, iv = inv(side);
+      if (iv) return iv.id;
+      if (!fresh && Math.random() > diff(L).smartStyles) return cur;
+      const pref = side === 'off' ? (st.oc && st.oc.pref) : (st.dc && st.dc.pref);
+      const b = bestScheme(L, t.id, side, r, pref);
+      const val = s => schemeFit(r, s) * 1.2 + schemeTrend(L, s.id) + (pref && pref === s.fam ? 0.6 : 0);
+      // Coaches stick with their system unless something clearly better comes along.
+      return (fresh || !SCHEME[cur] || val(b) - val(SCHEME[cur]) > 0.7) ? b.id : cur;
+    };
+    const os = pickSide('off'), ds = pickSide('def');
+    if (announce && (os !== c.os || ds !== c.ds)) changes.push(`${t.abbr} ${os !== c.os ? 'to the ' + SCHEME[os].name : ''}${os !== c.os && ds !== c.ds ? ' and ' : ''}${ds !== c.ds ? (os !== c.os ? 'the ' : 'to the ') + SCHEME[ds].name : ''}`);
+    c.os = os; c.ds = ds; c.off = SCHEME[os].fam; c.def = SCHEME[ds].fam;
+    const ovr = (r.off + r.def) / 2;
+    c.aggr = clamp(Math.round((50 + (avg.ovr - ovr) * 4) / 10) * 10, 20, 80);
+    resetShares(L);
   }
   if (changes.length) addNews(L, 'New schemes for ' + L.year + ': ' + changes.slice(0, 6).join('; ') + (changes.length > 6 ? `; and ${changes.length - 6} more` : '') + '.');
 }
 // All-Pro: the AI coach adjusts his game plan to yours.
-function counterPlan(own, user) {
-  const def = Object.keys(DEF_VS).sort((a, b) => DEF_VS[a][user.off] - DEF_VS[b][user.off])[0];
-  const v = DEF_VS[user.def] || DEF_VS.bal;
-  const best = Object.keys(v).sort((a, b) => v[b] - v[a])[0];
-  return Object.assign({}, own, { def, off: v[best] > 0 ? best : own.off });
+function counterPlan(own, user, L) {
+  const y = L ? L.year : 1970;
+  let bd = null, bv = 1e9;
+  for (const d of schemesFor(y, 'def')) { const v = schemeEdge(y, user.os, d.id) + (DEF_VS[d.fam] || DEF_VS.bal)[user.off]; if (v < bv) { bv = v; bd = d; } }
+  let bo = null, bo2 = -1e9;
+  for (const o of schemesFor(y, 'off')) { const v = schemeEdge(y, o.id, user.ds) + ((DEF_VS[user.def] || DEF_VS.bal)[o.fam] || 0); if (v > bo2) { bo2 = v; bo = o; } }
+  const out = Object.assign({}, own);
+  if (bd) { out.ds = bd.id; out.def = bd.fam; }
+  if (bo && bo2 > 0.3) { out.os = bo.id; out.off = bo.fam; }
+  return out;
 }
 
 function randomCoach() { return { off: R.pick(['run', 'bal', 'bal', 'pass']), def: R.pick(['soft', 'bal', 'bal', 'blitz']), aggr: R.int(3, 7) * 10, youth: Math.random() < 0.3 }; }
@@ -549,6 +572,7 @@ function ensureLeague(L) {
   ensureContracts(L);
   if (L.phase === 'offseason') ensureFA(L);
   if (L.styles !== 2) { aiStyles(L, false); L.styles = 2; }
+  if (L.teams.some(t => t.coach && (!t.coach.os || !t.coach.ds))) aiStyles(L, false, true); else ensureSchemes(L);
 }
 function mkTeam(id, a) {
   const [pfr, abbr, city, name, conf, div] = a;
@@ -575,7 +599,7 @@ function newLeague(imports, userPfr, opts) {
   L.diff = DIFF[opts && opts.diff] ? opts.diff : 'pro';
   aiCutdowns(L);
   ensurePicks(L);
-  aiStyles(L, false);
+  aiStyles(L, false, true);
   ensureContracts(L);
   ensureStaff(L);
   ensureNumbers(L);
@@ -677,7 +701,25 @@ function aiIR(L) {
 }
 function clearIR(L) { for (const id in L.players) delete L.players[id].ir; }
 
-function release(L, pid) { const p = L.players[pid]; if (!p) return; const t = L.teams[p.team]; p.team = -1; delete p.con; if (t) addNews(L, `${t.abbr} released ${p.pos} ${p.name}.`); }
+// Releasing a player under contract leaves dead money: a quarter of what is left on his deal
+// (at most 60% of one year's salary) stays on this year's payroll. Minimum-salary players cost nothing.
+function deadCharge(L, p) {
+  const y = capYear(L), sal = p && p.con ? salFor(p, y) : null;
+  if (!sal || sal < avgSalary(y) * 0.6) return 0;
+  const left = (p.con.ext ? p.con.ext.exp : p.con.exp) - y + 1;
+  return Math.round(sal * Math.min(0.6, 0.25 * Math.max(1, left)));
+}
+function deadFor(L, tid, y) { return (L.dead && L.dead[tid] && L.dead[tid][y]) || 0; }
+function release(L, pid) {
+  const p = L.players[pid]; if (!p) return; const t = L.teams[p.team];
+  let dead = 0;
+  if (t && t.id === L.user) {
+    dead = deadCharge(L, p);
+    if (dead) { const y = capYear(L); L.dead = L.dead || {}; const D = L.dead[t.id] || (L.dead[t.id] = {}); D[y] = (D[y] || 0) + dead; }
+  }
+  p.team = -1; delete p.con;
+  if (t) addNews(L, `${t.abbr} released ${p.pos} ${p.name}.${dead ? ` Dead money: ${money(dead)} stays on the ${capYear(L)} payroll.` : ''}`);
+}
 
 function aiCutdowns(L) {
   const max = rules(L.year).rosterMax;
@@ -821,8 +863,11 @@ function receiverWeight(L, tid, incoming, outgoing) {
   const inc = (incoming.players || []).map(id => L.players[id]);
   const after = roster(L, tid).filter(p => !out.has(p.id)).concat(inc).sort((a, b) => value(b) - value(a));
   const keep = new Set(after.slice(0, max).map(p => p.id));
-  return inc.reduce((s, p) => s + playerWeight(p) * (keep.has(p.id) ? 1 : 0.05), 0)
-    + (incoming.picks || []).reduce((s, id) => s + pickWeight(L, pickById(L, id)), 0);
+  // Several good players are worth less than one star: each extra player counts 60% of the
+  // one before (each extra pick 85%), since only one of them can fill the star's spot.
+  const pw = inc.map(p => playerWeight(p) * (keep.has(p.id) ? 1 : 0.05)).sort((a, b) => b - a);
+  const kw = (incoming.picks || []).map(id => pickWeight(L, pickById(L, id))).sort((a, b) => b - a);
+  return pw.reduce((s, w, i) => s + w * Math.pow(0.6, i), 0) + kw.reduce((s, w, i) => s + w * Math.pow(0.85, i), 0);
 }
 function tradeVerdict(L, partner, give, get) {
   const g = receiverWeight(L, partner, give, get), r = pkgWeight(L, get);
@@ -830,7 +875,7 @@ function tradeVerdict(L, partner, give, get) {
 }
 // give = what the user sends, get = what the user receives; each is {players:[ids], picks:[ids]}
 function tradeCapMsg(L, a, b, aGive, bGive) {
-  const y = capYear(L); if (capFor(y) == null) return null;
+  const y = capYear(L);
   const sal = ids => (ids || []).reduce((s, id) => s + (salFor(L.players[id], y) || 0), 0);
   const da = sal(bGive.players) - sal(aGive.players);
   return capMsg(L, a, da) || capMsg(L, b, -da);
@@ -915,11 +960,14 @@ function buildPackage(L, tid, need, cap) {
   const items = roster(L, tid).filter(p => !starters.has(p.id)).map(p => ({ t: 'p', id: p.id, w: playerWeight(p) }))
     .concat(teamPicks(L, tid).map(k => ({ t: 'k', id: k.id, w: pickWeight(L, k) })))
     .map(it => Object.assign(it, { r: it.w * (0.8 + Math.random() * 0.4) })).sort((x, y) => y.r - x.r);
+  // Counted the way the receiver counts it (extra players and picks are worth less each),
+  // and never more than 10% over what they meant to pay.
   const pkg = { players: [], picks: [] }; let left = need, count = 0;
   for (const it of items) {
     if (left <= 0 || count >= (cap || 4)) break;
-    if (it.w > left + need * 0.3) continue;
-    (it.t === 'p' ? pkg.players : pkg.picks).push(it.id); left -= it.w; count++;
+    const c = it.w * (it.t === 'p' ? Math.pow(0.6, pkg.players.length) : Math.pow(0.85, pkg.picks.length));
+    if (c > left + need * 0.1) continue;
+    (it.t === 'p' ? pkg.players : pkg.picks).push(it.id); left -= c; count++;
   }
   return left > 0 ? null : pkg;
 }
@@ -1323,9 +1371,12 @@ function ratings(L, tid, coach) {
     let s = 0; for (let i = 0; i < STARTERS[g]; i++) s += d[g][i] ? eff(d[g][i]) : 35;
     r[g] = s / STARTERS[g];
   }
-  const c = coach || L.teams[tid].coach, pw = PW[c.off], rw = 2 - pw;
-  r.off = (r.QB * 0.30 * pw + r.WR * 0.18 * pw + r.TE * 0.08 + r.RB * 0.16 * rw + r.OL * 0.28) / (0.30 * pw + 0.18 * pw + 0.08 + 0.16 * rw + 0.28);
-  r.def = r.DL * 0.32 + r.LB * 0.28 + r.DB * 0.40;
+  const c = coach || L.teams[tid].coach, pw = PW[c.off] || 1, rw = 2 - pw;
+  const ow = (SCHEME[c.os] && SCHEME[c.os].w) || {}, dw = (SCHEME[c.ds] && SCHEME[c.ds].w) || {}, W = (w, g) => w[g] || 1;
+  const oq = 0.30 * pw * W(ow, 'QB'), owr = 0.18 * pw * W(ow, 'WR'), ote = 0.08 * W(ow, 'TE'), orb = 0.16 * rw * W(ow, 'RB'), ool = 0.28 * W(ow, 'OL');
+  r.off = (r.QB * oq + r.WR * owr + r.TE * ote + r.RB * orb + r.OL * ool) / (oq + owr + ote + orb + ool);
+  const ddl = 0.32 * W(dw, 'DL'), dlb = 0.28 * W(dw, 'LB'), ddb = 0.40 * W(dw, 'DB');
+  r.def = (r.DL * ddl + r.LB * dlb + r.DB * ddb) / (ddl + dlb + ddb);
   const sb = staffBonus(L, tid, c); r.off += sb.off; r.def += sb.def;
   return r;
 }
@@ -1340,22 +1391,203 @@ function genScore(exp, mult) {
   return { pts, td, fg };
 }
 
+/* ---------- era schemes ----------
+   Every offense and defense belongs to a family (run/bal/pass, soft/bal/blitz) that the
+   game plan and coordinators use, plus a named scheme that exists only in its era.
+   w: how much each position group matters. a: what the scheme does (used for matchups).
+   New schemes get a head start until the league adjusts; popular ones get scouted and countered. */
+const OFF_SCHEMES = [
+  { id: 'proset', name: 'Pro Set', fam: 'bal', from: 1970, to: 2000, base: 1, w: {}, a: { run: .5, deep: .5, quick: .3, qbRun: 0, misd: .3 }, blurb: 'Two backs, two receivers, a tight end. Does a bit of everything.' },
+  { id: 'power', name: 'Power I', fam: 'run', from: 1970, to: 2026, base: 1, w: { RB: 1.25, OL: 1.15, TE: 1.05, QB: 0.8, WR: 0.8 }, a: { run: .95, deep: .2, quick: .1, qbRun: 0, misd: .3 }, ps: -0.04, blurb: 'Sweeps and isos behind a fullback. Needs a great back and line.' },
+  { id: 'vertical', name: 'Vertical Bomb', fam: 'pass', from: 1970, to: 1990, base: 1, origin: 'rai', w: { WR: 1.25, QB: 1.05, TE: 0.85, RB: 0.9 }, a: { run: .4, deep: .95, quick: .1, qbRun: 0, misd: .2 }, intMul: 1.2, var: 0.1, blurb: 'The old AFL deep game: seven-step drops and long throws downfield.' },
+  { id: 'shotgun', name: 'Shotgun & Motion', fam: 'bal', from: 1975, to: 1992, origin: 'dal', w: { QB: 1.1, WR: 1.05, OL: 0.95 }, a: { run: .4, deep: .4, quick: .45, qbRun: 0, misd: .7 }, sackMul: 0.9, blurb: 'Pre-snap shifts and the shotgun on passing downs keep defenses guessing.' },
+  { id: 'coryell', name: 'Air Coryell', fam: 'pass', from: 1978, to: 2026, origin: 'sdg', w: { WR: 1.15, TE: 1.2, QB: 1.1, RB: 0.85, OL: 1.05 }, a: { run: .3, deep: .8, quick: .3, qbRun: 0, misd: .3 }, sackMul: 1.1, intMul: 1.1, blurb: 'Timing routes at every depth, with a tight end who runs like a receiver.' },
+  { id: 'westcoast', name: 'West Coast', fam: 'pass', from: 1979, to: 2026, origin: 'sfo', w: { QB: 1.1, TE: 1.1, RB: 1.05, OL: 0.9 }, a: { run: .35, deep: .2, quick: .95, qbRun: 0, misd: .3 }, sackMul: 0.75, intMul: 0.85, var: -0.05, blurb: 'Short, quick throws replace the run. Accurate QBs and backs who catch thrive.' },
+  { id: 'oneback', name: 'One-Back Counter Trey', fam: 'run', from: 1982, to: 2005, origin: 'was', w: { OL: 1.3, RB: 1.1, TE: 1.1, QB: 0.9, WR: 0.85 }, a: { run: .75, deep: .3, quick: .2, qbRun: 0, misd: .55 }, blurb: 'H-backs and pulling linemen. A great line makes any back look good.' },
+  { id: 'runshoot', name: 'Run and Shoot', fam: 'pass', from: 1989, to: 1997, origin: 'oti', w: { WR: 1.35, QB: 1.15, TE: 0.4, RB: 0.9, OL: 0.9 }, a: { run: .1, deep: .65, quick: .55, qbRun: 0, misd: .4 }, ps: 0.06, sackMul: 1.25, intMul: 1.15, var: 0.1, blurb: 'Four receivers who read the coverage on the fly. Huge numbers, more sacks and picks.' },
+  { id: 'kgun', name: 'K-Gun No-Huddle', fam: 'pass', from: 1989, to: 1999, origin: 'buf', w: { QB: 1.15, WR: 1.1, RB: 1.0, TE: 0.9 }, a: { run: .35, deep: .4, quick: .6, qbRun: 0, misd: .3 }, blurb: 'No huddle, all game. Tired defenses cannot substitute.' },
+  { id: 'zone', name: 'Zone Run & Bootleg', fam: 'run', from: 1995, to: 2026, origin: 'den', w: { OL: 1.2, RB: 1.1, QB: 0.95, WR: 0.9 }, a: { run: .7, deep: .3, quick: .15, qbRun: 0, misd: .75 }, blurb: 'One cut and go behind a moving line, then play-action bootlegs off it.' },
+  { id: 'erhardt', name: 'Erhardt-Perkins', fam: 'bal', from: 2001, to: 2026, origin: 'nwe', w: { QB: 1.15, TE: 1.1, WR: 0.95 }, a: { run: .45, deep: .3, quick: .6, qbRun: 0, misd: .35 }, sackMul: 0.9, intMul: 0.85, blurb: 'Concepts instead of plays. A smart QB changes the plan every week.' },
+  { id: 'spread', name: 'Shotgun Spread', fam: 'pass', from: 2004, to: 2026, origin: 'clt', w: { QB: 1.25, WR: 1.2, TE: 0.9, RB: 0.8, OL: 0.95 }, a: { run: .2, deep: .55, quick: .6, qbRun: 0, misd: .25 }, ps: 0.04, blurb: 'Three or four wide every snap. The quarterback runs the show at the line.' },
+  { id: 'readopt', name: 'Read Option / Pistol', fam: 'run', from: 2012, to: 2026, origin: 'was', w: { QB: 1.2, RB: 1.0, WR: 0.85, TE: 0.9 }, a: { run: .55, deep: .25, quick: .2, qbRun: .9, misd: .5 }, qbRush: 0.3, blurb: 'The quarterback reads an end and keeps it or hands off. Hard on edge rushers.' },
+  { id: 'rpo', name: 'RPO Spread', fam: 'bal', from: 2016, to: 2026, origin: 'phi', w: { QB: 1.15, WR: 1.05, OL: 0.95 }, a: { run: .4, deep: .3, quick: .6, qbRun: .4, misd: .5 }, qbRush: 0.2, blurb: 'Run or pass decided after the snap by one defender. Punishes aggressive linebackers.' },
+  { id: 'widezone', name: 'Wide Zone Play-Action', fam: 'bal', from: 2017, to: 2026, origin: 'ram', w: { OL: 1.1, RB: 1.05, WR: 1.05, TE: 1.1, QB: 0.95 }, a: { run: .55, deep: .4, quick: .3, qbRun: 0, misd: .9 }, blurb: 'Everything looks like the same outside zone until the ball is thrown over the top.' }
+];
+const DEF_SCHEMES = [
+  { id: 'base43', name: '4-3 Base', fam: 'bal', from: 1970, to: 2026, base: 1, w: {}, a: { rush: .5, cover: .5, box: .5, disg: .1 }, blurb: 'Four linemen, three linebackers, two corners and two safeties. No weakness, no trick.' },
+  { id: 'umbrella', name: 'Umbrella Zone', fam: 'soft', from: 1970, to: 1985, base: 1, w: { DB: 1.15, LB: 1.05, DL: 0.85 }, a: { rush: .25, cover: .8, box: .4, disg: .2 }, var: -0.05, blurb: 'Deep zones keep everything in front. Gives up yards, not touchdowns.' },
+  { id: 'reddog', name: 'Red Dog Blitz', fam: 'blitz', from: 1970, to: 1990, base: 1, w: { LB: 1.2, DL: 1.05, DB: 0.85 }, a: { rush: .9, cover: .25, box: .6, disg: .1 }, sackMul: 1.2, var: 0.1, blurb: 'Send the linebackers. Sacks or big plays, nothing in between.' },
+  { id: 'flex', name: 'Flex Defense', fam: 'bal', from: 1970, to: 1988, origin: 'dal', w: { DL: 1.15, LB: 1.05, DB: 0.85 }, a: { rush: .3, cover: .5, box: .85, disg: .25 }, blurb: 'Two linemen play off the ball to read the run. Built to stop the sweep.' },
+  { id: 'nonname', name: '53 Defense', fam: 'soft', from: 1972, to: 1982, origin: 'mia', w: { LB: 1.2, DB: 1.1, DL: 0.75 }, a: { rush: .2, cover: .7, box: .5, disg: .55 }, intMul: 1.15, blurb: 'A linebacker in a lineman\'s spot. Disciplined zone and few mistakes.' },
+  { id: 'curtain', name: 'Cover 2 Front Four', fam: 'bal', from: 1972, to: 1990, origin: 'pit', w: { DL: 1.25, DB: 1.05, LB: 0.8 }, a: { rush: .75, cover: .65, box: .4, disg: .1 }, sackMul: 1.15, blurb: 'Four dominant linemen get home without blitzing, and two safeties split the field.' },
+  { id: 'd34', name: '3-4', fam: 'bal', from: 1974, to: 2026, origin: 'nwe', w: { LB: 1.25, DL: 0.85, DB: 0.95 }, a: { rush: .55, cover: .5, box: .55, disg: .35 }, blurb: 'Four linebackers and a nose tackle. The pressure can come from anywhere.' },
+  { id: 'd46', name: '46 Defense', fam: 'blitz', from: 1984, to: 1995, origin: 'chi', w: { DL: 1.2, LB: 1.1, DB: 0.8 }, a: { rush: 1.0, cover: .2, box: .9, disg: .1 }, sackMul: 1.35, var: 0.15, blurb: 'Eight in the box and pressure every snap. Overwhelms protection, but corners are on an island.' },
+  { id: 'zblitz', name: 'Zone Blitz', fam: 'blitz', from: 1992, to: 2026, origin: 'pit', w: { LB: 1.2, DB: 1.0, DL: 0.9 }, a: { rush: .8, cover: .45, box: .4, disg: .9 }, sackMul: 1.2, intMul: 1.1, blurb: 'Rush five, drop a lineman into coverage. Quarterbacks throw it to the wrong color.' },
+  { id: 'tampa2', name: 'Tampa 2', fam: 'soft', from: 1996, to: 2014, origin: 'tam', w: { DL: 1.15, LB: 1.15, DB: 0.9 }, a: { rush: .5, cover: .8, box: .35, disg: .2 }, intMul: 1.2, var: -0.05, blurb: 'A fast middle linebacker runs the deep middle. Speed over size everywhere.' },
+  { id: 'pressure34', name: 'Exotic Pressure 3-4', fam: 'blitz', from: 2000, to: 2026, origin: 'rav', w: { LB: 1.2, DB: 0.95, DL: 0.95 }, a: { rush: .85, cover: .35, box: .5, disg: .7 }, sackMul: 1.3, var: 0.15, blurb: 'Overload blitzes and simulated pressure from a deep linebacker group.' },
+  { id: 'nickel', name: 'Nickel Base', fam: 'bal', from: 2008, to: 2026, w: { DB: 1.25, LB: 0.8 }, a: { rush: .5, cover: .7, box: .3, disg: .3 }, blurb: 'Five defensive backs as the base defense against three-receiver offenses.' },
+  { id: 'wide9', name: 'Wide-9 Front', fam: 'blitz', from: 2011, to: 2018, origin: 'phi', w: { DL: 1.35, LB: 0.85, DB: 0.85 }, a: { rush: 1.0, cover: .45, box: .2, disg: .1 }, sackMul: 1.25, blurb: 'Ends lined up way outside, pinning their ears back. Runs inside can gash it.' },
+  { id: 'cover3', name: 'Cover 3 Single-High', fam: 'bal', from: 2012, to: 2026, origin: 'sea', w: { DB: 1.25, DL: 0.9 }, a: { rush: .5, cover: .65, box: .65, disg: .15 }, intMul: 1.1, blurb: 'Big press corners and a rangy free safety let a strong safety live in the box.' },
+  { id: 'twohigh', name: 'Two-High Quarters', fam: 'soft', from: 2018, to: 2026, origin: 'chi', w: { DB: 1.25, LB: 1.05, DL: 0.8 }, a: { rush: .4, cover: .95, box: .25, disg: .6 }, sackMul: 0.9, blurb: 'Two deep safeties take away the big play and dare you to dink and dunk.' }
+];
+const SCHEME = {}; OFF_SCHEMES.forEach(s => SCHEME[s.id] = Object.assign({ side: 'off' }, s)); DEF_SCHEMES.forEach(s => SCHEME[s.id] = Object.assign({ side: 'def' }, s));
+function schemeTo(s, y) { return s.to >= 2026 ? 9999 : s.to; } // the current schemes never expire
+function schemesFor(y, side) { return (side === 'def' ? DEF_SCHEMES : OFF_SCHEMES).filter(s => y >= s.from && y <= schemeTo(s, y)); }
+function schemeAvail(id, y) { const s = SCHEME[id]; return !!s && y >= s.from && y <= schemeTo(s, y); }
+function rawEdge(o, d) {
+  const A = o.a, B = d.a;
+  return A.quick * B.rush * 1.6 - A.deep * B.rush * 1.0
+    - A.deep * B.cover * 1.6 + A.run * B.cover * 1.1
+    - A.run * B.box * 1.6 + A.deep * B.box * 1.0 + A.quick * B.box * 0.5
+    + A.misd * (B.rush + B.box) * 0.8 - A.misd * B.disg * 0.4
+    - B.disg * (A.quick + A.deep) * 0.6
+    + A.qbRun * B.rush * 1.0 - A.qbRun * B.cover * 0.3;
+}
+// Pure rock-paper-scissors: double-centered over the schemes that exist this season,
+// so no scheme is better on average. Personnel, novelty and the family matchups decide the rest.
+const EDGE_CACHE = {};
+function edgeTable(y) {
+  if (EDGE_CACHE[y]) return EDGE_CACHE[y];
+  const O = schemesFor(y, 'off'), D = schemesFor(y, 'def'), T = {};
+  const raw = O.map(o => D.map(d => rawEdge(o, d)));
+  const rm = raw.map(r => r.reduce((a, b) => a + b, 0) / r.length);
+  const cm = D.map((_, j) => raw.reduce((a, r) => a + r[j], 0) / raw.length);
+  const gm = rm.reduce((a, b) => a + b, 0) / rm.length;
+  O.forEach((o, i) => { T[o.id] = {}; D.forEach((d, j) => T[o.id][d.id] = raw[i][j] - rm[i] - cm[j] + gm); });
+  return (EDGE_CACHE[y] = T);
+}
+function schemeEdge(y, os, ds) { const T = edgeTable(y); return (T[os] && T[os][ds]) || 0; }
+// League adjustment: a new scheme gets up to +1 point while defenses learn it; one that
+// a third of the league runs gets scouted to death; one in its last years is past its prime.
+const SHARE = new WeakMap();
+function shares(L) {
+  let c = SHARE.get(L);
+  if (c && c.y === L.year && c.n === L.teams.length) return c.s;
+  const s = {}; L.teams.forEach(t => { if (!t.coach) return; [t.coach.os, t.coach.ds].forEach(id => { if (id) s[id] = (s[id] || 0) + 1 / L.teams.length; }); });
+  SHARE.set(L, { y: L.year, n: L.teams.length, s }); return s;
+}
+function resetShares(L) { SHARE.delete(L); OFFSET.delete(L); }
+// Keeps league scoring on the real historical averages: whatever the schemes add across the
+// whole league this season is taken back out, so they only shift who wins, not how much is scored.
+const OFFSET = new WeakMap();
+function schemeOffset(L) {
+  const c = OFFSET.get(L); if (c && c.y === L.year) return c.v;
+  const T = L.teams.filter(t => t.coach && t.coach.os && t.coach.ds);
+  if (!T.length) return 0;
+  let fit = 0, ed = 0;
+  for (const t of T) {
+    const r = ratings(L, t.id, { off: 'bal', def: 'bal' });
+    fit += (schemeFit(r, SCHEME[t.coach.os]) - schemeFit(r, SCHEME[t.coach.ds])) * 0.6 + schemeTrend(L, t.coach.os) - schemeTrend(L, t.coach.ds);
+    for (const u of T) if (u !== t) ed += schemeEdge(L.year, t.coach.os, u.coach.ds);
+  }
+  const v = fit / T.length + ed / (T.length * (T.length - 1));
+  OFFSET.set(L, { y: L.year, v }); return v;
+}
+function schemeShare(L, id) { return shares(L)[id] || 0; }
+function schemeTrend(L, id) {
+  const s = SCHEME[id]; if (!s) return 0;
+  const y = L.year; let v = 0;
+  if (!s.base) v += Math.max(0, 1 - (y - s.from) / 6);
+  const sh = schemeShare(L, id);
+  if (sh > 0.3) v -= (sh - 0.3) * 4;
+  if (s.to < 2026 && s.to - y < 3) v -= 0.5;
+  return v;
+}
+function trendWord(L, id) {
+  const s = SCHEME[id], y = L.year, sh = schemeShare(L, id);
+  if (!s.base && y - s.from < 6) return { t: 'New: defenses are still figuring it out', c: 'good' };
+  if (sh > 0.3) return { t: 'Everyone runs it: opponents are ready for it', c: 'bad' };
+  if (s.to < 2026 && s.to - y < 3) return { t: 'Fading: the league has caught up', c: 'warn' };
+  return null;
+}
+function famOf(id, side) { const s = SCHEME[id]; return s ? s.fam : (side === 'def' ? 'bal' : 'bal'); }
+// How well a roster fits a scheme: the scheme's weighted unit rating minus a neutral one.
+function schemeFit(r, s) {
+  if (s.side === 'off') {
+    const pw = PW[s.fam], rw = 2 - pw, w = s.w;
+    const parts = [['QB', 0.30 * pw], ['WR', 0.18 * pw], ['TE', 0.08], ['RB', 0.16 * rw], ['OL', 0.28]];
+    let a = 0, b = 0, n = 0, m = 0;
+    parts.forEach(([g, x]) => { a += r[g] * x * (w[g] || 1); b += x * (w[g] || 1); n += r[g] * x; m += x; });
+    return a / b - n / m;
+  }
+  const parts = [['DL', 0.32], ['LB', 0.28], ['DB', 0.40]], w = s.w;
+  let a = 0, b = 0, n = 0, m = 0;
+  parts.forEach(([g, x]) => { a += r[g] * x * (w[g] || 1); b += x * (w[g] || 1); n += r[g] * x; m += x; });
+  return a / b - n / m;
+}
+function schemeCap(L, s) { return s.base ? 1 : Math.min(0.4, 0.1 + 0.08 * (L.year - s.from)); }
+function bestScheme(L, tid, side, r, pref) {
+  const opts = schemesFor(L.year, side);
+  let best = null, bv = -1e9;
+  const cur = L.teams[tid] && L.teams[tid].coach && (side === 'def' ? L.teams[tid].coach.ds : L.teams[tid].coach.os);
+  for (const s of opts) {
+    // Ideas spread a few teams at a time: a brand-new scheme starts with the innovator and a couple of copycats.
+    if (s.id !== cur && schemeShare(L, s.id) >= schemeCap(L, s)) continue;
+    const v = schemeFit(r, s) * 1.2 + schemeTrend(L, s.id) + (pref && pref === s.fam ? 0.6 : 0) + R.norm() * 0.4;
+    if (v > bv) { bv = v; best = s; }
+  }
+  return best;
+}
+function schemeNews(L) {
+  const y = L.year;
+  for (const s of OFF_SCHEMES.concat(DEF_SCHEMES)) {
+    if (s.from === y && !s.base) {
+      const t = s.origin && L.teams.find(x => x.pfr === s.origin);
+      addNews(L, `New ${SCHEME[s.id].side === 'off' ? 'offense' : 'defense'} for ${y}: the ${s.name}${t ? `, first run by ${tname0(t)}` : ''}. ${s.blurb}`);
+    }
+    if (s.to === y - 1) addNews(L, `The ${s.name} has gone out of style. Teams that ran it have moved on.`);
+  }
+}
+function tname0(t) { return t.city + ' ' + t.name; }
+// Give every team a scheme, move teams off schemes that have died out, and let the
+// teams that invented a scheme adopt it the year it appears.
+function ensureSchemes(L) {
+  const y = L.year;
+  for (const t of L.teams) {
+    const c = t.coach; if (!c) continue;
+    const r = ratings(L, t.id, { off: 'bal', def: 'bal' });
+    if (!schemeAvail(c.os, y)) {
+      const old = c.os, b = bestScheme(L, t.id, 'off', r, c.off);
+      c.os = (schemesFor(y, 'off').filter(s => s.fam === c.off).sort((a, b2) => schemeFit(r, b2) - schemeFit(r, a))[0] || b).id;
+      if (t.id !== L.user || !old) c.off = SCHEME[c.os].fam;
+      if (old && t.id === L.user) addNews(L, `Nobody runs the ${SCHEME[old].name} anymore. Your offense switches to the ${SCHEME[c.os].name}. You can change it on the Coach tab.`);
+    }
+    if (!schemeAvail(c.ds, y)) {
+      const old = c.ds, b = bestScheme(L, t.id, 'def', r, c.def);
+      c.ds = (schemesFor(y, 'def').filter(s => s.fam === c.def).sort((a, b2) => schemeFit(r, b2) - schemeFit(r, a))[0] || b).id;
+      if (t.id !== L.user || !old) c.def = SCHEME[c.ds].fam;
+      if (old && t.id === L.user) addNews(L, `Nobody runs the ${SCHEME[old].name} anymore. Your defense switches to the ${SCHEME[c.ds].name}. You can change it on the Coach tab.`);
+    }
+  }
+  resetShares(L);
+}
+function setScheme(L, id) {
+  const s = SCHEME[id]; if (!s || !schemeAvail(id, L.year)) return 'That scheme is not available in ' + L.year + '.';
+  const c = L.teams[L.user].coach;
+  if (s.side === 'off') { c.os = id; c.off = s.fam; } else { c.ds = id; c.def = s.fam; }
+  resetShares(L);
+  return null;
+}
+
 // Points added to the offense for each defense vs offense pairing.
 // Blitz beats the pass but gets run on; bend-don't-break slows the pass but gives up the run.
 const DEF_VS = { blitz: { pass: -2.5, bal: -0.8, run: 1.2 }, soft: { pass: -1.2, bal: 0.4, run: 1.6 }, bal: { pass: 0, bal: 0, run: 0 } };
 function expected(L, oRat, dRat, oCoach, dCoach, isHome, neutral) {
-  let e = era(L.year).pts + (oRat.off - dRat.def) * 0.6 + (isHome && !neutral ? 1.4 : 0) + (oRat.K - 60) * 0.04;
+  let e = era(L.year).pts + (oRat.off - dRat.def) * 0.6 + (neutral ? 0 : (isHome ? 0.7 : -0.7)) + (oRat.K - 60) * 0.04;
   let m = (DEF_VS[dCoach.def] || DEF_VS.bal)[oCoach.off] || 0;
   // A scheme only works as well as the players running it: blitzing needs a strong front four,
   // bend-don't-break needs good cover men. Weak units get less of the benefit (penalties stay full).
   if (m < 0 && dCoach.def === 'blitz') m *= clamp(1 + (dRat.DL - 62) / 20, 0.4, 1.6);
   if (m < 0 && dCoach.def === 'soft') m *= clamp(1 + (dRat.DB - 62) / 20, 0.4, 1.6);
   e += m;
+  // Era schemes: the matchup between the two systems, plus how well the league has adjusted to each.
+  if (oCoach.os && dCoach.ds) e += schemeEdge(L.year, oCoach.os, dCoach.ds) + schemeTrend(L, oCoach.os) - schemeTrend(L, dCoach.ds) - schemeOffset(L);
   return clamp(e, 5, 42);
 }
 
 function variance(oCoach, dCoach) {
-  return 1 + (oCoach.aggr - 50) / 200 + (dCoach.def === 'blitz' ? 0.15 : 0) - (dCoach.def === 'soft' ? 0.1 : 0);
+  const so = SCHEME[oCoach.os], sd = SCHEME[dCoach.ds];
+  return 1 + (oCoach.aggr - 50) / 200 + (dCoach.def === 'blitz' ? 0.15 : 0) - (dCoach.def === 'soft' ? 0.1 : 0) + ((so && so.var) || 0) + ((sd && sd.var) || 0);
 }
 
 let GAMEBUF = null, NOHIST = false;
@@ -1377,15 +1609,16 @@ function share(list, weights) {
 }
 function pickWeighted(sh) { let r = Math.random(); for (const [p, w] of sh) { r -= w; if (r <= 0) return p; } return sh.length ? sh[sh.length - 1][0] : null; }
 
-function creditStats(L, tid, sc, rat, oppRat, coach) {
-  const y = L.year, d = rat.d, pw = PW[coach.off], E = era(y);
+function creditStats(L, tid, sc, rat, oppRat, coach, oppCoach) {
+  const y = L.year, d = rat.d, pw = PW[coach.off] || 1, E = era(y);
+  const so = SCHEME[coach.os] || {}, sd = SCHEME[(oppCoach || {}).ds] || {};
   const starters = [];
   GRPS.forEach(g => d[g].slice(0, STARTERS[g]).forEach(p => starters.push(p)));
   starters.forEach(p => stat(p, y, 'g', 1));
   // Yardage and the pass/run mix follow the real league averages for this season.
   const avgTD = E.pts * 0.7 / 7;
   const total = clamp(Math.round(E.tot + (rat.off - oppRat.def) * 4 + (sc.td - avgTD) * 18 + R.norm() * 55), 80, 650);
-  const pshare = clamp(E.pshare * (1 + (pw - 1) * 0.7) + R.norm() * 0.06, 0.2, 0.88);
+  const pshare = clamp(E.pshare * (1 + (pw - 1) * 0.7) + (so.ps || 0) + R.norm() * 0.06, 0.2, 0.88);
   const py = Math.round(total * pshare), ry = total - py;
   const tdPass = clamp(E.tdPass * pshare / E.pshare, 0.1, 0.92);
   let ptd = 0; for (let i = 0; i < sc.td; i++) if (Math.random() < tdPass) ptd++;
@@ -1395,7 +1628,7 @@ function creditStats(L, tid, sc, rat, oppRat, coach) {
     const att = Math.max(8, Math.round(py / E.ypa + R.int(-3, 4)));
     const cmp = Math.round(att * clamp(E.cmpPct + (qb.ovr - 60) * 0.004 + R.norm() * 0.05, 0.3, 0.8));
     stat(qb, y, 'att', att); stat(qb, y, 'cmp', cmp); stat(qb, y, 'py', py); stat(qb, y, 'ptd', ptd);
-    ints = R.poisson(clamp(E.int * (1 - (qb.ovr - 60) * 0.017), 0.2, 2.6));
+    ints = R.poisson(clamp(E.int * (1 - (qb.ovr - 60) * 0.017) * (so.intMul || 1) * (sd.intMul || 1), 0.2, 2.6));
     stat(qb, y, 'int', ints);
   }
   const rec = share([d.WR[0], d.WR[1], d.TE[0], d.RB[0], d.RB[1], d.WR[2]], [0.32, 0.22, 0.18, 0.14, 0.06, 0.08]);
@@ -1404,7 +1637,7 @@ function creditStats(L, tid, sc, rat, oppRat, coach) {
     stat(p, y, 'recy', yds); stat(p, y, 'rec', Math.max(0, Math.round(yds / E.ypc + R.norm())));
   }
   for (let i = 0; i < ptd; i++) stat(pickWeighted(rec), y, 'rectd', 1);
-  const rush = share([d.RB[0], d.RB[1], qb], [0.56, 0.32, 0.12]);
+  const qr = so.qbRush || 0.12, rush = share([d.RB[0], d.RB[1], qb], [0.56 * (0.88 - qr) / 0.76 + 0, 0.32 * (0.88 - qr) / 0.76, qr]);
   for (const [p, w] of rush) { const yds = Math.round(ry * w * (0.8 + Math.random() * 0.4)); stat(p, y, 'ry', yds); stat(p, y, 'ra', Math.max(1, Math.round(yds / E.ypr))); }
   for (let i = 0; i < rtd; i++) stat(pickWeighted(rush), y, 'rtd', 1);
   stat(d.K[0], y, 'fgm', sc.fg);
@@ -1412,9 +1645,10 @@ function creditStats(L, tid, sc, rat, oppRat, coach) {
   return { total, py, ry, ints };
 }
 
-function creditDefense(L, tid, rat, oppRat, ints) {
+function creditDefense(L, tid, rat, oppRat, ints, coach, oppCoach) {
   const y = L.year, d = rat.d;
-  const sacks = R.poisson(clamp(2.2 + (rat.DL - oppRat.OL) * 0.06, 0.6, 5));
+  const sm = ((SCHEME[(coach || {}).ds] || {}).sackMul || 1) * ((SCHEME[(oppCoach || {}).os] || {}).sackMul || 1);
+  const sacks = R.poisson(clamp((2.2 + (rat.DL - oppRat.OL) * 0.06) * sm, 0.6, 6));
   const rushers = share([d.DL[0], d.DL[1], d.DL[2], d.DL[3], d.LB[0], d.LB[1]], [0.25, 0.25, 0.15, 0.15, 0.1, 0.1]);
   for (let i = 0; i < sacks; i++) stat(pickWeighted(rushers), y, 'sk', 1);
   const cover = share([d.DB[0], d.DB[1], d.DB[2], d.DB[3], d.LB[0]], [0.24, 0.24, 0.2, 0.2, 0.12]);
@@ -1458,8 +1692,8 @@ function playGame(L, g, opts) {
   opts = opts || {};
   let Hc = coachFor(L, g.h), Ac = coachFor(L, g.a);
   const D = diff(L);
-  if (D.counter && g.h === L.user) Ac = counterPlan(Ac, Hc);
-  if (D.counter && g.a === L.user) Hc = counterPlan(Hc, Ac);
+  if (D.counter && g.h === L.user) Ac = counterPlan(Ac, Hc, L);
+  if (D.counter && g.a === L.user) Hc = counterPlan(Hc, Ac, L);
   const hr = ratings(L, g.h, Hc), ar = ratings(L, g.a, Ac);
   const edge = side => (side === L.user ? D.edge : 0) + staffBonus(L, side).gd;
   const hs = genScore(expected(L, hr, ar, Hc, Ac, true, opts.neutral) + edge(g.h), variance(Hc, Ac));
@@ -1475,8 +1709,8 @@ function playGame(L, g, opts) {
   g.hs = hp; g.as = ap; g.done = true; g.ot = ot;
   // Player and team stats. Playoff games fill the box score but not season totals.
   GAMEBUF = {}; NOHIST = !!opts.noStats;
-  const hS = creditStats(L, g.h, hs, hr, ar, Hc), aS = creditStats(L, g.a, as, ar, hr, Ac);
-  const hSk = creditDefense(L, g.h, hr, ar, aS.ints), aSk = creditDefense(L, g.a, ar, hr, hS.ints);
+  const hS = creditStats(L, g.h, hs, hr, ar, Hc, Ac), aS = creditStats(L, g.a, as, ar, hr, Ac, Hc);
+  const hSk = creditDefense(L, g.h, hr, ar, aS.ints, Hc, Ac), aSk = creditDefense(L, g.a, ar, hr, hS.ints, Ac, Hc);
   if (!NOHIST) { tstat(L, g.h).ydsA += aS.total; tstat(L, g.a).ydsA += hS.total; }
   g.box = makeBox(L, g, hs, as, hp, ap, hS, aS, hSk, aSk, GAMEBUF);
   GAMEBUF = null; NOHIST = false;
@@ -2214,12 +2448,14 @@ function startNextSeason(L) {
   archiveBoxes(L);
   L.teams.forEach(t => { t.w = t.l = t.t = t.pf = t.pa = 0; });
   L.playoffs = null; L.schedule = []; L.week = 0;
+  if (L.dead) for (const k in L.dead) for (const yy in L.dead[k]) if (+yy < L.year) delete L.dead[k][yy];
   ensurePicks(L);
   aiTrades(L, R.int(2, 4), 40);
   makeOffers(L, R.int(1, 2), 20);
   aiCutdowns(L); aiSignings(L, true);
   ensureContracts(L);
   aiCapCompliance(L); aiSignings(L, true);
+  schemeNews(L);
   aiStyles(L, true);
   L.phase = 'preseason';
   holdoutCheck(L);
@@ -2284,12 +2520,38 @@ function salFor(p, y) {
   return null;
 }
 function onBooks(p, y) { return salFor(p, y) != null; }
-function payroll(L, tid, y) { y = y || capYear(L); return roster(L, tid).reduce((s, p) => s + (salFor(p, y) || 0), 0); }
-function capSpace(L, tid, y) { const c = capFor(y || capYear(L)); return c == null ? Infinity : c - payroll(L, tid, y); }
-function capMsg(L, tid, adding) {
-  const y = capYear(L), c = capFor(y); if (c == null) return null;
-  const after = payroll(L, tid, y) + adding;
-  return after > c ? `That would put ${tid === L.user ? 'you' : L.teams[tid].city} at ${money(after)}, over the ${y} cap of ${money(c)}.` : null;
+function payroll(L, tid, y) { y = y || capYear(L); return roster(L, tid).reduce((s, p) => s + (salFor(p, y) || 0), 0) + deadFor(L, tid, y); }
+// Before the salary cap (and in uncapped 2010) the owner sets your spending limit:
+// 15% above the league's average payroll, a little more in the biggest markets.
+const BIG_MARKETS = /^(nyg|nyj|ram|rai|chi|sfo|dal|phi|was)$/;
+function budgetFor(L, y) {
+  y = y || capYear(L); if (capFor(y) != null) return null;
+  let tot = 0, n = 0; const per = {};
+  for (const id in L.players) { const p = L.players[id]; if (p.team >= 0 && p.team !== L.user) per[p.team] = (per[p.team] || 0) + (salFor(p, y) || 0); }
+  for (const k in per) { tot += per[k]; n++; }
+  if (!n) return null;
+  const t = L.teams[L.user], last = t.hist[t.hist.length - 1];
+  const mkt = BIG_MARKETS.test(t.pfr) ? 1.08 : 1, win = last && last.res && last.res !== 'Missed playoffs' ? 1.04 : 1;
+  return Math.round(tot / n * 1.15 * mkt * win);
+}
+// Under a budget, your own unsigned players count at their asking price until you let them go,
+// so you can't spend the money on outsiders first and then re-sign your own on top of it.
+function committedPay(L, y) {
+  y = y || capYear(L);
+  let s = payroll(L, L.user, y);
+  if (L.phase === 'offseason' || L.phase === 'draft' || L.phase === 'season-over') for (const p of expiring(L, L.user)) s += resignPrice(L, p) || 0;
+  return s;
+}
+function limitFor(L, tid, y) { y = y || capYear(L); const c = capFor(y); return c != null ? c : (tid === L.user ? budgetFor(L, y) : null); }
+function capSpace(L, tid, y) { const c = limitFor(L, tid, y); return c == null ? Infinity : c - payroll(L, tid, y); }
+function capMsg(L, tid, adding, own) {
+  const y = capYear(L), cap = capFor(y);
+  if (cap == null && (tid !== L.user || own || adding <= 0)) return null; // re-signing your own players never breaks the budget
+  const c = cap != null ? cap : budgetFor(L, y); if (c == null) return null;
+  const now = cap == null ? committedPay(L, y) : payroll(L, tid, y), after = now + adding;
+  if (after <= c) return null;
+  if (cap == null) return `The owner won't spend that much: it would put your ${y} payroll at ${money(after)}, over his budget of ${money(c)}.`;
+  return `That would put ${tid === L.user ? 'you' : L.teams[tid].city} at ${money(after)}, over the ${y} cap of ${money(c)}.`;
 }
 function money(k) { return k >= 1000 ? '$' + (k / 1000).toFixed(k >= 10000 ? 1 : 2).replace(/\.?0+$/, '') + 'M' : '$' + Math.round(k) + 'K'; }
 function expiring(L, tid) { const y = capYear(L); return roster(L, tid).filter(p => !onBooks(p, y)); }
@@ -2324,7 +2586,7 @@ const DEF_TXT = { soft: "bend-don't-break defense", bal: 'base defense', blitz: 
 // Per-team snapshot (payroll, size, ratings by position) so a free-agency round stays fast.
 function teamCache(L, y) {
   const c = {};
-  for (const t of L.teams) c[t.id] = { pay: 0, size: 0, g: {} };
+  for (const t of L.teams) c[t.id] = { pay: deadFor(L, t.id, y), size: 0, g: {} };
   for (const id in L.players) {
     const p = L.players[id], e = c[p.team]; if (!e) continue;
     e.pay += salFor(p, y) || 0; e.size++; (e.g[p.grp] = e.g[p.grp] || []).push(p.ovr);
@@ -2379,8 +2641,8 @@ function placeBid(L, pid, sal, yrs) {
   if (!p || !isMarketFA(p)) return 'He is not on the market.';
   F.bids = F.bids || {};
   const others = Object.entries(F.bids).filter(([id]) => +id !== pid).reduce((s, [, b]) => s + b.sal, 0);
-  const cap = capFor(y);
-  if (cap != null && payroll(L, L.user, y) + others + sal > cap) return `Your bids would total more than your cap space (${money(cap - payroll(L, L.user, y))}).`;
+  const cap = limitFor(L, L.user, y);
+  if (cap != null && payroll(L, L.user, y) + others + sal > cap) return `Your bids would total more than your ${capFor(y) != null ? 'cap space' : "owner's budget"} (${money(cap - payroll(L, L.user, y))} left).`;
   F.bids[pid] = { sal: Math.round(sal), yrs: clamp(yrs, 1, 5) }; return null;
 }
 function withdrawBid(L, pid) { if (L.fa && L.fa.bids) delete L.fa.bids[pid]; }
@@ -2393,7 +2655,7 @@ function bidOutlook(L, pid) {
 function resolveRound(L) {
   const F = L.fa, y = capYear(L), cap = capFor(y), r = F.round, max = rules(y).rosterMax;
   const pool = freeAgents(L).filter(isMarketFA).sort((a, b) => value(b) - value(a)).slice(0, 220);
-  const signed = [], C = teamCache(L, y);
+  const signed = [], C = teamCache(L, y), ulim = limitFor(L, L.user, y);
   for (const p of pool) {
     const ask = baseAsk(L, p), bids = [];
     const teams = interestedTeams(L, p, C).sort(() => Math.random() - 0.5).slice(0, value(p) >= 75 ? 5 : 3);
@@ -2404,7 +2666,7 @@ function resolveRound(L) {
       bids.push({ tid: t.id, sal, yrs });
     }
     const ub = F.bids && F.bids[p.id];
-    if (ub && (cap == null || C[L.user].pay + ub.sal <= cap)) bids.push({ tid: L.user, sal: ub.sal, yrs: ub.yrs });
+    if (ub && (ulim == null || C[L.user].pay + ub.sal <= ulim)) bids.push({ tid: L.user, sal: ub.sal, yrs: ub.yrs });
     if (!bids.length) { p.askMult = (p.askMult || 1) * 0.92; continue; }
     bids.forEach(b => b.score = offerScore(L, p, b.tid, b.sal, b.yrs, C));
     bids.sort((a, b) => b.score - a.score);
@@ -2527,7 +2789,7 @@ function resign(L, pid) {
   if (!p || p.team !== L.user || onBooks(p, y)) return 'He is not an expiring player on your team.';
   if ((L.fa.sheets || []).some(s => s.pid === pid)) return 'He has an offer sheet. Match it or take the compensation.';
   const sal = isRestricted(L, p) ? tenderPrice(L, p) : resignPrice(L, p);
-  const e = capMsg(L, L.user, sal); if (e) return e;
+  const e = capMsg(L, L.user, sal, true); if (e) return e;
   setContract(p, sal, y, contractYears(p));
   addNews(L, `${L.teams[L.user].abbr} re-signed ${p.pos} ${p.name}: ${contractYears(p)} yrs, ${money(sal)} a year.`);
   return null;
@@ -2552,7 +2814,7 @@ function letGo(L, pid) {
 }
 function matchSheet(L, i) {
   const sh = L.fa.sheets[i]; if (!sh) return 'That offer sheet is gone.';
-  const p = L.players[sh.pid], e = capMsg(L, L.user, sh.sal); if (e) return e;
+  const p = L.players[sh.pid], e = capMsg(L, L.user, sh.sal, true); if (e) return e;
   setContract(p, sh.sal, capYear(L), sh.yrs); L.fa.sheets.splice(i, 1);
   addNews(L, `${L.teams[L.user].abbr} matched ${L.teams[sh.from].city}'s offer for ${p.pos} ${p.name}.`); return null;
 }
@@ -2611,7 +2873,7 @@ function closeFreeAgency(L) {
   for (const p of expiring(L, L.user)) {
     if (era === 'ufa' && !isRestricted(L, p)) { addNews(L, `${p.pos} ${p.name} left in free agency.`); retireIfUnsigned(L, p); continue; }
     const sal = isRestricted(L, p) ? tenderPrice(L, p) : askPrice(L, p);
-    if (capMsg(L, L.user, sal)) { addNews(L, `No cap room to keep ${p.pos} ${p.name}. He left.`); retireIfUnsigned(L, p); continue; }
+    if (capMsg(L, L.user, sal, true)) { addNews(L, `No cap room to keep ${p.pos} ${p.name}. He left.`); retireIfUnsigned(L, p); continue; }
     setContract(p, sal, y, contractYears(p));
   }
   // AI expiring players left unsigned in the comp era re-sign now.
@@ -2659,7 +2921,7 @@ function leaders(L, key, n, year) {
 
 function myDraftSlots(L) { const D = L.draft; if (!D || !D.slotPick) return []; const out = []; for (let i = D.pick; i < D.slotPick.length; i++) { const k = pickById(L, D.slotPick[i]); if (k && k.own === L.user) out.push(i + 1); } return out; }
 
-const API = { findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
+const API = { committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
   value, release, sign, proposeTrade, tradeVerdict, teamPicks, pickById, pickLabel, projectedOverall, pickWeight, playerWeight, ensurePicks, myDraftSlots, aiTrades, acceptOffer, rejectOffer, offerValid, cutTo, ratings, teamOverall, startRegular, canStartSeason, simWeek, simPlayoffRound, roundName,
   sortTeams, divisions, pct, startDraft, onClock, makePick, aiPick, draftUntilUser, draftAll, scoutPlayer, beginDraft, SCOUT_VISITS, endDraft, startNextSeason, leaders, potKnown, shownPot, roman, addNews };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.GG = API;
@@ -2671,7 +2933,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = API; else 
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-10-27m';
+const APP_VERSION = '2026-10-29b';
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
 const ui = { tab: 'home', grp: 'ALL', lg: 'stand', leadKey: 'py', resWeek: null, open: null, confirm: null,
@@ -2953,7 +3215,7 @@ function diffBlurb(k) {
 
 /* ---------- Game plan ---------- */
 const OFF = { run: 'Ground game', bal: 'Balanced', pass: 'Air it out' };
-const DEF = { soft: 'Bend, don\'t break', bal: 'Base 4-3', blitz: 'Blitz' };
+const DEF = { soft: 'Bend, don\'t break', bal: 'Balanced', blitz: 'Blitz' };
 function bestDefVs(off) { return Object.keys(DEF).sort((a, b) => G.DEF_VS[a][off] - G.DEF_VS[b][off])[0]; }
 function bestOffVs(def) { const v = G.DEF_VS[def]; const best = Object.keys(OFF).sort((a, b) => v[b] - v[a])[0]; return v[best] > 0 ? best : null; }
 function planCard() {
@@ -2966,7 +3228,8 @@ function planCard() {
   const qbOpt = qbs.map(p => `<option value="${p.id}"${startQB && p.id === startQB.id ? ' selected' : ''}${p.inj && !(p.playHurt && G.canPlayHurt(p)) ? ' disabled' : ''}>${esc(p.name)} · ${G.eff(p)} OVR${p.inj ? (p.playHurt ? ' · playing hurt' : ' · injured') : ''}</option>`).join('');
   const using = G.coachFor(L, L.user);
   return `<section class="card"><h3>Game plan vs ${esc(o.city)}</h3>
-    <p class="small"><b>Scouting report:</b> ${esc(OFF[oc.off])} offense, ${esc(DEF[oc.def])} defense, aggressiveness ${oc.aggr}.</p>
+    <p class="small"><b>Scouting report:</b> ${oc.os ? `${esc(G.SCHEME[oc.os].name)} (${esc(OFF[oc.off])}) offense, ${esc(G.SCHEME[oc.ds].name)} (${esc(DEF[oc.def])}) defense` : `${esc(OFF[oc.off])} offense, ${esc(DEF[oc.def])} defense`}, aggressiveness ${oc.aggr}.</p>
+    ${oc.os && base.os ? (() => { const a = G.schemeEdge(L.year, base.os, oc.ds), b = -G.schemeEdge(L.year, oc.os, base.ds); const w = v => `<span class="${v > 0.25 ? 'good' : v < -0.25 ? 'bad' : ''}">${v >= 0 ? '+' : ''}${v.toFixed(1)} pts</span>`; return `<p class="small"><b>Scheme matchup:</b> your ${esc(G.SCHEME[base.os].name)} vs their ${esc(G.SCHEME[oc.ds].name)}: ${w(a)}. Your ${esc(G.SCHEME[base.ds].name)} vs their ${esc(G.SCHEME[oc.os].name)}: ${w(b)}.</p>`; })() : ''}
     <p class="small">Counters: ${G.DEF_VS[dHint][oc.off] < 0 ? `a <b>${esc(DEF[dHint])}</b> defense slows their offense` : `a <b>${esc(DEF[dHint])}</b> defense is the safe call, since blitzing or sitting back gets run on`}${oHint ? `, and a <b>${esc(OFF[oHint])}</b> attack exploits their defense` : '. Their base defense has no scheme weakness, so lean on your best unit'}.</p>
     <div class="fld">Offense this week${segRow('off', OFF)}</div>
     <div class="fld">Defense this week${segRow('def', DEF)}</div>
@@ -3032,12 +3295,12 @@ function conText(p) {
   return `${G.money(p.con.sal)} thru ${p.con.exp}${G.extInfo(L, p) ? ' · <b class="warn">final year</b>' : ''}`;
 }
 function payrollCard() {
-  const y = G.capYear(L), cap = G.capFor(y), pay = G.payroll(L, L.user, y);
-  const pct = cap ? Math.min(100, pay / cap * 100) : 0;
-  const note = cap ? `${G.money(cap - pay)} in cap space` : (y === 2010 ? '2010 is an uncapped year' : 'No salary cap until 1994');
-  return `<section class="card"><div class="split"><h3>${y} payroll</h3><span class="count">${G.money(pay)}${cap ? ' / ' + G.money(cap) : ''}</span></div>
-    ${cap ? `<div class="bar-t cap"><span class="bar-f ${pay > cap ? 'g-low bad' : 'g-good'}" style="width:${pct}%"></span></div>` : ''}
-    <p class="small ${cap && pay > cap ? 'bad' : ''}">${cap && pay > cap ? `Over the cap by ${G.money(pay - cap)}. You can't kick off until you get under.` : note}. League average salary is about ${G.money(G.avgSalary(y))}.</p></section>`;
+  const y = G.capYear(L), cap = G.capFor(y), bud = cap ? null : G.budgetFor(L, y), lim = cap || bud, pay = G.payroll(L, L.user, y), dead = G.deadFor(L, L.user, y);
+  const pct = lim ? Math.min(100, pay / lim * 100) : 0;
+  const note = cap ? `${G.money(cap - pay)} in cap space.` : `${y === 2010 ? '2010 is an uncapped year' : 'No salary cap until 1994'}. The owner's budget is ${G.money(bud)} (15% over the league's average payroll${/^(nyg|nyj|ram|rai|chi|sfo|dal|phi|was)$/.test(me().pfr) ? ', more for a big market' : ''}, a little more after a playoff year). ${(() => { const com = G.committedPay(L, y), un = com - pay; return (un > 0 ? `Your unsigned players would add about ${G.money(un)} if you keep them, so that money is set aside. ` : '') + (com > bud ? `You're <b>${G.money(com - bud)} over</b>: you can re-sign your own players, but no new signings or trades that add salary.` : `${G.money(bud - com)} left for new signings and trades.`); })()}`;
+  return `<section class="card"><div class="split"><h3>${y} payroll</h3><span class="count">${G.money(pay)}${lim ? ' / ' + G.money(lim) : ''}</span></div>
+    ${lim ? `<div class="bar-t cap"><span class="bar-f ${pay > lim ? 'g-low bad' : 'g-good'}" style="width:${pct}%"></span></div>` : ''}
+    <p class="small ${cap && pay > cap ? 'bad' : ''}">${cap && pay > cap ? `Over the cap by ${G.money(pay - cap)}. You can't kick off until you get under.` : note} League average salary is about ${G.money(G.avgSalary(y))}.${dead ? ` Includes ${G.money(dead)} in dead money from released players.` : ''}</p></section>`;
 }
 function faCard() {
   if (L.phase !== 'offseason') return '';
@@ -3207,7 +3470,7 @@ function vRoster() {
       <button class="pl-main" data-act="open" data-id="${p.id}"><span class="pos ${starterIds.has(p.id) ? 'st' : ''}">${esc(p.pos)}</span>
       <div class="pl-name">${esc(p.name)}${p.inj ? `<span class="inj">INJ ${p.inj >= 20 ? 'season' : p.inj + 'w'}</span>` : ''}<div class="pl-sub">${p.num ? '#' + p.num + ' · ' : ''}${(() => { const C = L.camp; if (!C || C.year !== L.year || (L.phase !== 'preseason' && L.phase !== 'regular')) return ''; const r = C.mine.find(x => x.id === p.id); if (!r || r.a === r.b) return ''; const d = r.a - r.b; return `<span class="${d > 0 ? 'good' : 'bad'}">${d > 0 ? '▲' + d : '▼' + (-d)} camp</span> · `; })()}${p.ir ? '<b class="bad">INJURED RESERVE</b> · ' : ''}${p.holdout ? '<b class="bad">HOLDOUT</b> · ' : ''}${p.striking ? '<b class="bad">ON STRIKE</b> · ' : ''}${p.repl ? '<b class="warn">Replacement player</b> · ' : ''}Age ${p.age} · ${p.yrs ? p.yrs + ' yr' + (p.yrs > 1 ? 's' : '') : 'Rookie'} · <span class="${G.mor(p) < 50 ? 'bad' : (G.mor(p) >= 75 ? 'good' : '')}">${G.moraleWord(p)}</span> · ${conText(p)}${statLine(p) ? ' · ' + statLine(p) : ''}</div></div>
       <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></button>
-      ${ui.open === p.id ? `<div class="pl-act">${p.college ? `<span class="small">${esc(p.college)}${p.draft ? ` · drafted ${p.draft.year} R${p.draft.rnd}` : ''}</span>` : ''}${G.canIR(L, p) ? `<button class="btn sm" data-act="ir" data-id="${p.id}">Place on injured reserve</button>` : ''}${p.ir ? (() => { const i = G.irReturnInfo(L, p); return i.ok ? `<button class="btn sm primary" data-act="irOff" data-id="${p.id}">Activate from IR</button>` : `<span class="small">${esc(i.why)}</span>`; })() : ''}${(p.holdout || (G.mor(p) < 50 && G.underpaid(L, p))) && p.con ? `<button class="btn sm primary" data-act="reneg" data-id="${p.id}">New deal ${G.money(G.renegotiatePrice(L, p))}</button>` : ''}${G.extInfo(L, p) ? `<button class="btn sm primary" data-act="extend" data-id="${p.id}">Extend ${G.money(G.extInfo(L, p).sal)}</button>` : ''}${G.canPlayHurt(p) ? `<button class="btn sm" data-act="hurt" data-id="${p.id}">${p.playHurt ? 'Rest him' : 'Play through injury'}</button>` : ''}${confirmBtn('rel' + p.id, 'Release')}<button class="btn sm" data-act="shop" data-id="${p.id}">Offer in trade</button></div>` : ''}
+      ${ui.open === p.id ? `<div class="pl-act">${p.college ? `<span class="small">${esc(p.college)}${p.draft ? ` · drafted ${p.draft.year} R${p.draft.rnd}` : ''}</span>` : ''}${G.canIR(L, p) ? `<button class="btn sm" data-act="ir" data-id="${p.id}">Place on injured reserve</button>` : ''}${p.ir ? (() => { const i = G.irReturnInfo(L, p); return i.ok ? `<button class="btn sm primary" data-act="irOff" data-id="${p.id}">Activate from IR</button>` : `<span class="small">${esc(i.why)}</span>`; })() : ''}${(p.holdout || (G.mor(p) < 50 && G.underpaid(L, p))) && p.con ? `<button class="btn sm primary" data-act="reneg" data-id="${p.id}">New deal ${G.money(G.renegotiatePrice(L, p))}</button>` : ''}${G.extInfo(L, p) ? `<button class="btn sm primary" data-act="extend" data-id="${p.id}">Extend ${G.money(G.extInfo(L, p).sal)}</button>` : ''}${G.canPlayHurt(p) ? `<button class="btn sm" data-act="hurt" data-id="${p.id}">${p.playHurt ? 'Rest him' : 'Play through injury'}</button>` : ''}${confirmBtn('rel' + p.id, G.deadCharge(L, p) ? `Release (${G.money(G.deadCharge(L, p))} dead money)` : 'Release')}<button class="btn sm" data-act="shop" data-id="${p.id}">Offer in trade</button></div>` : ''}
     </div>`).join('')}</div></section>`;
 }
 
@@ -3483,11 +3746,29 @@ function vMoves() {
 }
 
 /* ---------- Coach ---------- */
+const FAM_TXT = { run: 'Run-first', bal: 'Balanced', pass: 'Pass-first', soft: "Bend, don't break", blitz: 'Pressure' };
+function schemeCard(side, c, r) {
+  const cur = side === 'off' ? c.os : c.ds, list = G.schemesFor(L.year, side), raw = G.ratings(L, L.user, { off: 'bal', def: 'bal' });
+  const yrs = x => x.to >= 2026 ? (x.base ? 'Since 1970' : 'Since ' + x.from) : (x.base ? 'Until ' + x.to : x.from + '–' + x.to);
+  const rows = list.map(x => {
+    const fit = G.schemeFit(raw, G.SCHEME[x.id]), tw = G.trendWord(L, x.id), n = Math.round(G.schemeShare(L, x.id) * L.teams.length), on = x.id === cur;
+    return `<div class="pl wide scheme ${on ? 'on' : ''}"><div class="pl-main"><span class="pos">${({ run: 'RUN', bal: 'BAL', pass: 'PASS', soft: 'BEND', blitz: 'BLTZ' })[x.fam]}</span><div class="pl-name">${esc(x.name)}${on ? ' <span class="good">· running it</span>' : ''}
+      <div class="pl-sub">${esc(FAM_TXT[x.fam])} · ${yrs(x)} · ${n} team${n === 1 ? '' : 's'}${tw ? ` · <span class="${tw.c}">${esc(tw.t)}</span>` : ''}</div>
+      <div class="pl-sub">${esc(x.blurb)}</div></div></div>
+      <div class="pl-r"><span class="lbl">FIT</span><span class="fit ${fit > 0.4 ? 'good' : fit < -0.4 ? 'bad' : ''}">${fit >= 0 ? '+' : ''}${fit.toFixed(1)}</span></div>
+      ${on ? '' : `<div class="pl-btns"><button class="btn sm" data-act="scheme" data-id="${x.id}">Run it</button></div>`}</div>`;
+  }).join('');
+  const nm = side === 'off' ? 'Offensive scheme' : 'Defensive scheme';
+  const help = side === 'off'
+    ? 'The schemes of ' + L.year + '. Fit is how much better your current players rate in that system than in a plain one. New schemes catch defenses off guard for a few years; once a third of the league runs one, everyone has a plan for it. Old schemes disappear as the game moves on.'
+    : 'Each defense beats some offenses and struggles against others; check the scheme matchup on the Office tab before each game. Fit is how much better your current defenders rate in that system.';
+  return `<section class="card"><h3>${nm}</h3><p class="small">${help}</p><div class="list">${rows}</div>${side === 'def' ? '<p class="small">Set a different run/pass lean for one game on the Office tab.</p>' : ''}</section>`;
+}
 function vCoach() {
   const c = me().coach, r = G.ratings(L, L.user);
   G.ensureStaff(L);
   const st = me().staff, win = G.coachWindow(L), sb = G.staffBonus(L, L.user);
-  const prefTxt = x => x.role === 'oc' ? ({ run: 'Prefers ground game', bal: 'Prefers balanced', pass: 'Prefers air it out' })[x.pref] : x.role === 'dc' ? ({ soft: "Prefers bend, don't break", bal: 'Prefers base 4-3', blitz: 'Prefers blitz' })[x.pref] : 'Game day and player development';
+  const prefTxt = x => x.role === 'oc' ? ({ run: 'Prefers run-first schemes', bal: 'Prefers balanced schemes', pass: 'Prefers pass-first schemes' })[x.pref] : x.role === 'dc' ? ({ soft: "Prefers bend-don't-break schemes", bal: 'Prefers balanced schemes', blitz: 'Prefers pressure schemes' })[x.pref] : 'Game day and player development';
   const match = x => (x.role === 'oc' && x.pref === c.off) || (x.role === 'dc' && x.pref === c.def);
   const staffRows = ['hc', 'oc', 'dc'].map(role => { const x = st[role];
     return x ? `<div class="pl wide"><div class="pl-main"><span class="pos">${role.toUpperCase()}</span><div class="pl-name">${esc(x.name)}${x.interim ? ' <span class="small">(interim)</span>' : ''}<div class="pl-sub">${G.ROLE_NAME[role]} · age ${x.age}${x.rec && x.rec.yrs ? ` · ${x.rec.w}-${x.rec.l}${x.rec.t ? '-' + x.rec.t : ''} in ${x.rec.yrs} season${x.rec.yrs > 1 ? 's' : ''}` : ''}${x.titles ? ` · ${x.titles} title${x.titles > 1 ? 's' : ''}` : ''}${x.delta ? ` · <span class="${x.delta > 0 ? 'good' : 'bad'}">${x.delta > 0 ? '+' : ''}${x.delta} rating last season</span>` : ''} · ${prefTxt(x)}${role !== 'hc' ? (match(x) ? ' · <span class="good">matches your scheme</span>' : ' · <span class="warn">scheme mismatch, half effect</span>') : ''}</div></div><div class="pl-r"><span class="lbl">RTG</span>${rating(x.r)}</div></div>
@@ -3519,10 +3800,8 @@ function vCoach() {
       <div class="list">${dcRows || '<p>No players at this position.</p>'}</div>
       <div class="row"><button class="btn sm" data-act="dcSort" data-key="ovr" data-id="${dg}">Order by overall</button><button class="btn sm" data-act="dcSort" data-key="pot" data-id="${dg}">Order by potential</button>${custom ? `<button class="btn sm" data-act="dcReset" data-id="${dg}">Auto (best healthy OVR)</button>` : ''}</div>
       <p class="small">Ordering changes who starts. Ordering by potential plays your young players ahead of better veterans.</p></section>
-    <section class="card"><h3>Offensive philosophy</h3>${segc('off', [['run', 'Ground game'], ['bal', 'Balanced'], ['pass', 'Air it out']])}
-      <p class="small">Run-first leans on your backs and line. Pass-first leans on your quarterback and receivers.</p></section>
-    <section class="card"><h3>Defensive scheme</h3>${segc('def', [['soft', 'Bend, don\'t break'], ['bal', 'Base 4-3'], ['blitz', 'Blitz']])}
-      <p class="small">Blitz shuts down passing teams but gets run on. Bend, don't break slows the pass but gives up the run. Base 4-3 has no weakness. Set a different plan for one game on the Office tab.</p></section>
+    ${schemeCard('off', c, r)}
+    ${schemeCard('def', c, r)}
     <section class="card"><h3>Aggressiveness: ${c.aggr}</h3><input type="range" id="aggr" min="0" max="100" step="5" value="${c.aggr}">
       <p class="small">Higher means more fourth-down tries and deep shots: bigger wins and bigger losses.</p></section>
     <section class="card"><label class="tog"><input type="checkbox" id="youth"${c.youth ? ' checked' : ''}> Develop young starters</label>
@@ -3592,7 +3871,7 @@ function act(a, el) {
       ui.confirm = null;
       if (id === 'reset') { L = null; DB.set('league', null).catch(() => {}); ui.tab = 'home'; flash('League deleted. Your imported data is still here.'); }
       else if (id.startsWith('fire')) { const e = G.fireCoach(L, id.slice(4)); flash(e || 'Coach fired. Hire a replacement before kickoff.'); }
-      else if (id.startsWith('rel')) { G.release(L, +id.slice(3)); ui.open = null; flash('Player released to the waiver pool.'); }
+      else if (id.startsWith('rel')) { const dc = G.deadCharge(L, L.players[+id.slice(3)]); G.release(L, +id.slice(3)); ui.open = null; flash('Player released to the waiver pool.' + (dc ? ` ${G.money(dc)} in dead money stays on your ${G.capYear(L)} payroll.` : '')); }
       break;
     case 'newDiff': ui.newDiff = id; break;
     case 'setDiff': G.setDifficulty(L, id); flash(`Difficulty is now ${G.DIFF[id].name}.`); break;
@@ -3644,6 +3923,7 @@ function act(a, el) {
     case 'clearTrade': ui.give = []; ui.get = []; ui.found = null; break;
     case 'propose': { const pk = sel => ({ players: sel.filter(x => x[0] === 'p').map(x => +x.slice(2)), picks: sel.filter(x => x[0] === 'k').map(x => +x.slice(2)) }); const tt = ui.tradeTeam == null ? L.teams.find(t => t.id !== L.user).id : ui.tradeTeam; const r = G.proposeTrade(L, tt, pk(ui.give), pk(ui.get)); flash(r.msg); if (r.ok) { ui.give = []; ui.get = []; } break; }
     case 'coach': me().coach[el.dataset.key] = id; break;
+    case 'scheme': { const e = G.setScheme(L, id); flash(e || `You now run the ${G.SCHEME[id].name}.`); break; }
     case 'plan': G.setGamePlan(L, el.dataset.key, id || null); break;
     case 'dcMove': G.moveDepth(L, L.user, +id, +el.dataset.key); break;
     case 'dcReset': G.resetDepth(L, L.user, id); break;
