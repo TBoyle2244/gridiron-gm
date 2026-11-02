@@ -468,20 +468,44 @@ const SMALL_POWERS = /^(Grambling|Jackson St|Southern|Florida A&M|Tennessee St|A
 function slotGrade(overall) { return 50 + 31 * Math.exp(-(Math.max(1, overall) - 1) / 70); }
 function collegeBump(c) { c = String(c || ''); return BIG_SCHOOLS.test(c) ? 2 : (SMALL_POWERS.test(c) ? 1 : 0); }
 
+// The last season the imported data covers. Players whose career runs to here are still active,
+// so their careers are projected forward instead of judged on a few seasons.
+const DATA_LAST = 2025;
+// Approximate Value isn't equal across positions: quarterbacks pile it up, tight ends, kickers and
+// punters get little. Each position is scaled to the same footing before it becomes a rating.
+const POS_AV = { QB: 0.86, RB: 1.08, WR: 1.04, TE: 1.6, OL: 0.98, DL: 0.97, LB: 0.96, DB: 1.08, K: 1.6, P: 2.0 };
+// Above 88 ratings get harder to earn, so 99 is for the very best of all time.
+function compressTop(x) { return x <= 88 ? x : 88 + 11 * (1 - Math.exp(-(x - 88) / 14)); }
+function realCareer(r, year, grp) {
+  const pick = num(r.Pick) || 300, to = num(r.To);
+  let wav = Math.max(0, num(r.wAV)), pb = num(r.PB), ap = num(r.AP1);
+  const s = to ? Math.max(0, Math.min(to, DATA_LAST) - year + 1) : 0;
+  const prior = 1.5 + 7 * Math.exp(-(pick - 1) / 50); // AV a season that a pick like this usually gives
+  const rate = s ? wav / s : 0;
+  if (to >= DATA_LAST - 1) {
+    const k = 2, left = Math.max(0, 10 - s) * 0.85, br = (wav + prior * k) / (s + k);
+    wav += br * left; pb += pb / (s + k) * left; ap += ap / (s + k) * left;
+  }
+  const quick = s >= 1 && s <= 6 && rate >= prior * 1.15 && rate >= 5;
+  wav *= POS_AV[grp] || 1;
+  return { score: 45 + Math.sqrt(wav) * 4.2 + pb * 0.8 + ap * 1.0, quick, played: s > 0, s };
+}
+function noiseFor(s) { return s >= 5 ? 2.5 : s >= 2 ? 3.5 : s === 1 ? 4.5 : 5; }
 function prospectFromDraft(L, r, year) {
   const grp = grpOf(r.Pos, 0);
   const overall = num(r.Pick) || 300;
   const slot = slotGrade(overall), college = r['College/Univ'] || '';
-  // What he actually becomes: part draft slot, part real career, plus luck.
-  const wav = Math.max(0, num(r.wAV)), pb = num(r.PB), ap = num(r.AP1);
-  const career = 45 + Math.sqrt(wav) * 4.2 + pb * 0.8 + ap * 1.0;
-  const pot = clamp(Math.round(0.4 * slot + 0.6 * career + R.norm() * 7), 40, 99);
-  const ovr = clamp(pot - R.int(8, 18), 36, 80);
+  // What he actually becomes: mostly his real (or projected) career, a little draft slot, plus some luck.
+  const C = realCareer(r, year, grp);
+  // The more real seasons we know about, the less luck: about ±5 for unknowns, ±2.5 for veterans.
+  const pot = clamp(Math.round(compressTop(0.2 * slot + 0.8 * C.score - 2.5 + R.norm() * noiseFor(C.s))), 40, 99);
+  // Players who were good from day one start close to their ceiling.
+  const ovr = C.quick ? clamp(pot - R.int(4, 8), 36, 84) : clamp(pot - R.int(8, 18), 36, 80);
   const scout = clamp(Math.round(slot + collegeBump(college) + R.norm() * 4), 40, 92);
   const pos = String(r.Pos || '').toUpperCase().split(/[-\/]/)[0];
   return mkPlayer(L, {
     name: r.Player, pos: pos || undefined, grp, age: num(r.Age) || 22, ovr, pot, team: -3, yrs: 0,
-    college, real: true, scout, reveal: year,
+    college, real: true, scout, reveal: year, quick: C.quick || undefined, realTo: num(r.To) || undefined,
     realPick: { rnd: num(r.Rnd), pick: overall, tm: r.Tm || '' }
   });
 }
@@ -593,6 +617,19 @@ function newLeague(imports, userPfr, opts) {
   }
   addNews(L, 'The 1970 season begins. The AFL and NFL have merged into one 26-team league.');
   if (gen.length) addNews(L, 'Generated placeholder rosters for: ' + gen.join(', ') + '.');
+  const Y = clamp(Math.round((opts && opts.startYear) || 1970), START_FIRST, START_LAST);
+  L.realCareers = !(opts && opts.realCareers === false);
+  if (Y > 1970) {
+    const viaReal = !!REAL;
+    const n = viaReal ? buildFromReal(L, Y, imports) : fastForward(L, Y, imports);
+    fillRosters(L, Y);
+    L.news = [];
+    const ut = L.teams.find(t => t.pfr === userPfr); L.user = ut ? ut.id : 0;
+    addNews(L, viaReal
+      ? `The ${Y} season begins with ${L.teams.length} teams and their real ${Y} rosters, undrafted players included (${n} real players; anyone over the roster limit starts as a free agent). A few open spots have generated players.`
+      : `The ${Y} season begins with ${L.teams.length} teams. Rosters are built from the real draft classes: ${n} drafted players, each with the team that picked him. Spots the data can't fill (undrafted players) have generated players.`);
+    L.startYear = Y;
+  } else link1970(L);
   L.teams[L.user].coach = { off: 'bal', def: 'bal', aggr: 50, youth: false };
   L.job = { sec: 60, hist: [] };
   L.styles = 2;
@@ -601,9 +638,227 @@ function newLeague(imports, userPfr, opts) {
   ensurePicks(L);
   aiStyles(L, false, true);
   ensureContracts(L);
+  fitPayrolls(L);
   ensureStaff(L);
   ensureNumbers(L);
   return L;
+}
+
+/* ---------- real players: rosters, careers, undrafted players ----------
+   rosters.json (from nflverse) lists every player on every team for every season since 1970.
+   It decides who is on which team when a league starts after 1970, when real careers end,
+   and lets undrafted players enter the league in their real rookie year. Ratings still come
+   from Pro-Football-Reference draft data, or for undrafted players from an estimate built
+   from their seasons, starts and stats. */
+const START_FIRST = 1970, START_LAST = 2026;
+let REAL = null, DRAFTS = null;
+function setDrafts(d) { DRAFTS = d || null; }
+function nameKey(n) { return String(n || '').toLowerCase().replace(/[.'’]/g, '').replace(/-/g, ' ').replace(/\b(jr|sr|ii|iii|iv|v)\b/g, '').replace(/\s+/g, ' ').trim(); }
+function setRealData(d) {
+  if (!d || !d.players) { REAL = null; return 0; }
+  const byDraft = {}, byFirst = {}, by70 = {};
+  for (const p of d.players) {
+    p.l = p.f + p.t.length - 1;
+    if (p.d) byDraft[p.d[0] + '-' + p.d[1]] = p; else (byFirst[p.f] = byFirst[p.f] || []).push(p);
+    if (p.f <= 1970) by70[nameKey(p.n)] = p;
+  }
+  REAL = { players: d.players, byDraft, byFirst, by70, last: d.last || 2026 };
+  return d.players.length;
+}
+function hasReal() { return !!REAL; }
+// Last real season, or null if he is still playing at the end of the data.
+function realEndOf(rp) { return !rp ? null : (rp.l >= REAL.last ? null : rp.l); }
+// PFR draft team codes -> franchise code in the league that year
+function pfrForTm(tm, y) {
+  tm = String(tm || '').toUpperCase();
+  const m = { ARI: 'crd', PHO: 'crd', ATL: 'atl', BUF: 'buf', CAR: 'car', CHI: 'chi', CIN: 'cin', DAL: 'dal', DEN: 'den', DET: 'det', GNB: 'gnb',
+    IND: 'clt', JAX: 'jax', KAN: 'kan', LAC: 'sdg', SDG: 'sdg', LAR: 'ram', RAM: 'ram', LVR: 'rai', OAK: 'rai', RAI: 'rai', MIA: 'mia', MIN: 'min',
+    NOR: 'nor', NWE: 'nwe', BOS: 'nwe', NYG: 'nyg', NYJ: 'nyj', PHI: 'phi', PIT: 'pit', SFO: 'sfo', SEA: 'sea', TAM: 'tam', TEN: 'oti', WAS: 'was' };
+  if (tm === 'BAL') return y <= 1983 ? 'clt' : 'rav';
+  if (tm === 'HOU') return y <= 1996 ? 'oti' : 'htx';
+  if (tm === 'STL') return y <= 1987 ? 'crd' : 'ram';
+  if (tm === 'CLE') return y <= 1995 ? 'cle' : 'cle';
+  return m[tm] || null;
+}
+// The teams that exist in a given season, for the new-league screen.
+function teamsAt(y) {
+  const T = TEAMS_1970.map(a => ({ pfr: a[0], abbr: a[1], city: a[2], name: a[3] }));
+  for (let yy = 1971; yy <= y; yy++) for (const e of EVENTS[yy] || []) {
+    if (e.t === 'rename') { const t = T.find(x => x.pfr === e.pfr); if (!t) continue; if (e.city) t.city = e.city; if (e.name) t.name = e.name; if (e.abbr) t.abbr = e.abbr; if (e.newPfr) t.pfr = e.newPfr; }
+    else if (e.t === 'expand') T.push({ pfr: e.team[0], abbr: e.team[1], city: e.team[2], name: e.team[3] });
+  }
+  return T.sort((a, b) => (a.city + a.name).localeCompare(b.city + b.name));
+}
+// Rating in a given season for a player following his real career (p.rc).
+// Rises to his potential over about three and a half seasons, holds, then declines; players
+// whose real careers were long stayed good longer.
+function rcRating(p, y) {
+  const rc = p.rc, n = y - rc.y0, age = rc.a0 + n, slow = p.grp === 'QB' || p.grp === 'K' || p.grp === 'P';
+  const base = slow ? 33 : ({ RB: 27, WR: 29, DB: 29 })[p.grp] || 30;
+  const peakAge = rc.ea ? Math.max(base, rc.ea - 3) : base;
+  let o = p.pot - rc.g0 * Math.max(0, 1 - n / 3.5);
+  if (age > peakAge) o -= (age - peakAge) * (p.grp === 'RB' ? 3 : 2) * (slow ? 0.7 : 1);
+  return clamp(Math.round(Math.min(o, p.pot)), 36, 99);
+}
+// Attach a real career to a player who just entered the league in year y0.
+function attachRC(p, y0, rp, fallbackTo) {
+  let end = null;
+  if (rp) end = realEndOf(rp);
+  else if (fallbackTo && fallbackTo < DATA_LAST) end = fallbackTo;
+  p.rc = { y0, a0: p.age, g0: Math.max(0, p.pot - p.ovr), end };
+  p.rc.ea = end != null ? p.age + (end - y0) : (rp || fallbackTo ? p.age + ((REAL ? REAL.last : DATA_LAST) + 1 - y0) : null);
+}
+// Undrafted players: potential from the estimated career value (on the same scale as drafted players).
+function undraftedPot(rp) {
+  const s = rp.t.filter(Boolean).length, wav = Math.max(0, rp.e || 0) * (POS_AV[rp.g] || 1);
+  // seasons as a starter stand in for the Pro Bowl credit drafted players get (long careers before 2001, when there are no depth charts)
+  let old = 0; rp.t.forEach((x, i) => { if (x && rp.f + i < 2001) old++; });
+  const st = (rp.s || 0) + Math.max(0, old - 5) * 0.6;
+  const score = 45 + Math.sqrt(wav) * 4.2 + st * 0.6 + (rp.x || 0) * 0.8;
+  // an average draft-slot prior: his real career, not where he wasn't picked, decides the rest
+  return clamp(Math.round(compressTop(0.2 * 60 + 0.8 * score - 2.5 + R.norm() * noiseFor(s))), 40, 99);
+}
+function realPos(rp) { const x = String(rp.p || '').toUpperCase(); return x.length <= 3 && x !== 'OL' && x !== 'DL' ? x : undefined; }
+function playerFromReal(L, rp, team, Y, drafts) {
+  const grp = rp.g, b = rp.b || 0;
+  drafts = drafts || DRAFTS;
+  let row = null, rowYear = rp.d ? rp.d[0] : null;
+  if (rp.d && drafts && drafts[rp.d[0]]) row = drafts[rp.d[0]].find(r => (num(r.Pick) || 0) === rp.d[1] && nameKey(r.Player) === nameKey(rp.n));
+  // supplemental drafts (e.g. the 1984 USFL/CFL draft), imported as "1984s"
+  if (!row && !rp.d && drafts) for (const k in drafts) if (/s$/.test(k)) {
+    const y = parseInt(k, 10); if (!(rp.f - 3 <= y && y <= rp.f)) continue;
+    const r = drafts[k].find(x => nameKey(x.Player) === nameKey(rp.n)); if (r) { row = r; rowYear = y; break; }
+  }
+  let p;
+  if (row) {
+    p = prospectFromDraft(L, row, rowYear);
+    p.team = team; delete p.reveal; p.seen = true;
+    p.draft = { year: rowYear, rnd: num(row.Rnd) || 1, pick: num(row.Pick) || 0 };
+    p.age = num(row.Age) || (b ? rowYear - b : 22);
+    attachRC(p, Math.max(rowYear, rp.f), rp);
+  } else {
+    const pot = undraftedPot(rp);
+    p = mkPlayer(L, { name: rp.n, pos: realPos(rp), grp, age: b ? rp.f - b : 23, ovr: pot - R.int(6, 14), pot, team, yrs: 0, college: rp.c || '', real: true, udfa: rp.d ? undefined : true });
+    attachRC(p, rp.f, rp);
+  }
+  if (rp.no) p.num = rp.no;
+  // bring him to season Y
+  const n = Y - p.rc.y0;
+  p.age = p.rc.a0 + n; p.yrs = Math.max(0, Y - rp.f);
+  p.ovr = n > 0 ? rcRating(p, Y) : p.ovr;
+  p.peak = p.ovr;
+  return p;
+}
+// The teams that exist in a given season, for the new-league screen.
+function teamsAt(y) {
+  const T = TEAMS_1970.map(a => ({ pfr: a[0], abbr: a[1], city: a[2], name: a[3] }));
+  for (let yy = 1971; yy <= y; yy++) for (const e of EVENTS[yy] || []) {
+    if (e.t === 'rename') { const t = T.find(x => x.pfr === e.pfr); if (!t) continue; if (e.city) t.city = e.city; if (e.name) t.name = e.name; if (e.abbr) t.abbr = e.abbr; if (e.newPfr) t.pfr = e.newPfr; }
+    else if (e.t === 'expand') T.push({ pfr: e.team[0], abbr: e.team[1], city: e.team[2], name: e.team[3] });
+  }
+  return T.sort((a, b) => (a.city + a.name).localeCompare(b.city + b.name));
+}
+// Starting after 1970 with real rosters: every player on his real team that season.
+function buildFromReal(L, Y, imports) {
+  const drafts = (imports && imports.drafts) || {};
+  L.players = {};
+  for (let y = START_FIRST + 1; y <= Y; y++) { L.year = y; applyEvents(L); }
+  const byPfr = {}; L.teams.forEach(t => byPfr[t.pfr] = t.id);
+  let n = 0;
+  L.realIn = {};
+  for (const rp of REAL.players) {
+    if (rp.f > Y || rp.l < Y) continue;
+    const code = rp.t[Y - rp.f]; if (!code || byPfr[code] == null) continue;
+    playerFromReal(L, rp, byPfr[code], Y, drafts); n++;
+    if (!rp.d) L.realIn[rp.n + '|' + rp.f] = 1;
+  }
+  return n;
+}
+// Fill positions the data can't cover, then trim to the limit.
+function fillRosters(L, Y) {
+  for (const id in L.players) { const p = L.players[id]; p.hist = {}; p.inj = 0; delete p.con; delete p.injY; }
+  const max = rules(Y).rosterMax;
+  for (const t of L.teams) {
+    const c = groupCounts(L, t.id);
+    for (const g of GRPS) { const need = STARTERS[g] + (g === 'K' || g === 'P' ? 0 : 2); for (let k = c[g] || 0; k < need; k++) genPlayer(L, g, t.id, 50, [23, 30]); }
+    let n = roster(L, t.id).length;
+    const order = ['OL', 'DB', 'DL', 'LB', 'WR', 'RB', 'TE', 'QB'];
+    let i = 0; while (n < max) { genPlayer(L, order[i % order.length], t.id, 48, [22, 29]); n++; i++; }
+    cutTo(L, t.id, max, true);
+  }
+  L.teams.forEach(t => { t.w = t.l = t.t = t.pf = t.pa = 0; t.hist = []; t.ring = []; });
+}
+// Without rosters.json: build forward from 1970 with each drafted player on his drafting team.
+function fastForward(L, Y, imports) {
+  const drafts = (imports && imports.drafts) || {};
+  let added = 0;
+  for (let y = START_FIRST + 1; y <= Y; y++) {
+    for (const id in L.players) {
+      const p = L.players[id];
+      if (p.rc && p.rc.y0 > 1970) {
+        if (p.rc.end != null && y > p.rc.end) { delete L.players[id]; continue; }
+        p.age++; p.yrs++; p.ovr = rcRating(p, y);
+      } else if (ffAgeVet(p)) delete L.players[id];
+    }
+    L.year = y;
+    applyEvents(L);
+    for (const r of drafts[y] || []) {
+      const to = num(r.To);
+      if (y <= DATA_LAST && !(to >= y)) continue;
+      const t = L.teams.find(x => x.pfr === pfrForTm(r.Tm, y)); if (!t) continue;
+      const p = prospectFromDraft(L, r, y);
+      p.team = t.id; p.draft = { year: y, rnd: num(r.Rnd) || 1, pick: num(r.Pick) || 999 };
+      delete p.reveal; p.seen = true;
+      attachRC(p, y, null, to >= DATA_LAST ? null : to);
+      if (to >= DATA_LAST) p.rc.ea = p.age + (DATA_LAST + 2 - y);
+      added++;
+    }
+  }
+  return added;
+}
+function ffAgeVet(p) {
+  p.age++; p.yrs++;
+  let d;
+  if (p.age <= 24) d = R.int(1, 6); else if (p.age <= 28) d = R.int(-1, 3); else if (p.age <= 31) d = R.int(-4, 1); else if (p.age <= 34) d = R.int(-5, 1); else d = R.int(-7, 0);
+  if (d < 0 && (p.grp === 'QB' || p.grp === 'K' || p.grp === 'P')) d = Math.round(d * 0.6);
+  p.ovr = d > 0 ? Math.min(p.pot, p.ovr + d) : Math.max(30, p.ovr + d); if (p.ovr > p.pot) p.pot = p.ovr;
+  let rp = 0;
+  if (p.age >= 33) { rp = (0.25 + (p.age - 33) * 0.15) * clamp(1 - (p.ovr - 65) * 0.04, 0.3, 1); if (p.grp === 'K' || p.grp === 'P') rp *= 0.4; if (p.grp === 'QB') rp *= 0.7; }
+  else if (p.age >= 28 && p.ovr < 48) rp = 0.35;
+  if (p.age >= 38 && !(p.grp === 'QB' || p.grp === 'K' || p.grp === 'P')) rp = 1;
+  if (p.age >= 46) rp = 1;
+  return Math.random() < rp;
+}
+// Each new season, that year's real undrafted players who lasted at least two seasons
+// become free agents. Teams sign them on merit, like any other free agent.
+function enterUndrafted(L, y) {
+  if (!REAL || !REAL.byFirst[y]) return 0;
+  L.realIn = L.realIn || {};
+  const notable = []; let n = 0;
+  for (const rp of REAL.byFirst[y]) {
+    const k = rp.n + '|' + rp.f; if (L.realIn[k]) continue;
+    if (rp.t.filter(Boolean).length < 2) continue;
+    L.realIn[k] = 1;
+    const p = playerFromReal(L, rp, -1, y, null);
+    p.yrs = 0; n++;
+    if (p.pot >= 74) notable.push(p);
+  }
+  if (notable.length) addNews(L, `Undrafted free agents to watch: ${notable.sort((a, b) => b.pot - a.pot).slice(0, 5).map(p => `${p.pos} ${p.name}`).join(', ')}.`);
+  return n;
+}
+// 1970 veterans: their real careers end when they really ended.
+function link1970(L) {
+  if (!REAL) return;
+  for (const id in L.players) { const p = L.players[id]; const rp = REAL.by70[nameKey(p.name)]; if (rp && p.real) p.rc = { end: realEndOf(rp) }; }
+}
+// Before the cap: nothing to fit. With a cap, every team starts a little under it.
+function fitPayrolls(L) {
+  const y = capYear(L), c = capFor(y); if (c == null) return;
+  for (const t of L.teams) {
+    const pay = payroll(L, t.id, y); if (pay <= c * 0.95) continue;
+    const f = c * 0.94 / pay;
+    roster(L, t.id).forEach(p => { if (p.con) p.con.sal = Math.round(p.con.sal * f); });
+  }
 }
 
 function addNews(L, s) { L.news.unshift({ y: L.year, w: L.phase === 'regular' ? L.week + 1 : null, s }); if (L.news.length > 150) L.news.length = 150; }
@@ -1476,8 +1731,9 @@ function schemeOffset(L) {
   if (!T.length) return 0;
   let fit = 0, ed = 0;
   for (const t of T) {
-    const r = ratings(L, t.id, { off: 'bal', def: 'bal' });
-    fit += (schemeFit(r, SCHEME[t.coach.os]) - schemeFit(r, SCHEME[t.coach.ds])) * 0.6 + schemeTrend(L, t.coach.os) - schemeTrend(L, t.coach.ds);
+    const r = ratings(L, t.id, t.coach);
+    // also takes out any league-wide gap between offensive and defensive ratings
+    fit += (r.off - r.def) * 0.6 + schemeTrend(L, t.coach.os) - schemeTrend(L, t.coach.ds);
     for (const u of T) if (u !== t) ed += schemeEdge(L.year, t.coach.os, u.coach.ds);
   }
   const v = fit / T.length + ed / (T.length * (T.length - 1));
@@ -2168,6 +2424,7 @@ function makePick(L, pid) {
   const D = L.draft, tid = onClock(L); if (tid == null) return;
   const p = L.players[pid]; if (!p || p.team !== -3) return;
   p.team = tid; p.draft = { year: D.year, rnd: Math.floor(D.pick / D.order.length) + 1, pick: D.pick + 1 };
+  if (p.realPick && !p.rc) attachRC(p, D.year, REAL ? REAL.byDraft[D.year + '-' + p.realPick.pick] : null, p.realTo);
   rookieDeal(L, p, D.year, D.pick + 1, p.draft.rnd);
   D.pool = D.pool.filter(i => i !== pid);
   D.log.push({ n: D.pick + 1, tid, pid });
@@ -2291,6 +2548,9 @@ function progress(L) {
     const hc = L.teams[p.team] && L.teams[p.team].staff && L.teams[p.team].staff.hc;
     if (hc && p.age <= 26 && Math.random() < (hc.r - 55) / 60) d += 1;
     if (d > 0) p.ovr = Math.min(p.pot, p.ovr + d); else p.ovr = Math.max(30, p.ovr + d);
+    // Real careers: real players rise, peak and fade the way their real careers did.
+    const RC = L.realCareers !== false && p.rc;
+    if (RC && p.rc.y0 != null && !rookie) p.ovr = Math.max(30, rcRating(p, L.year + 1) + (played && youth[p.team] && p.age <= 26 ? 1 : 0));
     p.peak = Math.max(p.peak || 0, p.ovr);
     if (p.ovr >= p.pot) p.pot = p.ovr;
     p.inj = 0;
@@ -2309,6 +2569,12 @@ function progress(L) {
     // players who keep getting hurt walk away sooner
     if (p.age >= 26) { const w = recentInjuryWeeks(p, L.year); rp += clamp((w - 6) / 50, 0, 0.35) * (p.age >= 28 ? 1 : 0.5); }
     if (p.team === -1) rp += p.age >= 29 ? 0.5 : (p.age >= 24 ? 0.35 : 0.15);
+    if (RC) {
+      // ...and retire the year they really did (a free agent nobody signs may still walk away early)
+      const lastKnown = REAL ? REAL.last : DATA_LAST + 1;
+      if (p.rc.end != null) rp = L.year + 1 > p.rc.end ? 1 : (p.team === -1 ? rp * 0.5 : 0);
+      else if (L.year + 1 <= lastKnown) rp = p.team === -1 ? rp * 0.5 : 0;
+    }
     if (Math.random() < rp) { retired.push(p); p.team = -2; p.retiredYear = L.year + 1; }
   }
   const notable = retired.filter(p => p.ovr >= 78 || p.real && p.ovr >= 72).slice(0, 6);
@@ -2445,6 +2711,7 @@ function startNextSeason(L) {
   L.year++;
   L.phase = 'preseason';
   applyEvents(L);
+  enterUndrafted(L, L.year);
   archiveBoxes(L);
   L.teams.forEach(t => { t.w = t.l = t.t = t.pf = t.pa = 0; });
   L.playoffs = null; L.schedule = []; L.week = 0;
@@ -2921,7 +3188,7 @@ function leaders(L, key, n, year) {
 
 function myDraftSlots(L) { const D = L.draft; if (!D || !D.slotPick) return []; const out = []; for (let i = D.pick; i < D.slotPick.length; i++) { const k = pickById(L, D.slotPick[i]); if (k && k.own === L.user) out.push(i + 1); } return out; }
 
-const API = { committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
+const API = { setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
   value, release, sign, proposeTrade, tradeVerdict, teamPicks, pickById, pickLabel, projectedOverall, pickWeight, playerWeight, ensurePicks, myDraftSlots, aiTrades, acceptOffer, rejectOffer, offerValid, cutTo, ratings, teamOverall, startRegular, canStartSeason, simWeek, simPlayoffRound, roundName,
   sortTeams, divisions, pct, startDraft, onClock, makePick, aiPick, draftUntilUser, draftAll, scoutPlayer, beginDraft, SCOUT_VISITS, endDraft, startNextSeason, leaders, potKnown, shownPot, roman, addNews };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.GG = API;
@@ -2933,7 +3200,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = API; else 
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-10-29b';
+const APP_VERSION = '2026-11-01b';
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
 const ui = { tab: 'home', grp: 'ALL', lg: 'stand', leadKey: 'py', resWeek: null, open: null, confirm: null,
@@ -3158,14 +3425,27 @@ function vHome() {
 }
 
 function vSetup() {
+  const Y = ui.startYear || 1970, teams = G.teamsAt(Y), pick = ui.startTeam && teams.some(t => t.pfr === ui.startTeam) ? ui.startTeam : (teams.some(t => t.pfr === 'nor') ? 'nor' : teams[0].pfr);
   const have = G.TEAMS_1970.filter(t => IM.rosters[t[0]]).length;
-  return `<section class="card hero"><div class="eyebrow">New league · 1970</div><h2>Take over a franchise</h2>
-    <p>The AFL-NFL merger season: 26 teams, 14 games, 40-man rosters. Real rosters load from what you import on the Data tab; any team you have not imported gets a placeholder roster.</p>
-    <p><b>${have}</b> of 26 rosters imported · draft classes: <b>${Object.keys(IM.drafts).sort().join(', ') || 'none'}</b></p>
+  const dy = Object.keys(IM.drafts).map(Number).sort((a, b) => a - b);
+  const missing = []; for (let y = 1971; y <= Math.min(Y, G.START_LAST); y++) if (!IM.drafts[y]) missing.push(y);
+  const years = []; for (let y = G.START_FIRST; y <= G.START_LAST; y++) years.push(y);
+  const real = G.hasReal();
+  const blurb = Y === 1970
+    ? `The AFL-NFL merger season: 26 teams, 14 games, 40-man rosters. Real rosters come from the 1970 rosters on the Data tab; a team without one gets a placeholder roster.`
+    : real
+      ? `Every team starts with its real ${Y} roster, undrafted players included. Ratings come from each player's real career. Expansion, moves and rule changes up to ${Y} are already in place. League history (records, awards, Hall of Fame) starts in ${Y}.`
+      : `Real rosters for ${Y} haven't loaded (rosters.json), so the league is built from the draft classes: <b>every drafted player is on the team that drafted him and undrafted players are generated</b>. League history starts in ${Y}.`;
+  return `<section class="card hero"><div class="eyebrow">New league · ${Y}</div><h2>Take over a franchise</h2>
+    <label class="fld">First season<select id="startYear">${years.map(y => `<option value="${y}"${y === Y ? ' selected' : ''}>${y}</option>`).join('')}</select></label>
+    <p>${blurb}</p>
+    <p class="small"><b>${have}</b> of 26 rosters from 1970 · draft classes ${dy.length ? `${dy[0]}–${dy[dy.length - 1]} (${dy.length})` : 'none'}${missing.length && Y > 1970 ? ` · <span class="warn">missing ${missing.length > 6 ? missing.length + ' years' : missing.join(', ')}: those teams get more generated players</span>` : ''}</p>
     <div class="fld">Difficulty<div class="seg">${Object.keys(G.DIFF).map(k => `<button class="${(ui.newDiff || 'pro') === k ? 'on' : ''}" data-act="newDiff" data-id="${k}">${G.DIFF[k].name}</button>`).join('')}</div></div>
     <p class="small">${diffBlurb(ui.newDiff || 'pro')}</p>
-    <label class="fld">Your team<select id="pickTeam">${G.TEAMS_1970.map(t => `<option value="${t[0]}"${t[0] === 'nor' ? ' selected' : ''}>${esc(t[2] + ' ' + t[3])}${IM.rosters[t[0]] ? '' : ' (placeholder)'}</option>`).join('')}</select></label>
-    <div class="row"><button class="btn primary" data-act="newLeague">Start the 1970 league</button><button class="btn" data-act="tab" data-id="data">Import data</button></div></section>`;
+    <label class="tog"><input type="checkbox" id="realNew"${ui.realCareers !== false ? ' checked' : ''}> Real careers</label>
+    <p class="small">On: real players rise, peak, fade and retire the way their real careers did, and undrafted players join the league in their real rookie year. Off: development and retirement are random, for a different history every time. You can change this later on the Data tab.</p>
+    <label class="fld">Your team<select id="pickTeam">${teams.map(t => `<option value="${t.pfr}"${t.pfr === pick ? ' selected' : ''}>${esc(t.city + ' ' + t.name)}${Y === 1970 && !IM.rosters[t.pfr] ? ' (placeholder)' : ''}</option>`).join('')}</select></label>
+    <div class="row"><button class="btn primary" data-act="newLeague">Start the ${Y} season</button><button class="btn" data-act="tab" data-id="data">Import data</button></div></section>`;
 }
 
 function playoffResults() {
@@ -3815,12 +4095,14 @@ function vData() {
   let h = `<section class="card"><h3>Import from Pro-Football-Reference</h3>
     <p class="small">On the PFR page, open Share &amp; Export → Get table as CSV, copy the text, and paste it here. Rosters only matter when you start a new league. Draft classes can be added any time before that year's draft.</p>
     <div class="seg"><button class="${ui.impKind === 'roster' ? 'on' : ''}" data-act="impKind" data-id="roster">1970 team roster</button><button class="${ui.impKind === 'draft' ? 'on' : ''}" data-act="impKind" data-id="draft">Draft class</button></div>
-    ${ui.impKind === 'roster' ? `<label class="fld">Team<select id="impTeam">${teamsOpt}</select></label>` : `<label class="fld">Draft year<input id="impYear" type="number" inputmode="numeric" min="1971" max="2030" value="${ui.impYear}"></label>`}
+    ${ui.impKind === 'roster' ? `<label class="fld">Team<select id="impTeam">${teamsOpt}</select></label>` : `<label class="fld">Draft year (add an s for a supplemental draft, like 1984s)<input id="impYear" type="text" inputmode="text" value="${ui.impYear}"></label>`}
     <label class="fld">CSV text<textarea id="impText" rows="5" placeholder="Paste the CSV here"></textarea></label>
     <div class="row"><button class="btn primary" data-act="import">Import</button></div>
     <label class="fld">Or choose files (name them like nor.csv or draft1971.csv)<input id="impFiles" type="file" accept=".csv,.txt,text/csv,text/plain" multiple></label></section>`;
   h += `<section class="card"><h3>1970 rosters imported</h3><div class="grid26">${G.TEAMS_1970.map(t => `<span class="cell ${IM.rosters[t[0]] ? 'ok' : ''}" title="${esc(t[2])}">${esc(t[1])}<small>${IM.rosters[t[0]] ? IM.rosters[t[0]].length : '–'}</small></span>`).join('')}</div>
     <p class="small">Draft classes: ${Object.keys(IM.drafts).sort().map(y => `<b>${y}</b> (${IM.drafts[y].length})`).join(', ') || 'none yet'}</p></section>`;
+  if (L) h += `<section class="card"><label class="tog"><input type="checkbox" id="realL"${L.realCareers !== false ? ' checked' : ''}> Real careers</label><p class="small">On: real players rise, peak, fade and retire the way their real careers did. Off: random development and retirement. Takes effect at the next offseason.</p></section>`;
+  h += `<section class="card"><h3>Real rosters</h3><p class="small">${G.hasReal() ? `Loaded: every NFL roster from 1970 to 2026. Used for leagues that start after 1970, for when real careers end, and for undrafted players.` : `Not loaded yet. Put <b>rosters.json</b> next to index.html on your site.`} Roster data: <b>nflverse</b> (github.com/nflverse, CC-BY 4.0). Ratings data: Pro-Football-Reference draft classes.</p></section>`;
   if (L) h += `<section class="card"><h3>Difficulty</h3><div class="seg">${Object.keys(G.DIFF).map(k => `<button class="${(L.diff || 'pro') === k ? 'on' : ''}" data-act="setDiff" data-id="${k}">${G.DIFF[k].name}</button>`).join('')}</div><p class="small">${diffBlurb(L.diff || 'pro')} You can change this any time.</p></section>`;
   const nR = Object.keys(IM.rosters).length, nD = Object.keys(IM.drafts).length;
   h += `<section class="card"><h3>Share your data with a friend</h3>
@@ -3875,7 +4157,7 @@ function act(a, el) {
       break;
     case 'newDiff': ui.newDiff = id; break;
     case 'setDiff': G.setDifficulty(L, id); flash(`Difficulty is now ${G.DIFF[id].name}.`); break;
-    case 'newLeague': L = G.newLeague(IM, $('#pickTeam').value, { diff: ui.newDiff || 'pro' }); ui.tab = 'home'; flash(`Welcome to ${tname(me())}.`); break;
+    case 'newLeague': L = G.newLeague(IM, $('#pickTeam').value, { diff: ui.newDiff || 'pro', startYear: ui.startYear || 1970, realCareers: ui.realCareers !== false }); ui.tab = 'home'; flash(`Welcome to ${tname(me())}.`); break;
     case 'autocut': G.cutTo(L, L.user, G.rules(L.year).rosterMax); break;
     case 'startSeason': { const e = G.startRegular(L); if (e) flash(e); break; }
     case 'simWeek': G.simWeek(L); break;
@@ -3954,7 +4236,7 @@ function act(a, el) {
     case 'impKind': ui.impKind = id; break;
     case 'import': {
       const text = $('#impText').value;
-      try { flash(importText(text, ui.impKind, ui.impKind === 'roster' ? ui.impTeam : +ui.impYear)); } catch (e) { flash(e.message); }
+      try { const yk = String(ui.impYear).trim().toLowerCase(); if (ui.impKind !== 'roster' && !/^(19[7-9]\d|20[0-3]\d)s?$/.test(yk)) throw new Error('Enter a draft year like 1985, or 1984s for the 1984 supplemental draft.'); flash(importText(text, ui.impKind, ui.impKind === 'roster' ? ui.impTeam : (/s$/.test(yk) ? yk : +yk))); G.setDrafts(IM.drafts); } catch (e) { flash(e.message); }
       break;
     }
     case 'exportData': {
@@ -3986,9 +4268,13 @@ document.addEventListener('change', e => {
   else if (t.id === 'startQB') { G.setStarterQB(L, +t.value); save(); render(); }
   else if (t.id === 'tradeTeam') { ui.tradeTeam = +t.value; ui.get = []; render(); }
   else if (t.id === 'aggr') { me().coach.aggr = +t.value; save(); render(); }
+  else if (t.id === 'startYear') { ui.startYear = +t.value; ui.startTeam = $('#pickTeam') && $('#pickTeam').value; render(); }
+  else if (t.id === 'pickTeam') { ui.startTeam = t.value; }
   else if (t.id === 'youth') { me().coach.youth = t.checked; save(); }
   else if (t.id === 'impTeam') ui.impTeam = t.value;
-  else if (t.id === 'impYear') ui.impYear = +t.value;
+  else if (t.id === 'impYear') ui.impYear = t.value.trim();
+  else if (t.id === 'realNew') ui.realCareers = t.checked;
+  else if (t.id === 'realL') { if (L) { L.realCareers = t.checked; save(); render(); } }
   else if (t.id === 'impFiles' && t.files.length) onFiles([...t.files]);
   else if (t.id === 'loadData' && t.files[0]) {
     t.files[0].text().then(s => {
@@ -4017,6 +4303,22 @@ document.addEventListener('input', e => { if (e.target.id === 'tq') { ui.tq = e.
 
 // Rosters and draft classes published with the game (data.json next to index.html).
 // Anything this device doesn't have yet is added; your own imports are never overwritten.
+async function loadRealRosters() {
+  // nflverse rosters: who played where every season. Kept on the device so it works offline.
+  let have = false;
+  try { const d = await DB.get('real'); if (d && d.players) { G.setRealData(d); have = true; } } catch (e) { /* none saved */ }
+  if (!/^https?:/.test(location.protocol)) return;
+  try {
+    const res = await fetch('rosters.json', { cache: 'no-store' });
+    if (!res.ok) return;
+    const d = await res.json(); if (!d || !d.gridironRosters) return;
+    const n = G.setRealData(d);
+    if (!have || (REALN && REALN !== n)) { DB.set('real', d).catch(() => {}); }
+    REALN = n;
+    if (!have) { flash(`Loaded real rosters for every season (${n.toLocaleString()} players).`); render(); }
+  } catch (e) { /* offline: keep what's on the device */ }
+}
+let REALN = 0;
 async function loadBuiltInData() {
   if (!/^https?:/.test(location.protocol)) return;
   try {
@@ -4026,6 +4328,7 @@ async function loadBuiltInData() {
     let r = 0, d = 0;
     for (const k in o.rosters || {}) if (!IM.rosters[k]) { IM.rosters[k] = o.rosters[k]; r++; }
     for (const k in o.drafts || {}) if (!IM.drafts[k]) { IM.drafts[k] = o.drafts[k]; d++; }
+    G.setDrafts(IM.drafts);
     if (r || d) { flash(`Loaded the game's built-in data: ${r} roster${r === 1 ? '' : 's'} and ${d} draft class${d === 1 ? '' : 'es'}.`); save(); render(); }
   } catch (e) { /* offline or no data file: use what's on this device */ }
 }
@@ -4034,8 +4337,10 @@ async function loadBuiltInData() {
   const [l, im] = await Promise.all([DB.get('league'), DB.get('imports')]);
   if (im) { IM = im; imSig = imSignature(); } if (l && l.teams) { L = l; G.ensureLeague(L); }
   if (L) save(); // re-store older uncompressed saves in compressed form
+  G.setDrafts(IM.drafts);
   render();
   loadBuiltInData();
+  loadRealRosters();
   if ('serviceWorker' in navigator && location.protocol === 'https:' && !/claude\.ai|claudeusercontent/.test(location.host)) {
     try { navigator.serviceWorker.register('sw.js'); } catch (e) { /* offline install unavailable */ }
   }
