@@ -10,6 +10,7 @@
 <meta name="theme-color" content="#1d6a3b">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
+<script data-goatcounter="https://gridirongm.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
 <title>Gridiron GM</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -3200,7 +3201,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = API; else 
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-01b';
+const APP_VERSION = '2026-11-02a';
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
 const ui = { tab: 'home', grp: 'ALL', lg: 'stand', leadKey: 'py', resWeek: null, open: null, confirm: null,
@@ -3286,6 +3287,15 @@ function saveBanner() {
     <p>${esc(SAVE.err)} Anything you do now will be lost when the app closes.</p>
     <p>Download a backup right now so you don't lose this league, then free up space or open the game in normal (not private) Safari.</p>
     <div class="row"><button class="btn primary" data-act="exportSave"${L ? '' : ' disabled'}>Download backup</button><button class="btn" data-act="retrySave">Try saving again</button></div></section>`;
+}
+
+/* ---------- visitor counting (GoatCounter, GitHub version only) ---------- */
+const TRACKED = {};
+function track(name, once) {
+  try {
+    if (once) { if (TRACKED[name]) return; TRACKED[name] = 1; }
+    if (window.goatcounter && window.goatcounter.count && !/claude\.ai|claudeusercontent/.test(location.host)) window.goatcounter.count({ path: name, title: name, event: true });
+  } catch (e) { /* offline or blocked: ignore */ }
 }
 
 /* ---------- helpers ---------- */
@@ -4147,7 +4157,7 @@ async function onFiles(files) {
 function act(a, el) {
   const id = el.dataset.id;
   switch (a) {
-    case 'tab': ui.tab = id; ui.open = null; ui.box = null; window.scrollTo(0, 0); break;
+    case 'tab': ui.tab = id; ui.open = null; ui.box = null; window.scrollTo(0, 0); track('tab/' + id, true); break;
     case 'confirm':
       if (ui.confirm !== id) { ui.confirm = id; render(); return; }
       ui.confirm = null;
@@ -4157,7 +4167,7 @@ function act(a, el) {
       break;
     case 'newDiff': ui.newDiff = id; break;
     case 'setDiff': G.setDifficulty(L, id); flash(`Difficulty is now ${G.DIFF[id].name}.`); break;
-    case 'newLeague': L = G.newLeague(IM, $('#pickTeam').value, { diff: ui.newDiff || 'pro', startYear: ui.startYear || 1970, realCareers: ui.realCareers !== false }); ui.tab = 'home'; flash(`Welcome to ${tname(me())}.`); break;
+    case 'newLeague': L = G.newLeague(IM, $('#pickTeam').value, { diff: ui.newDiff || 'pro', startYear: ui.startYear || 1970, realCareers: ui.realCareers !== false }); ui.tab = 'home'; track('new-league/' + (ui.startYear || 1970)); track('team/' + me().pfr); track('difficulty/' + (ui.newDiff || 'pro')); if (ui.realCareers === false) track('real-careers/off'); flash(`Welcome to ${tname(me())}.`); break;
     case 'autocut': G.cutTo(L, L.user, G.rules(L.year).rosterMax); break;
     case 'startSeason': { const e = G.startRegular(L); if (e) flash(e); break; }
     case 'simWeek': G.simWeek(L); break;
@@ -4172,7 +4182,7 @@ function act(a, el) {
     case 'draftPick': G.makePick(L, +id); G.draftUntilUser(L); break;
     case 'draftRest': G.draftAll(L); break;
     case 'endDraft': G.endDraft(L); break;
-    case 'nextSeason': { const e = G.startNextSeason(L); if (e) flash(e); break; }
+    case 'nextSeason': { const e = G.startNextSeason(L); if (e) flash(e); else track('season-played'); break; }
     case 'chip': ui[el.dataset.key] = id; if (el.dataset.key === 'st') { ui.statPid = null; } if (el.dataset.key === 'draftGrp') ui.draftShow = 60; if (el.dataset.key === 'prGrp') ui.prShow = 50; break;
     case 'open': ui.open = ui.open === +id ? null : +id; ui.confirm = null; break;
     case 'lg': ui.lg = id; break;
