@@ -1159,7 +1159,9 @@ function proposeTrade(L, partner, give, get) {
 }
 
 // "Find a trade": AI teams that want what you're offering send back their best package.
-function findTrades(L, give) {
+// opts.want: 'best' | 'players' | 'picks' | 'young' (players 25 and under); opts.pos: a position group you need.
+function findTrades(L, give, opts) {
+  opts = opts || {}; const want = opts.want || 'best', needG = opts.pos || '';
   ensurePicks(L);
   const n = (give.players || []).length + (give.picks || []).length;
   if (!n) return { err: 'Add at least one player or pick you want to move.' };
@@ -1172,9 +1174,16 @@ function findTrades(L, give) {
     if (v < 0.4) continue;
     const target = v / diff(L).tradeAsk;
     const d = depth(L, t.id), keep = new Set(); GRPS.forEach(g => d[g].slice(0, 1).forEach(p => keep.add(p.id)));
-    const items = roster(L, t.id).filter(p => !keep.has(p.id)).map(p => ({ t: 'p', id: p.id, w: playerWeight(p) }))
-      .concat(teamPicks(L, t.id).map(k => ({ t: 'k', id: k.id, w: pickWeight(L, k) })))
+    const okP = p => !keep.has(p.id) && (want !== 'young' || p.age <= 25);
+    let items = (want === 'picks' ? [] : roster(L, t.id).filter(okP).map(p => ({ t: 'p', id: p.id, w: playerWeight(p), g: p.grp })))
+      .concat(want === 'players' || want === 'young' ? [] : teamPicks(L, t.id).map(k => ({ t: 'k', id: k.id, w: pickWeight(L, k) })))
       .map(it => Object.assign(it, { r: it.w * (0.85 + Math.random() * 0.3) })).sort((a, b) => b.r - a.r);
+    // a position you need: their best player there who fits the price leads the package
+    if (needG) {
+      const lead = items.filter(it => it.t === 'p' && it.g === needG && it.w <= target).sort((a, b) => b.w - a.w)[0];
+      if (!lead) continue;
+      items = [lead].concat(items.filter(it => it !== lead));
+    }
     const pkg = { players: [], picks: [] }; let sum = 0, cnt = 0;
     for (const it of items) { if (cnt >= 3) break; if (sum + it.w > target) continue; (it.t === 'p' ? pkg.players : pkg.picks).push(it.id); sum += it.w; cnt++; if (sum >= target * 0.9) break; }
     if (!cnt || sum < target * 0.7) continue;
@@ -1183,6 +1192,16 @@ function findTrades(L, give) {
   }
   offers.sort((a, b) => b.w - a.w);
   return { offers: offers.slice(0, 5) };
+}
+
+// Trading block: shop a package to the whole league. Every team that wants it makes its best
+// offer; the top five land in Trade offers and expire like any other offer.
+function shopBlock(L, give, opts) {
+  const r = findTrades(L, give, opts); if (r.err) return r;
+  L.offers = (L.offers || []).filter(o => !o.block); if (!L.nextOfferId) L.nextOfferId = 1;
+  const exp = L.phase === 'regular' ? L.week : -1;
+  for (const o of r.offers) L.offers.push({ id: L.nextOfferId++, from: o.from, give: o.get, get: { players: (give.players || []).slice(), picks: (give.picks || []).slice() }, exp, block: true });
+  return { n: r.offers.length };
 }
 
 // AI teams trade with each other: a team shores up its weakest unit with bench players and picks.
@@ -3192,7 +3211,7 @@ function leaders(L, key, n, year) {
 
 function myDraftSlots(L) { const D = L.draft; if (!D || !D.slotPick) return []; const out = []; for (let i = D.pick; i < D.slotPick.length; i++) { const k = pickById(L, D.slotPick[i]); if (k && k.own === L.user) out.push(i + 1); } return out; }
 
-const API = { setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
+const API = { shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
   value, release, sign, proposeTrade, tradeVerdict, teamPicks, pickById, pickLabel, projectedOverall, pickWeight, playerWeight, ensurePicks, myDraftSlots, aiTrades, acceptOffer, rejectOffer, offerValid, cutTo, ratings, teamOverall, startRegular, canStartSeason, simWeek, simPlayoffRound, roundName,
   sortTeams, divisions, pct, startDraft, onClock, makePick, aiPick, draftUntilUser, draftAll, scoutPlayer, beginDraft, SCOUT_VISITS, endDraft, startNextSeason, leaders, potKnown, shownPot, roman, addNews };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.GG = API;
@@ -3204,7 +3223,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = API; else 
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-06a';
+const APP_VERSION = '2026-11-09a';
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
 const ui = { tab: 'home', grp: 'ALL', lg: 'stand', leadKey: 'py', resWeek: null, open: null, confirm: null,
@@ -3687,6 +3706,16 @@ function searchResults() {
   if (!hits.length) return '<p class="small">No players found.</p>';
   return `<div class="tlist search">${hits.slice(0, 12).map(p => `<button class="tp" data-act="pickFound" data-id="${p.id}"><span class="pos">${esc(p.pos)}</span><span class="tp-n">${esc(p.name)}</span><span class="tp-a">${esc(L.teams[p.team].abbr)} · ${p.age}</span>${rating(p.ovr)}</button>`).join('')}</div><p class="small">Tap a player to add him to the deal with his team.</p>`;
 }
+function blockCard() {
+  const wants = [['best', 'Best offer'], ['players', 'Players'], ['picks', 'Picks'], ['young', 'Young (25 and under)']];
+  const w = ui.blockWant || 'best', g = ui.blockPos || '';
+  return `<section class="card"><h3>Trading block</h3>
+    <p class="small">Shop what's in <b>You send</b> to the whole league. Every team that wants it makes its best offer, and the top five show up under <b>Trade offers</b> at the top of this tab. ${L.phase === 'regular' ? 'Offers last a week.' : 'Offers last until kickoff.'}</p>
+    <div class="fld">What you want back<div class="seg">${wants.map(([k, t]) => `<button class="${w === k ? 'on' : ''}" data-act="blockWant" data-id="${k}">${t}</button>`).join('')}</div></div>
+    <label class="fld">Position you need<select id="blockPos"${w === 'picks' ? ' disabled' : ''}><option value="">Any position</option>${G.GRPS.map(x => `<option value="${x}"${g === x ? ' selected' : ''}>${({ QB: 'Quarterback', RB: 'Running back', WR: 'Wide receiver', TE: 'Tight end', OL: 'Offensive line', DL: 'Defensive line', LB: 'Linebacker', DB: 'Defensive back', K: 'Kicker', P: 'Punter' })[x] || x}</option>`).join('')}</select></label>
+    <div class="row"><button class="btn primary" data-act="shopBlock"${ui.give.length ? '' : ' disabled'}>Find offers for what you send</button></div>
+    ${ui.give.length ? '' : '<p class="small">Pick players or picks under You send first.</p>'}${ui.blockMsg ? `<p class="small">${esc(ui.blockMsg)}</p>` : ''}</section>`;
+}
 function foundCard() {
   const F = ui.found; if (!F) return '';
   if (F.err) return `<div class="found"><p class="small bad">${esc(F.err)}</p></div>`;
@@ -4035,9 +4064,7 @@ function vMoves() {
     <div class="trade summary"><div><div class="eyebrow">Sending</div>${chosen(ui.give)}</div><div><div class="eyebrow">Receiving</div>${chosen(ui.get)}</div></div>
     ${gauge}
     <div class="row"><button class="btn primary" data-act="propose"${ready ? '' : ' disabled'}>Propose trade</button><button class="btn" data-act="clearTrade">Clear</button></div>
-    <div class="finder"><div class="eyebrow">Trade finder</div><p class="small">${ui.give.length ? 'Ask every team what they would give you for what you are sending. You can mix players and picks.' : 'Tap players or picks under <b>You send</b>, then ask every team what they would give for them.'}</p>
-    <button class="btn primary" data-act="findTrade"${ui.give.length ? '' : ' disabled'}>Find offers for what I'm sending</button></div>
-    ${foundCard()}</section>`;
+    </section>${blockCard()}`;
   return h;
 }
 
@@ -4232,6 +4259,15 @@ function act(a, el) {
     case 'pickFound': { const p = L.players[+id]; if (p) { ui.tradeTeam = p.team; ui.get = ['p:' + p.id]; ui.tview = 'p'; ui.tGrpGet = 'ALL'; ui.found = null; ui.tq = ''; } break; }
     case 'findTrade': { const pk = sel => ({ players: sel.filter(x => x[0] === 'p').map(x => +x.slice(2)), picks: sel.filter(x => x[0] === 'k').map(x => +x.slice(2)) }); const r = G.findTrades(L, pk(ui.give)); ui.found = r.err ? { err: r.err } : { offers: r.offers, give: ui.give.slice() }; ui.focus = '.found'; break; }
     case 'takeFound': { const F = ui.found, o = F && F.offers && F.offers[+id]; if (!o) break; const pk = sel => ({ players: sel.filter(x => x[0] === 'p').map(x => +x.slice(2)), picks: sel.filter(x => x[0] === 'k').map(x => +x.slice(2)) }); const r = G.proposeTrade(L, o.from, pk(F.give), o.get); flash(r.msg); if (r.ok) { ui.give = []; ui.get = []; ui.found = null; } break; }
+    case 'blockWant': ui.blockWant = id; if (id === 'picks') ui.blockPos = ''; break;
+    case 'shopBlock': {
+      const pk = sel => ({ players: sel.filter(x => x[0] === 'p').map(x => +x.slice(2)), picks: sel.filter(x => x[0] === 'k').map(x => +x.slice(2)) });
+      const r = G.shopBlock(L, pk(ui.give), { want: ui.blockWant || 'best', pos: ui.blockWant === 'picks' ? '' : (ui.blockPos || '') });
+      if (r.err) { ui.blockMsg = r.err; break; }
+      ui.blockMsg = r.n ? '' : 'No team made an offer. Try a different ask, another position, or add more to the package.';
+      if (r.n) { flash(`${r.n} team${r.n === 1 ? '' : 's'} made offers. They're under Trade offers at the top.`); ui.focus = '.offers'; window.scrollTo(0, 0); }
+      break;
+    }
     case 'campAll': ui.campAll = !ui.campAll; break;
     case 'expT': { const e = G.toggleExp(L, +id); if (e) flash(e); break; }
     case 'ringAdd': { const e = G.retireNumber(L, L.user, +id, 'user'); flash(e || 'Number retired.'); break; }
@@ -4290,6 +4326,7 @@ document.addEventListener('change', e => {
   else if (t.id === 'impTeam') ui.impTeam = t.value;
   else if (t.id === 'impYear') ui.impYear = t.value.trim();
   else if (t.id === 'realNew') ui.realCareers = t.checked;
+  else if (t.id === 'blockPos') { ui.blockPos = t.value; }
   else if (t.id === 'realL') { if (L) { L.realCareers = t.checked; save(); render(); } }
   else if (t.id === 'impFiles' && t.files.length) onFiles([...t.files]);
   else if (t.id === 'loadData' && t.files[0]) {
