@@ -221,6 +221,7 @@ input[type=range] { width: 100%; accent-color: var(--field); }
 .cell.ok { border-style: solid; border-color: var(--field); color: var(--ink); }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
 .scheme.on{border-color:var(--accent,#c9a227);box-shadow:inset 3px 0 0 var(--accent,#c9a227)}.fit{font-weight:700;font-variant-numeric:tabular-nums;min-width:2.6em;display:inline-block;text-align:center}
+.finder{margin-top:14px;padding:12px;border:1px solid var(--accent,#c9a227);border-radius:10px}.finder .btn{margin-top:6px}
 .savewarn{border:2px solid #b3261e;background:color-mix(in srgb,#b3261e 8%,var(--card,#fff))}.savewarn .eyebrow{color:#b3261e}
 </style>
 <style>html{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
@@ -1030,8 +1031,10 @@ function firstPickYear(L) { return L.phase === 'offseason' ? L.year + 2 : L.year
 function ensurePicks(L) {
   if (!L.picks) L.picks = [];
   if (!L.nextPickId) L.nextPickId = 1;
-  const have = new Set(L.picks.map(k => k.y + '|' + k.rnd + '|' + k.orig));
   const y0 = firstPickYear(L);
+  // picks for drafts already held are gone (a league that starts after 1970 skips those drafts)
+  if (L.picks.some(k => k.y < y0)) L.picks = L.picks.filter(k => k.y >= y0);
+  const have = new Set(L.picks.map(k => k.y + '|' + k.rnd + '|' + k.orig));
   for (let y = y0; y < y0 + 3; y++) {
     const rounds = rules(y).draftRounds;
     for (const t of L.teams) for (let r = 1; r <= rounds; r++) {
@@ -3201,7 +3204,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = API; else 
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-02a';
+const APP_VERSION = '2026-11-06a';
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
 const ui = { tab: 'home', grp: 'ALL', lg: 'stand', leadKey: 'py', resWeek: null, open: null, confirm: null,
@@ -3345,6 +3348,7 @@ function render() {
   $('#tabs').innerHTML = TABS.map(([k, n]) => `<button class="tab ${ui.tab === k ? 'on' : ''}" data-act="tab" data-id="${k}"${!L && k !== 'data' && k !== 'home' ? ' disabled' : ''}>${n}${k === 'moves' && nOff ? `<span class="badge">${nOff}</span>` : ''}</button>`).join('');
   const view = { home: vHome, roster: vRoster, stats: vStats, league: vLeague, moves: vMoves, coach: vCoach, data: vData }[ui.tab];
   $('#main').innerHTML = saveBanner() + (ui.msg ? `<div class="toast">${esc(ui.msg)}</div>` : '') + view();
+  if (ui.focus) { const el = $(ui.focus); ui.focus = null; if (el) setTimeout(() => el.scrollIntoView({ block: 'start', behavior: 'smooth' }), 30); }
   ui.msg = null;
 }
 
@@ -3685,8 +3689,8 @@ function searchResults() {
 }
 function foundCard() {
   const F = ui.found; if (!F) return '';
-  if (F.err) return `<p class="small bad">${esc(F.err)}</p>`;
-  if (!F.offers.length) return '<p class="small">No team wants that package right now. Try adding more, or different players or picks.</p>';
+  if (F.err) return `<div class="found"><p class="small bad">${esc(F.err)}</p></div>`;
+  if (!F.offers.length) return '<div class="found"><p class="small">No team wants that package right now. Try adding more, or different players or picks.</p></div>';
   const txt = pkg => (pkg.players || []).map(id => { const p = L.players[id]; return p ? `${esc(p.pos)} ${esc(p.name)} ${rating(p.ovr)}` : ''; })
     .concat((pkg.picks || []).map(id => { const k = G.pickById(L, id); return k ? `${esc(G.pickLabel(L, k))} pick <span class="small">≈#${G.projectedOverall(L, k)}</span>` : ''; })).filter(Boolean).join('<br>');
   return `<div class="found"><div class="eyebrow">Offers for your package</div>${F.offers.map((o, i) => `<div class="offer"><div class="split"><b>${esc(tname(L.teams[o.from]))}</b><button class="btn sm primary" data-act="takeFound" data-id="${i}">Accept</button></div><div class="small">They send:</div><div>${txt(o.get)}</div></div>`).join('')}</div>`;
@@ -4030,7 +4034,9 @@ function vMoves() {
     ${ui.tview === 'k' ? '' : sortSeg('tSort', true, 'pos')}<div class="trade">${col('give', mine, L.user, 'You send')}${col('get', theirs, tt, 'You receive')}</div>
     <div class="trade summary"><div><div class="eyebrow">Sending</div>${chosen(ui.give)}</div><div><div class="eyebrow">Receiving</div>${chosen(ui.get)}</div></div>
     ${gauge}
-    <div class="row"><button class="btn primary" data-act="propose"${ready ? '' : ' disabled'}>Propose trade</button><button class="btn" data-act="findTrade"${ui.give.length ? '' : ' disabled'}>Find a trade for what I'm sending</button><button class="btn" data-act="clearTrade">Clear</button></div>
+    <div class="row"><button class="btn primary" data-act="propose"${ready ? '' : ' disabled'}>Propose trade</button><button class="btn" data-act="clearTrade">Clear</button></div>
+    <div class="finder"><div class="eyebrow">Trade finder</div><p class="small">${ui.give.length ? 'Ask every team what they would give you for what you are sending. You can mix players and picks.' : 'Tap players or picks under <b>You send</b>, then ask every team what they would give for them.'}</p>
+    <button class="btn primary" data-act="findTrade"${ui.give.length ? '' : ' disabled'}>Find offers for what I'm sending</button></div>
     ${foundCard()}</section>`;
   return h;
 }
@@ -4224,7 +4230,7 @@ function act(a, el) {
     case 'prMore': ui.prShow = (ui.prShow || 50) + 50; break;
     case 'apYear': ui.apYear = +id; break;
     case 'pickFound': { const p = L.players[+id]; if (p) { ui.tradeTeam = p.team; ui.get = ['p:' + p.id]; ui.tview = 'p'; ui.tGrpGet = 'ALL'; ui.found = null; ui.tq = ''; } break; }
-    case 'findTrade': { const pk = sel => ({ players: sel.filter(x => x[0] === 'p').map(x => +x.slice(2)), picks: sel.filter(x => x[0] === 'k').map(x => +x.slice(2)) }); const r = G.findTrades(L, pk(ui.give)); ui.found = r.err ? { err: r.err } : { offers: r.offers, give: ui.give.slice() }; break; }
+    case 'findTrade': { const pk = sel => ({ players: sel.filter(x => x[0] === 'p').map(x => +x.slice(2)), picks: sel.filter(x => x[0] === 'k').map(x => +x.slice(2)) }); const r = G.findTrades(L, pk(ui.give)); ui.found = r.err ? { err: r.err } : { offers: r.offers, give: ui.give.slice() }; ui.focus = '.found'; break; }
     case 'takeFound': { const F = ui.found, o = F && F.offers && F.offers[+id]; if (!o) break; const pk = sel => ({ players: sel.filter(x => x[0] === 'p').map(x => +x.slice(2)), picks: sel.filter(x => x[0] === 'k').map(x => +x.slice(2)) }); const r = G.proposeTrade(L, o.from, pk(F.give), o.get); flash(r.msg); if (r.ok) { ui.give = []; ui.get = []; ui.found = null; } break; }
     case 'campAll': ui.campAll = !ui.campAll; break;
     case 'expT': { const e = G.toggleExp(L, +id); if (e) flash(e); break; }
