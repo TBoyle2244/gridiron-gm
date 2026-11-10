@@ -3431,7 +3431,7 @@ const HELP = [
 </ul>` },
 
 { id: 'roster', title: 'Roster tab', tab: 'roster', body: `
-<p>Every player on your team, by position. Sort by position, overall or potential, and filter by position with the chips.</p>
+<p>Every player on your team, by position. Sort by overall, potential or yearly salary, and filter by position with the chips.</p>
 <ul>
 <li><b>OVR</b> is how good he is today. <b>POT</b> is how good he can become. Each line also shows his jersey number, age, years in the league, morale, contract and season stats.</li>
 <li><b>Colors:</b> gold is 85 and up (elite), green 72–84 (a good starter), plain 58–71 (average), grey under 58 (a backup).</li>
@@ -3474,7 +3474,7 @@ const HELP = [
 { id: 'moves', title: 'Moves tab: trades', tab: 'moves', body: `
 <ul>
 <li><b>Trade offers</b> at the top: offers AI teams sent you, plus offers from your trading block. Accept or reject. During the season they last a week; otherwise they last until kickoff.</li>
-<li><b>Trade.</b> Pick a partner, then tap players or picks under You send and You receive. Each side has its own position filter, and there's a search box for any player in the league. Picks for the next three drafts can be traded, and each shows its projected overall slot. Compensatory picks can't be traded.</li>
+<li><b>Trade.</b> Pick a partner, then tap players or picks under You send and You receive. Each side has its own position filter, you can sort by position, overall, potential or yearly salary (which then shows in place of age), and there's a search box for any player in the league. Picks for the next three drafts can be traded, and each shows its projected overall slot. Compensatory picks can't be traded.</li>
 <li><b>How the AI values a deal.</b> Stars are worth far more than depth: two or three good players don't buy one great one, and a player who wouldn't make their roster is worth almost nothing to them. Age, potential and contract matter. On harder difficulties they ask for more.</li>
 <li><b>Trading block.</b> Put players or picks in You send, choose what you want back (best offer, players, picks or young players) and a position you need, then tap Find offers. Up to five teams' best offers land in Trade offers.</li>
 <li><b>Deadline.</b> No trades after week 9 until the season ends. In-season trades must keep both teams at or under the roster limit, and cap years must stay under the cap.</li>
@@ -3613,7 +3613,7 @@ const HELP_FOR_TAB = { home: 'office', roster: 'roster', stats: 'stats', league:
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-10d';
+const APP_VERSION = '2026-11-10e';
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
 const ui = { tab: 'home', grp: 'ALL', lg: 'stand', leadKey: 'py', resWeek: null, open: null, confirm: null,
@@ -4057,7 +4057,7 @@ function faCard() {
   const prow = (p, extra, btns) => `<div class="pl wide"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">Age ${p.age + 1} in ${y} · ${(p.yrs || 0) + 1} yrs exp${extra ? ' · ' + extra : ''}</div></div>
     <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></div><div class="pl-btns">${btns}</div></div>`;
   let h = `<section class="card offers"><div class="eyebrow">${y} offseason · ${esc(info.name)}</div><h3>Contracts &amp; free agency</h3><p class="small">${esc(info.text)}</p>
-    <div class="ctbar"><span class="lbl">POSITION</span>${chips('ctGrp', ui.ctGrp || 'ALL')}${sortSeg('ctSort', true, 'pos')}</div>`;
+    <div class="ctbar"><span class="lbl">POSITION</span>${chips('ctGrp', ui.ctGrp || 'ALL')}${sortSeg('ctSort', true, 'pos', true)}</div>`;
   // offer sheets on your players
   F.sheets.forEach((sh, i) => {
     const p = L.players[sh.pid], picks = G.compPicks(L, sh.sal).map(r => 'a round ' + r + ' pick').join(' and ');
@@ -4201,15 +4201,17 @@ function ringView() {
 
 /* ---------- Sorting ---------- */
 // POT means what you can see: true potential once known, otherwise the scout grade.
+function yearSal(p) { return (p.con && G.salFor(p, G.capYear(L))) || 0; }
 function cmp(key) {
+  if (key === 'sal') return (a, b) => yearSal(b) - yearSal(a) || b.ovr - a.ovr;
   if (key === 'pos') return (a, b) => G.GRPS.indexOf(a.grp) - G.GRPS.indexOf(b.grp) || b.ovr - a.ovr;
   return key === 'pot'
     ? (a, b) => G.shownPot(L, b) - G.shownPot(L, a) || b.ovr - a.ovr
     : (a, b) => b.ovr - a.ovr || G.shownPot(L, b) - G.shownPot(L, a);
 }
-function sortSeg(stateKey, withPos, def) {
+function sortSeg(stateKey, withPos, def, withSal) {
   const cur = ui[stateKey] || def || 'ovr';
-  const opts = (withPos ? [['pos', 'Position']] : []).concat([['ovr', 'Overall'], ['pot', 'Potential / Scout']]);
+  const opts = (withPos ? [['pos', 'Position']] : []).concat([['ovr', 'Overall'], ['pot', 'Potential / Scout']], withSal ? [['sal', 'Salary']] : []);
   return `<div class="sortrow"><span class="lbl">SORT</span><div class="seg mini">${opts.map(([k, n]) => `<button class="${cur === k ? 'on' : ''}" data-act="sort" data-key="${stateKey}" data-id="${k}">${n}</button>`).join('')}</div></div>`;
 }
 
@@ -4220,10 +4222,10 @@ function chips(key, cur) {
 function vRoster() {
   const max = G.rules(L.year).rosterMax, all = G.roster(L, L.user), d = G.depth(L, L.user);
   const SFu = G.startersFor(L, L.user), starterIds = new Set(); G.GRPS.forEach(g => d[g].slice(0, SFu[g]).forEach(p => starterIds.add(p.id)));
-  const rc = cmp(ui.rSort), list = all.filter(p => ui.grp === 'ALL' || p.grp === ui.grp).sort((a, b) => G.GRPS.indexOf(a.grp) - G.GRPS.indexOf(b.grp) || rc(a, b));
+  const rc = cmp(ui.rSort), list = all.filter(p => ui.grp === 'ALL' || p.grp === ui.grp).sort((a, b) => (ui.rSort === 'sal' ? 0 : G.GRPS.indexOf(a.grp) - G.GRPS.indexOf(b.grp)) || rc(a, b));
   const act = G.active(L, L.user).length, onIR = all.length - act;
   return `<section class="card"><div class="split"><h3>${esc(me().name)} roster</h3><span class="count ${act > max ? 'bad' : ''}">${act} / ${max}${onIR ? ` <span class="small">+ ${onIR} on IR</span>` : ''}</span></div>
-    <p class="small">Green positions are starters, set on the Coach tab's depth chart. Tap a player for options.</p>${chips('grp', ui.grp)}${sortSeg('rSort')}
+    <p class="small">Green positions are starters, set on the Coach tab's depth chart. Tap a player for options.</p>${chips('grp', ui.grp)}${sortSeg('rSort', false, 'ovr', true)}
     <div class="list">${list.map(p => `<div class="pl ${ui.open === p.id ? 'open' : ''}">
       <button class="pl-main" data-act="open" data-id="${p.id}"><span class="pos ${starterIds.has(p.id) ? 'st' : ''}">${esc(p.pos)}</span>
       <div class="pl-name">${esc(p.name)}${p.inj ? `<span class="inj">INJ ${p.inj >= 20 ? 'season' : p.inj + 'w'}</span>` : ''}<div class="pl-sub">${p.num ? '#' + p.num + ' · ' : ''}${(() => { const C = L.camp; if (!C || C.year !== L.year || (L.phase !== 'preseason' && L.phase !== 'regular')) return ''; const r = C.mine.find(x => x.id === p.id); if (!r || r.a === r.b) return ''; const d = r.a - r.b; return `<span class="${d > 0 ? 'good' : 'bad'}">${d > 0 ? '▲' + d : '▼' + (-d)} camp</span> · `; })()}${p.ir ? '<b class="bad">INJURED RESERVE</b> · ' : ''}${p.holdout ? '<b class="bad">HOLDOUT</b> · ' : ''}${p.striking ? '<b class="bad">ON STRIKE</b> · ' : ''}${p.repl ? '<b class="warn">Replacement player</b> · ' : ''}${(() => { const rt = G.roleTag(L, p); return rt ? `<span class="${rt.c}">${rt.t}</span> · ` : ''; })()}Age ${p.age} · ${p.yrs ? p.yrs + ' yr' + (p.yrs > 1 ? 's' : '') : 'Rookie'} · <span class="${G.mor(p) < 50 ? 'bad' : (G.mor(p) >= 75 ? 'good' : '')}">${G.moraleWord(p)}</span> · ${conText(p)}${statLine(p) ? ' · ' + statLine(p) : ''}</div></div>
@@ -4485,7 +4487,7 @@ function vMoves() {
   const mine = G.roster(L, L.user).filter(p => gGive === 'ALL' || p.grp === gGive).sort(tc);
   const theirs = G.roster(L, tt).filter(p => gGet === 'ALL' || p.grp === gGet).sort(tc);
   const posSel = (side, cur) => `<label class="fld tpos">Position<select id="tGrp-${side}">${['ALL'].concat(G.GRPS).map(g => `<option value="${g}"${cur === g ? ' selected' : ''}>${g === 'ALL' ? 'All positions' : g}</option>`).join('')}</select></label>`;
-  const btnP = (p, side) => { const key = 'p:' + p.id, on = ui[side].includes(key), lk = side === 'give' && G.tradeLocked(L, p); return `<button class="tp ${on ? 'on' : ''}" data-act="tp" data-side="${side}" data-id="${key}"${lk ? ' disabled title="Just signed"' : ''}><span class="pos">${esc(p.pos)}</span><span class="tp-n">${esc(p.name)}${lk ? ' (new)' : ''}</span><span class="tp-a">${p.age}</span>${rating(showPot ? G.shownPot(L, p) : p.ovr)}</button>`; };
+  const btnP = (p, side) => { const key = 'p:' + p.id, on = ui[side].includes(key), lk = side === 'give' && G.tradeLocked(L, p); return `<button class="tp ${on ? 'on' : ''}" data-act="tp" data-side="${side}" data-id="${key}"${lk ? ' disabled title="Just signed"' : ''}><span class="pos">${esc(p.pos)}</span><span class="tp-n">${esc(p.name)}${lk ? ' (new)' : ''}</span><span class="tp-a">${ui.tSort === 'sal' ? G.money(yearSal(p)) : p.age}</span>${rating(showPot ? G.shownPot(L, p) : p.ovr)}</button>`; };
   const btnK = (k, side) => { const key = 'k:' + k.id, on = ui[side].includes(key); return `<button class="tp ${on ? 'on' : ''}" data-act="tp" data-side="${side}" data-id="${key}"><span class="pos pk">PICK</span><span class="tp-n">${k.y} R${k.rnd}${k.orig !== k.own ? ' ' + esc(L.teams[k.orig].abbr) : ''}</span><span class="tp-a">≈#${G.projectedOverall(L, k)}</span></button>`; };
   const col = (side, players, tid, label) => {
     const picks = G.teamPicks(L, tid);
@@ -4506,7 +4508,7 @@ function vMoves() {
     <label class="fld">Find a player on another team<input id="tq" type="search" placeholder="Type a name" value="${esc(ui.tq || '')}" autocomplete="off"></label>
     <div id="tqres">${searchResults()}</div>
     <label class="fld">Trade partner<select id="tradeTeam">${others.map(t => `<option value="${t.id}"${t.id === tt ? ' selected' : ''}>${esc(tname(t))} (${rec(t)})</option>`).join('')}</select></label>
-    ${ui.tview === 'k' ? '' : sortSeg('tSort', true, 'pos')}<div class="trade">${col('give', mine, L.user, 'You send')}${col('get', theirs, tt, 'You receive')}</div>
+    ${ui.tview === 'k' ? '' : sortSeg('tSort', true, 'pos', true)}<div class="trade">${col('give', mine, L.user, 'You send')}${col('get', theirs, tt, 'You receive')}</div>
     <div class="trade summary"><div><div class="eyebrow">Sending</div>${chosen(ui.give)}</div><div><div class="eyebrow">Receiving</div>${chosen(ui.get)}</div></div>
     ${gauge}
     <div class="row"><button class="btn primary" data-act="propose"${ready ? '' : ' disabled'}>Propose trade</button><button class="btn" data-act="clearTrade">Clear</button></div>
