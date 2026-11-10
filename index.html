@@ -226,6 +226,7 @@ details.help summary{cursor:pointer;list-style:none;display:flex;align-items:cen
 .helpbody{margin-top:10px;line-height:1.5}.helpbody li{margin:6px 0}.helpbody a{color:var(--accent,#c9a227);text-decoration:underline;cursor:pointer}
 .fitrow{display:flex;gap:12px;align-items:flex-start;padding:8px 0;border-top:1px solid var(--line,rgba(0,0,0,.08))}.fitg{font-weight:800;min-width:2.4em;text-align:center;font-size:18px}.fitbig{font-weight:800;font-size:22px}
 .pl.mine{box-shadow:inset 3px 0 0 var(--accent,#c9a227)}.row.trk .fld{flex:1;min-width:140px}
+.mktbar{display:flex;flex-wrap:wrap;gap:8px}.mktbar .fld{flex:1;min-width:120px;margin:0}
 .finder{margin-top:14px;padding:12px;border:1px solid var(--accent,#c9a227);border-radius:10px}.finder .btn{margin-top:6px}
 .savewarn{border:2px solid #b3261e;background:color-mix(in srgb,#b3261e 8%,var(--card,#fff))}.savewarn .eyebrow{color:#b3261e}
 </style>
@@ -3522,6 +3523,7 @@ const HELP = [
 <li><b>1977–1988.</b> Your expiring veterans are restricted. You can tender them, and other teams can send offer sheets you can match or let go for draft-pick compensation. You can send offer sheets too.</li>
 <li><b>1989–1992 (Plan B).</b> Each team protects a set number of players. Everyone else becomes an unrestricted free agent.</li>
 <li><b>1993 on (unrestricted free agency).</b> Veterans with expiring deals hit the open market. Free agency runs in rounds: you and AI teams bid salary and years, and the player weighs money, years, team quality, playing time, scheme fit and loyalty. Each free agent shows the offers other teams are expected to make this round (team, about how much, how many years), with the current leader marked; real bids land within a few percent. Once you bid, it tells you whether you're leading or what rank your offer is, judged the way the player judges it (money, years, team, playing time, fit and loyalty, not just salary). Your own expiring players show who would bid if they reach the market. Asking prices drop in later rounds.</li>
+<li><b>Finding players.</b> The free agent market has its own position filter, sort (overall, potential, asking price, youngest) and name search right above the list.</li>
 <li><b>Re-signing.</b> Before free agency, decide on your expiring players: re-sign at his price, tag him (once a year, from 1993) or let him go.</li>
 <li><b>Extensions.</b> Once unrestricted free agency exists (1993 on), you can extend a player in the last year of his contract, before he reaches the market.</li>
 <li><b>In-season signings.</b> Unsigned players can be signed during the season if you have a roster spot.</li>
@@ -3648,7 +3650,7 @@ const HELP_FOR_TAB = { home: 'office', roster: 'roster', stats: 'stats', league:
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-10g';
+const APP_VERSION = '2026-11-10h';
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
 const ui = { tab: 'home', grp: 'ALL', lg: 'stand', leadKey: 'py', resWeek: null, open: null, confirm: null,
@@ -4152,7 +4154,10 @@ function marketLine(p, mine) {
 }
 function marketList(F) {
   if (F.round > G.FA_ROUNDS) return '';
-  const list = ctFilter(G.freeAgents(L).filter(p => p.retiredYear == null)).slice(0, ui.mktShow || 30);
+  const g = ui.ctGrp || 'ALL', q = (ui.mktQ || '').trim().toLowerCase(), so = ui.mktSort || 'ovr';
+  const srt = so === 'ask' ? (a, b) => G.baseAsk(L, b) - G.baseAsk(L, a) : so === 'age' ? (a, b) => a.age - b.age || b.ovr - a.ovr : cmp(so);
+  const allFA = G.freeAgents(L).filter(p => p.retiredYear == null && (g === 'ALL' || p.grp === g) && (!q || p.name.toLowerCase().includes(q))).sort(srt);
+  const list = allFA.slice(0, ui.mktShow || 30);
   const rows = list.map(p => {
     const b = F.bids && F.bids[p.id], ask = G.baseAsk(L, p), o = b ? G.bidOutlook(L, p.id) : null;
     const fit = G.fitFor(L, p, L.user);
@@ -4163,8 +4168,14 @@ function marketList(F) {
     return `<div class="pl wide"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">Age ${p.age + 1} · ${p.prevTeam != null && L.teams[p.prevTeam] ? 'was ' + esc(L.teams[p.prevTeam].abbr) + ' · ' : ''}asking ${G.money(ask)}${reasonsText(fit.reasons)}</div></div>
       <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></div><div class="pl-btns">${bidUI}</div></div>`;
   }).join('');
-  return `<h3 class="sub">Free agent market</h3><div class="list">${rows || '<p class="small">No free agents at this position.</p>'}</div>
-    <div class="row"><button class="btn" data-act="mktMore">Show more</button></div>`;
+  const grpName = { QB: 'Quarterbacks', RB: 'Running backs', WR: 'Wide receivers', TE: 'Tight ends', OL: 'Offensive line', DL: 'Defensive line', LB: 'Linebackers', DB: 'Defensive backs', K: 'Kickers', P: 'Punters' };
+  return `<h3 class="sub" id="mkt">Free agent market</h3>
+    <div class="mktbar"><label class="fld">Position<select id="mktGrp"><option value="ALL">All positions</option>${G.GRPS.map(x => `<option value="${x}"${g === x ? ' selected' : ''}>${grpName[x]}</option>`).join('')}</select></label>
+    <label class="fld">Sort<select id="mktSort">${[['ovr', 'Overall'], ['pot', 'Potential / Scout'], ['ask', 'Asking price'], ['age', 'Youngest'], ['pos', 'Position']].map(([k, n]) => `<option value="${k}"${so === k ? ' selected' : ''}>${n}</option>`).join('')}</select></label>
+    <label class="fld">Find a player<input id="mktQ" type="search" placeholder="Name" value="${esc(ui.mktQ || '')}"></label></div>
+    <p class="small">${allFA.length} free agent${allFA.length === 1 ? '' : 's'}${g !== 'ALL' ? ' at ' + grpName[g].toLowerCase() : ''}${q ? ` matching "${esc(ui.mktQ)}"` : ''}.</p>
+    <div class="list">${rows || '<p class="small">No free agents match.</p>'}</div>
+    ${allFA.length > list.length ? `<div class="row"><button class="btn" data-act="mktMore">Show more (${allFA.length - list.length} left)</button></div>` : ''}`;
 }
 function extCard() {
   const el = G.roster(L, L.user).map(p => [p, G.extInfo(L, p)]).filter(x => x[1]).sort((a, b) => b[0].ovr - a[0].ovr);
@@ -4849,6 +4860,8 @@ document.addEventListener('change', e => {
   else if (t.id === 'impYear') ui.impYear = t.value.trim();
   else if (t.id === 'realNew') ui.realCareers = t.checked;
   else if (t.id === 'blockPos') { ui.blockPos = t.value; }
+  else if (t.id === 'mktGrp') { ui.ctGrp = t.value; ui.mktShow = 30; ui.focus = '#mkt'; render(); }
+  else if (t.id === 'mktSort') { ui.mktSort = t.value; ui.focus = '#mkt'; render(); }
   else if (t.id === 'trkRnd') { ui.trkRnd = +t.value; ui.trkAll = false; render(); }
   else if (t.id === 'trkTeam') { ui.trkTeam = +t.value; ui.trkAll = false; render(); }
   else if (t.id === 'dresYear') { ui.dresYear = +t.value; ui.trkAll = false; render(); }
@@ -4878,7 +4891,7 @@ document.addEventListener('change', e => {
   }
 });
 document.addEventListener('click', e => { const a = e.target.closest('a[data-help]'); if (!a) return; e.preventDefault(); ui.helpOpen = a.dataset.help; ui.helpQ = ''; ui.focus = '#h-' + ui.helpOpen; render(); }, true);
-document.addEventListener('input', e => { if (e.target.id === 'helpQ') { ui.helpQ = e.target.value; ui.helpOpen = null; render(); const el = $('#helpQ'); if (el) { el.focus(); try { el.setSelectionRange(el.value.length, el.value.length); } catch (x) { /* search inputs */ } } return; } if (e.target.id === 'tq') { ui.tq = e.target.value; const box = document.getElementById('tqres'); if (box) box.innerHTML = searchResults(); return; } if (e.target.id === 'aggr') { const h = e.target.closest('.card').querySelector('h3'); if (h) h.textContent = 'Aggressiveness: ' + e.target.value; } });
+document.addEventListener('input', e => { if (e.target.id === 'mktQ') { ui.mktQ = e.target.value; ui.mktShow = 30; render(); const el = $('#mktQ'); if (el) { el.focus(); try { el.setSelectionRange(el.value.length, el.value.length); } catch (x) { /* ignore */ } } return; } if (e.target.id === 'helpQ') { ui.helpQ = e.target.value; ui.helpOpen = null; render(); const el = $('#helpQ'); if (el) { el.focus(); try { el.setSelectionRange(el.value.length, el.value.length); } catch (x) { /* search inputs */ } } return; } if (e.target.id === 'tq') { ui.tq = e.target.value; const box = document.getElementById('tqres'); if (box) box.innerHTML = searchResults(); return; } if (e.target.id === 'aggr') { const h = e.target.closest('.card').querySelector('h3'); if (h) h.textContent = 'Aggressiveness: ' + e.target.value; } });
 
 // Rosters and draft classes published with the game (data.json next to index.html).
 // Anything this device doesn't have yet is added; your own imports are never overwritten.
