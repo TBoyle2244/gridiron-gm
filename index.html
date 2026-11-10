@@ -310,6 +310,18 @@ function rules(y) {
 /* ---------- positions ---------- */
 const GRPS = ['QB','RB','WR','TE','OL','DL','LB','DB','K','P'];
 const STARTERS = { QB: 1, RB: 2, WR: 2, TE: 1, OL: 5, DL: 4, LB: 3, DB: 4, K: 1, P: 1 };
+// Who is on the field: QB, five linemen, a kicker and punter, plus the skill and defensive
+// personnel that the team's schemes use (three receivers, two tight ends, a 3-4, a nickel...).
+function formation(c) {
+  const F = Object.assign({}, STARTERS), o = c && SCHEME[c.os], d = c && SCHEME[c.ds];
+  if (o && o.pers) Object.assign(F, o.pers);
+  if (d && d.pers) Object.assign(F, d.pers);
+  return F;
+}
+function startersFor(L, tid) { return formation(L.teams[tid] && L.teams[tid].coach); }
+function offPers(F) { return `${F.RB}${F.TE} personnel: ${F.RB} RB, ${F.TE} TE, ${F.WR} WR`; }
+function defPers(F) { const n = F.DB === 5 ? ' nickel' : F.DB === 6 ? ' dime' : ''; return `${F.DL}-${F.LB}${F.DB === 4 ? '' : '-' + F.DB}${n}: ${F.DL} DL, ${F.LB} LB, ${F.DB} DB`; }
+function persLabel(F) { return offPers(F) + ' · ' + defPers(F); }
 const MIX40 = { QB: 3, RB: 4, WR: 4, TE: 2, OL: 8, DL: 6, LB: 5, DB: 6, K: 1, P: 1 };
 const POSMAP = {
   QB: 'QB', RB: 'RB', HB: 'RB', FB: 'RB', TB: 'RB',
@@ -785,7 +797,8 @@ function fillRosters(L, Y) {
   const max = rules(Y).rosterMax;
   for (const t of L.teams) {
     const c = groupCounts(L, t.id);
-    for (const g of GRPS) { const need = STARTERS[g] + (g === 'K' || g === 'P' ? 0 : 2); for (let k = c[g] || 0; k < need; k++) genPlayer(L, g, t.id, 50, [23, 30]); }
+    const SF = startersFor(L, t.id);
+    for (const g of GRPS) { const need = Math.max(STARTERS[g], SF[g]) + (g === 'K' || g === 'P' ? 0 : 2); for (let k = c[g] || 0; k < need; k++) genPlayer(L, g, t.id, 50, [23, 30]); }
     let n = roster(L, t.id).length;
     const order = ['OL', 'DB', 'DL', 'LB', 'WR', 'RB', 'TE', 'QB'];
     let i = 0; while (n < max) { genPlayer(L, order[i % order.length], t.id, 48, [22, 29]); n++; i++; }
@@ -993,7 +1006,7 @@ function cutTo(L, tid, max, quiet) {
   const r = active(L, tid);
   if (r.length <= max) return [];
   const counts = groupCounts(L, tid);
-  const keep = g => STARTERS[g] + (g === 'K' || g === 'P' ? 0 : 1);
+  const SF = startersFor(L, tid), keep = g => SF[g] + (g === 'K' || g === 'P' ? 0 : 1);
   const order = r.slice().sort((a, b) => value(a) - value(b));
   const cut = [];
   for (const p of order) {
@@ -1013,7 +1026,7 @@ function aiSignings(L, offseason) {
     let size = active(L, t.id).length;
     const counts = groupCounts(L, t.id);
     while (size < max && fa.length) {
-      const needG = GRPS.find(g => counts[g] < STARTERS[g] + (g === 'K' || g === 'P' ? 0 : 1));
+      const SF = startersFor(L, t.id), needG = GRPS.find(g => counts[g] < SF[g] + (g === 'K' || g === 'P' ? 0 : 1));
       let i = needG ? fa.findIndex(p => p.grp === needG) : 0;
       if (i < 0) i = 0;
       const p = fa.splice(i, 1)[0];
@@ -1213,14 +1226,15 @@ function aiTradeOnce(L) {
   const ai = L.teams.filter(t => t.id !== L.user);
   const A = R.pick(ai), B = R.pick(ai); if (A === B) return false;
   const dA = depth(L, A.id), dB = depth(L, B.id);
-  const avg = (d, g) => { let s = 0; for (let i = 0; i < STARTERS[g]; i++) s += d[g][i] ? d[g][i].ovr : 35; return s / STARTERS[g]; };
+  const SA = startersFor(L, A.id);
+  const avg = (d, g) => { const n = Math.max(1, SA[g]); let s = 0; for (let i = 0; i < n; i++) s += d[g][i] ? d[g][i].ovr : 35; return s / n; };
   const groups = GRPS.filter(g => g !== 'K' && g !== 'P');
   const g = groups.sort((x, y) => avg(dA, x) - avg(dA, y))[0];
-  const worst = dA[g][STARTERS[g] - 1] ? dA[g][STARTERS[g] - 1].ovr : 35;
+  const worst = dA[g][Math.max(1, SA[g]) - 1] ? dA[g][Math.max(1, SA[g]) - 1].ovr : 35;
   const target = R.shuffle(dB[g].filter(p => p.ovr >= worst + 5 && p.age <= 31)).sort((x, y) => playerWeight(x) - playerWeight(y))[0];
   if (!target) return false;
   const need = playerWeight(target) * 1.05;
-  const starters = new Set(); GRPS.forEach(x => dA[x].slice(0, STARTERS[x]).forEach(p => starters.add(p.id)));
+  const starters = new Set(); GRPS.forEach(x => dA[x].slice(0, SA[x]).forEach(p => starters.add(p.id)));
   const items = roster(L, A.id).filter(p => !starters.has(p.id)).map(p => ({ t: 'p', id: p.id, w: playerWeight(p) }))
     .concat(teamPicks(L, A.id).map(k => ({ t: 'k', id: k.id, w: pickWeight(L, k) })))
     .sort((x, y) => y.w - x.w);
@@ -1236,8 +1250,8 @@ function aiTradeOnce(L) {
 }
 // AI teams send the user offers. Each one lasts one week (or until kickoff in the offseason).
 function buildPackage(L, tid, need, cap) {
-  const d = depth(L, tid), starters = new Set();
-  GRPS.forEach(x => d[x].slice(0, STARTERS[x]).forEach(p => starters.add(p.id)));
+  const d = depth(L, tid), starters = new Set(), SF = startersFor(L, tid);
+  GRPS.forEach(x => d[x].slice(0, SF[x]).forEach(p => starters.add(p.id)));
   const items = roster(L, tid).filter(p => !starters.has(p.id)).map(p => ({ t: 'p', id: p.id, w: playerWeight(p) }))
     .concat(teamPicks(L, tid).map(k => ({ t: 'k', id: k.id, w: pickWeight(L, k) })))
     .map(it => Object.assign(it, { r: it.w * (0.8 + Math.random() * 0.4) })).sort((x, y) => y.r - x.r);
@@ -1258,9 +1272,10 @@ function makeOffer(L) {
   const ai = L.teams.filter(t => t.id !== L.user && !L.offers.some(o => o.from === t.id));
   if (!ai.length) return false;
   const A = R.pick(ai), dA = depth(L, A.id), dU = depth(L, L.user);
-  const avg = (d, g) => { let s = 0; for (let i = 0; i < STARTERS[g]; i++) s += d[g][i] ? d[g][i].ovr : 35; return s / STARTERS[g]; };
+  const SA = startersFor(L, A.id);
+  const avg = (d, g) => { const n = Math.max(1, SA[g]); let s = 0; for (let i = 0; i < n; i++) s += d[g][i] ? d[g][i].ovr : 35; return s / n; };
   const g = GRPS.filter(x => x !== 'K' && x !== 'P').sort((x, y) => avg(dA, x) - avg(dA, y))[0];
-  const worst = dA[g][STARTERS[g] - 1] ? dA[g][STARTERS[g] - 1].ovr : 35;
+  const worst = dA[g][Math.max(1, SA[g]) - 1] ? dA[g][Math.max(1, SA[g]) - 1].ovr : 35;
   const target = R.pick(dU[g].filter(p => p.ovr >= worst + 4 && p.age <= 31 && !tradeLocked(L, p)));
   if (!target) return false;
   const pkg = buildPackage(L, A.id, playerWeight(target) * (diff(L).offer[0] + Math.random() * (diff(L).offer[1] - diff(L).offer[0])), 4);
@@ -1565,7 +1580,7 @@ function weeklyMorale(L) {
   wk.forEach(g => { if (!g.done) return; res[g.h] = Math.sign(g.hs - g.as); res[g.a] = Math.sign(g.as - g.hs); });
   for (const t of L.teams) {
     if (res[t.id] == null) continue;
-    const d = depth(L, t.id), st = new Set(); GRPS.forEach(x => d[x].slice(0, STARTERS[x]).forEach(p => st.add(p.id)));
+    const d = depth(L, t.id), st = new Set(), SF = startersFor(L, t.id); GRPS.forEach(x => d[x].slice(0, SF[x]).forEach(p => st.add(p.id)));
     for (const p of roster(L, t.id)) addMor(p, res[t.id] * 1.2 + (st.has(p.id) ? 0.3 : (p.ovr >= 70 ? -0.8 : 0)));
   }
 }
@@ -1646,17 +1661,25 @@ function makeSchedule(L) {
 /* ---------- game simulation ---------- */
 const PW = { run: 0.8, bal: 1, pass: 1.2 };
 
+// Average of the players who start at each position, for a given formation.
+// A group with nobody on the field (no tight end in a five-wide set) is rated on its best player but carries no weight.
+function unitAvgs(d, F) {
+  const r = {};
+  for (const g of GRPS) { const n = Math.max(1, F[g]); let s = 0; for (let i = 0; i < n; i++) s += d[g][i] ? eff(d[g][i]) : 35; r[g] = s / n; }
+  return r;
+}
+// More players of a type on the field means that unit matters more.
+function persW(F) { const B = STARTERS, o = {}; ['RB', 'WR', 'TE', 'DL', 'LB', 'DB'].forEach(g => o[g] = F[g] ? Math.pow(F[g] / B[g], 0.6) : 0); return o; }
 function ratings(L, tid, coach) {
   const d = depth(L, tid), r = { d };
-  for (const g of GRPS) {
-    let s = 0; for (let i = 0; i < STARTERS[g]; i++) s += d[g][i] ? eff(d[g][i]) : 35;
-    r[g] = s / STARTERS[g];
-  }
-  const c = coach || L.teams[tid].coach, pw = PW[c.off] || 1, rw = 2 - pw;
+  const c = coach || L.teams[tid].coach, F = formation(c); r.F = F;
+  Object.assign(r, unitAvgs(d, F));
+  const pw = PW[c.off] || 1, rw = 2 - pw;
   const ow = (SCHEME[c.os] && SCHEME[c.os].w) || {}, dw = (SCHEME[c.ds] && SCHEME[c.ds].w) || {}, W = (w, g) => w[g] || 1;
-  const oq = 0.30 * pw * W(ow, 'QB'), owr = 0.18 * pw * W(ow, 'WR'), ote = 0.08 * W(ow, 'TE'), orb = 0.16 * rw * W(ow, 'RB'), ool = 0.28 * W(ow, 'OL');
+  const P = persW(F);
+  const oq = 0.30 * pw * W(ow, 'QB'), owr = 0.18 * pw * W(ow, 'WR') * P.WR, ote = 0.08 * W(ow, 'TE') * P.TE, orb = 0.16 * rw * W(ow, 'RB') * P.RB, ool = 0.28 * W(ow, 'OL');
   r.off = (r.QB * oq + r.WR * owr + r.TE * ote + r.RB * orb + r.OL * ool) / (oq + owr + ote + orb + ool);
-  const ddl = 0.32 * W(dw, 'DL'), dlb = 0.28 * W(dw, 'LB'), ddb = 0.40 * W(dw, 'DB');
+  const ddl = 0.32 * W(dw, 'DL') * P.DL, dlb = 0.28 * W(dw, 'LB') * P.LB, ddb = 0.40 * W(dw, 'DB') * P.DB;
   r.def = (r.DL * ddl + r.LB * dlb + r.DB * ddb) / (ddl + dlb + ddb);
   const sb = staffBonus(L, tid, c); r.off += sb.off; r.def += sb.def;
   return r;
@@ -1678,38 +1701,40 @@ function genScore(exp, mult) {
    w: how much each position group matters. a: what the scheme does (used for matchups).
    New schemes get a head start until the league adjusts; popular ones get scouted and countered. */
 const OFF_SCHEMES = [
-  { id: 'proset', name: 'Pro Set', fam: 'bal', from: 1970, to: 2000, base: 1, w: {}, a: { run: .5, deep: .5, quick: .3, qbRun: 0, misd: .3 }, blurb: 'Two backs, two receivers, a tight end. Does a bit of everything.' },
-  { id: 'power', name: 'Power I', fam: 'run', from: 1970, to: 2026, base: 1, w: { RB: 1.25, OL: 1.15, TE: 1.05, QB: 0.8, WR: 0.8 }, a: { run: .95, deep: .2, quick: .1, qbRun: 0, misd: .3 }, ps: -0.04, blurb: 'Sweeps and isos behind a fullback. Needs a great back and line.' },
-  { id: 'vertical', name: 'Vertical Bomb', fam: 'pass', from: 1970, to: 1990, base: 1, origin: 'rai', w: { WR: 1.25, QB: 1.05, TE: 0.85, RB: 0.9 }, a: { run: .4, deep: .95, quick: .1, qbRun: 0, misd: .2 }, intMul: 1.2, var: 0.1, blurb: 'The old AFL deep game: seven-step drops and long throws downfield.' },
-  { id: 'shotgun', name: 'Shotgun & Motion', fam: 'bal', from: 1975, to: 1992, origin: 'dal', w: { QB: 1.1, WR: 1.05, OL: 0.95 }, a: { run: .4, deep: .4, quick: .45, qbRun: 0, misd: .7 }, sackMul: 0.9, blurb: 'Pre-snap shifts and the shotgun on passing downs keep defenses guessing.' },
-  { id: 'coryell', name: 'Air Coryell', fam: 'pass', from: 1978, to: 2026, origin: 'sdg', w: { WR: 1.15, TE: 1.2, QB: 1.1, RB: 0.85, OL: 1.05 }, a: { run: .3, deep: .8, quick: .3, qbRun: 0, misd: .3 }, sackMul: 1.1, intMul: 1.1, blurb: 'Timing routes at every depth, with a tight end who runs like a receiver.' },
-  { id: 'westcoast', name: 'West Coast', fam: 'pass', from: 1979, to: 2026, origin: 'sfo', w: { QB: 1.1, TE: 1.1, RB: 1.05, OL: 0.9 }, a: { run: .35, deep: .2, quick: .95, qbRun: 0, misd: .3 }, sackMul: 0.75, intMul: 0.85, var: -0.05, blurb: 'Short, quick throws replace the run. Accurate QBs and backs who catch thrive.' },
-  { id: 'oneback', name: 'One-Back Counter Trey', fam: 'run', from: 1982, to: 2005, origin: 'was', w: { OL: 1.3, RB: 1.1, TE: 1.1, QB: 0.9, WR: 0.85 }, a: { run: .75, deep: .3, quick: .2, qbRun: 0, misd: .55 }, blurb: 'H-backs and pulling linemen. A great line makes any back look good.' },
-  { id: 'runshoot', name: 'Run and Shoot', fam: 'pass', from: 1989, to: 1997, origin: 'oti', w: { WR: 1.35, QB: 1.15, TE: 0.4, RB: 0.9, OL: 0.9 }, a: { run: .1, deep: .65, quick: .55, qbRun: 0, misd: .4 }, ps: 0.06, sackMul: 1.25, intMul: 1.15, var: 0.1, blurb: 'Four receivers who read the coverage on the fly. Huge numbers, more sacks and picks.' },
-  { id: 'kgun', name: 'K-Gun No-Huddle', fam: 'pass', from: 1989, to: 1999, origin: 'buf', w: { QB: 1.15, WR: 1.1, RB: 1.0, TE: 0.9 }, a: { run: .35, deep: .4, quick: .6, qbRun: 0, misd: .3 }, blurb: 'No huddle, all game. Tired defenses cannot substitute.' },
-  { id: 'zone', name: 'Zone Run & Bootleg', fam: 'run', from: 1995, to: 2026, origin: 'den', w: { OL: 1.2, RB: 1.1, QB: 0.95, WR: 0.9 }, a: { run: .7, deep: .3, quick: .15, qbRun: 0, misd: .75 }, blurb: 'One cut and go behind a moving line, then play-action bootlegs off it.' },
-  { id: 'erhardt', name: 'Erhardt-Perkins', fam: 'bal', from: 2001, to: 2026, origin: 'nwe', w: { QB: 1.15, TE: 1.1, WR: 0.95 }, a: { run: .45, deep: .3, quick: .6, qbRun: 0, misd: .35 }, sackMul: 0.9, intMul: 0.85, blurb: 'Concepts instead of plays. A smart QB changes the plan every week.' },
-  { id: 'spread', name: 'Shotgun Spread', fam: 'pass', from: 2004, to: 2026, origin: 'clt', w: { QB: 1.25, WR: 1.2, TE: 0.9, RB: 0.8, OL: 0.95 }, a: { run: .2, deep: .55, quick: .6, qbRun: 0, misd: .25 }, ps: 0.04, blurb: 'Three or four wide every snap. The quarterback runs the show at the line.' },
-  { id: 'readopt', name: 'Read Option / Pistol', fam: 'run', from: 2012, to: 2026, origin: 'was', w: { QB: 1.2, RB: 1.0, WR: 0.85, TE: 0.9 }, a: { run: .55, deep: .25, quick: .2, qbRun: .9, misd: .5 }, qbRush: 0.3, blurb: 'The quarterback reads an end and keeps it or hands off. Hard on edge rushers.' },
-  { id: 'rpo', name: 'RPO Spread', fam: 'bal', from: 2016, to: 2026, origin: 'phi', w: { QB: 1.15, WR: 1.05, OL: 0.95 }, a: { run: .4, deep: .3, quick: .6, qbRun: .4, misd: .5 }, qbRush: 0.2, blurb: 'Run or pass decided after the snap by one defender. Punishes aggressive linebackers.' },
-  { id: 'widezone', name: 'Wide Zone Play-Action', fam: 'bal', from: 2017, to: 2026, origin: 'ram', w: { OL: 1.1, RB: 1.05, WR: 1.05, TE: 1.1, QB: 0.95 }, a: { run: .55, deep: .4, quick: .3, qbRun: 0, misd: .9 }, blurb: 'Everything looks like the same outside zone until the ball is thrown over the top.' }
+  { id: 'proset', name: 'Pro Set', fam: 'bal', pers: { RB: 2, WR: 2, TE: 1 }, from: 1970, to: 2000, base: 1, w: {}, a: { run: .5, deep: .5, quick: .3, qbRun: 0, misd: .3 }, blurb: 'Two backs, two receivers, a tight end. Does a bit of everything.' },
+  { id: 'power', name: 'Power I', fam: 'run', pers: { RB: 2, WR: 1, TE: 2 }, from: 1970, to: 2026, base: 1, w: { RB: 1.25, OL: 1.15, TE: 1.05, QB: 0.8, WR: 0.8 }, a: { run: .95, deep: .2, quick: .1, qbRun: 0, misd: .3 }, ps: -0.04, blurb: 'Sweeps and isos behind a fullback. Needs a great back and line.' },
+  { id: 'vertical', name: 'Vertical Bomb', fam: 'pass', pers: { RB: 2, WR: 2, TE: 1 }, from: 1970, to: 1990, base: 1, origin: 'rai', w: { WR: 1.25, QB: 1.05, TE: 0.85, RB: 0.9 }, a: { run: .4, deep: .95, quick: .1, qbRun: 0, misd: .2 }, intMul: 1.2, var: 0.1, blurb: 'The old AFL deep game: seven-step drops and long throws downfield.' },
+  { id: 'shotgun', name: 'Shotgun & Motion', fam: 'bal', pers: { RB: 1, WR: 3, TE: 1 }, from: 1975, to: 1992, origin: 'dal', w: { QB: 1.1, WR: 1.05, OL: 0.95 }, a: { run: .4, deep: .4, quick: .45, qbRun: 0, misd: .7 }, sackMul: 0.9, blurb: 'Pre-snap shifts and the shotgun on passing downs keep defenses guessing.' },
+  { id: 'coryell', name: 'Air Coryell', fam: 'pass', pers: { RB: 1, WR: 2, TE: 2 }, from: 1978, to: 2026, origin: 'sdg', w: { WR: 1.15, TE: 1.2, QB: 1.1, RB: 0.85, OL: 1.05 }, a: { run: .3, deep: .8, quick: .3, qbRun: 0, misd: .3 }, sackMul: 1.1, intMul: 1.1, blurb: 'Timing routes at every depth, with a tight end who runs like a receiver.' },
+  { id: 'westcoast', name: 'West Coast', fam: 'pass', pers: { RB: 2, WR: 2, TE: 1 }, from: 1979, to: 2026, origin: 'sfo', w: { QB: 1.1, TE: 1.1, RB: 1.05, OL: 0.9 }, a: { run: .35, deep: .2, quick: .95, qbRun: 0, misd: .3 }, sackMul: 0.75, intMul: 0.85, var: -0.05, blurb: 'Short, quick throws replace the run. Accurate QBs and backs who catch thrive.' },
+  { id: 'oneback', name: 'One-Back Counter Trey', fam: 'run', pers: { RB: 1, WR: 2, TE: 2 }, from: 1982, to: 2005, origin: 'was', w: { OL: 1.3, RB: 1.1, TE: 1.1, QB: 0.9, WR: 0.85 }, a: { run: .75, deep: .3, quick: .2, qbRun: 0, misd: .55 }, blurb: 'H-backs and pulling linemen. A great line makes any back look good.' },
+  { id: 'runshoot', name: 'Run and Shoot', fam: 'pass', pers: { RB: 1, WR: 4, TE: 0 }, from: 1989, to: 1997, origin: 'oti', w: { WR: 1.35, QB: 1.15, TE: 0.4, RB: 0.9, OL: 0.9 }, a: { run: .1, deep: .65, quick: .55, qbRun: 0, misd: .4 }, ps: 0.06, sackMul: 1.25, intMul: 1.15, var: 0.1, blurb: 'Four receivers who read the coverage on the fly. Huge numbers, more sacks and picks.' },
+  { id: 'kgun', name: 'K-Gun No-Huddle', fam: 'pass', pers: { RB: 1, WR: 3, TE: 1 }, from: 1989, to: 1999, origin: 'buf', w: { QB: 1.15, WR: 1.1, RB: 1.0, TE: 0.9 }, a: { run: .35, deep: .4, quick: .6, qbRun: 0, misd: .3 }, blurb: 'No huddle, all game. Tired defenses cannot substitute.' },
+  { id: 'zone', name: 'Zone Run & Bootleg', fam: 'run', pers: { RB: 2, WR: 2, TE: 1 }, from: 1995, to: 2026, origin: 'den', w: { OL: 1.2, RB: 1.1, QB: 0.95, WR: 0.9 }, a: { run: .7, deep: .3, quick: .15, qbRun: 0, misd: .75 }, blurb: 'One cut and go behind a moving line, then play-action bootlegs off it.' },
+  { id: 'erhardt', name: 'Erhardt-Perkins', fam: 'bal', pers: { RB: 1, WR: 2, TE: 2 }, from: 2001, to: 2026, origin: 'nwe', w: { QB: 1.15, TE: 1.1, WR: 0.95 }, a: { run: .45, deep: .3, quick: .6, qbRun: 0, misd: .35 }, sackMul: 0.9, intMul: 0.85, blurb: 'Concepts instead of plays. A smart QB changes the plan every week.' },
+  { id: 'spread', name: 'Shotgun Spread', fam: 'pass', pers: { RB: 1, WR: 3, TE: 1 }, from: 2004, to: 2026, origin: 'clt', w: { QB: 1.25, WR: 1.2, TE: 0.9, RB: 0.8, OL: 0.95 }, a: { run: .2, deep: .55, quick: .6, qbRun: 0, misd: .25 }, ps: 0.04, blurb: 'Three or four wide every snap. The quarterback runs the show at the line.' },
+  { id: 'readopt', name: 'Read Option / Pistol', fam: 'run', pers: { RB: 1, WR: 3, TE: 1 }, from: 2012, to: 2026, origin: 'was', w: { QB: 1.2, RB: 1.0, WR: 0.85, TE: 0.9 }, a: { run: .55, deep: .25, quick: .2, qbRun: .9, misd: .5 }, qbRush: 0.3, blurb: 'The quarterback reads an end and keeps it or hands off. Hard on edge rushers.' },
+  { id: 'rpo', name: 'RPO Spread', fam: 'bal', pers: { RB: 1, WR: 3, TE: 1 }, from: 2016, to: 2026, origin: 'phi', w: { QB: 1.15, WR: 1.05, OL: 0.95 }, a: { run: .4, deep: .3, quick: .6, qbRun: .4, misd: .5 }, qbRush: 0.2, blurb: 'Run or pass decided after the snap by one defender. Punishes aggressive linebackers.' },
+  { id: 'empty', name: 'Empty Five-Wide', maxShare: 0.12, fam: 'pass', pers: { RB: 0, WR: 5, TE: 0 }, from: 2019, to: 2026, origin: 'kan', w: { QB: 1.3, WR: 1.25, OL: 1.05, RB: 0.6, TE: 0.7 }, a: { run: .05, deep: .5, quick: .85, qbRun: .1, misd: .2 }, ps: 0.1, sackMul: 0.85, intMul: 1.05, var: 0.05, blurb: 'Nobody in the backfield and five receivers spread wide. The quarterback reads the whole field before the snap.' },
+  { id: 'widezone', name: 'Wide Zone Play-Action', fam: 'bal', pers: { RB: 1, WR: 3, TE: 1 }, from: 2017, to: 2026, origin: 'ram', w: { OL: 1.1, RB: 1.05, WR: 1.05, TE: 1.1, QB: 0.95 }, a: { run: .55, deep: .4, quick: .3, qbRun: 0, misd: .9 }, blurb: 'Everything looks like the same outside zone until the ball is thrown over the top.' }
 ];
 const DEF_SCHEMES = [
-  { id: 'base43', name: '4-3 Base', fam: 'bal', from: 1970, to: 2026, base: 1, w: {}, a: { rush: .5, cover: .5, box: .5, disg: .1 }, blurb: 'Four linemen, three linebackers, two corners and two safeties. No weakness, no trick.' },
-  { id: 'umbrella', name: 'Umbrella Zone', fam: 'soft', from: 1970, to: 1985, base: 1, w: { DB: 1.15, LB: 1.05, DL: 0.85 }, a: { rush: .25, cover: .8, box: .4, disg: .2 }, var: -0.05, blurb: 'Deep zones keep everything in front. Gives up yards, not touchdowns.' },
-  { id: 'reddog', name: 'Red Dog Blitz', fam: 'blitz', from: 1970, to: 1990, base: 1, w: { LB: 1.2, DL: 1.05, DB: 0.85 }, a: { rush: .9, cover: .25, box: .6, disg: .1 }, sackMul: 1.2, var: 0.1, blurb: 'Send the linebackers. Sacks or big plays, nothing in between.' },
-  { id: 'flex', name: 'Flex Defense', fam: 'bal', from: 1970, to: 1988, origin: 'dal', w: { DL: 1.15, LB: 1.05, DB: 0.85 }, a: { rush: .3, cover: .5, box: .85, disg: .25 }, blurb: 'Two linemen play off the ball to read the run. Built to stop the sweep.' },
-  { id: 'nonname', name: '53 Defense', fam: 'soft', from: 1972, to: 1982, origin: 'mia', w: { LB: 1.2, DB: 1.1, DL: 0.75 }, a: { rush: .2, cover: .7, box: .5, disg: .55 }, intMul: 1.15, blurb: 'A linebacker in a lineman\'s spot. Disciplined zone and few mistakes.' },
-  { id: 'curtain', name: 'Cover 2 Front Four', fam: 'bal', from: 1972, to: 1990, origin: 'pit', w: { DL: 1.25, DB: 1.05, LB: 0.8 }, a: { rush: .75, cover: .65, box: .4, disg: .1 }, sackMul: 1.15, blurb: 'Four dominant linemen get home without blitzing, and two safeties split the field.' },
-  { id: 'd34', name: '3-4', fam: 'bal', from: 1974, to: 2026, origin: 'nwe', w: { LB: 1.25, DL: 0.85, DB: 0.95 }, a: { rush: .55, cover: .5, box: .55, disg: .35 }, blurb: 'Four linebackers and a nose tackle. The pressure can come from anywhere.' },
-  { id: 'd46', name: '46 Defense', fam: 'blitz', from: 1984, to: 1995, origin: 'chi', w: { DL: 1.2, LB: 1.1, DB: 0.8 }, a: { rush: 1.0, cover: .2, box: .9, disg: .1 }, sackMul: 1.35, var: 0.15, blurb: 'Eight in the box and pressure every snap. Overwhelms protection, but corners are on an island.' },
-  { id: 'zblitz', name: 'Zone Blitz', fam: 'blitz', from: 1992, to: 2026, origin: 'pit', w: { LB: 1.2, DB: 1.0, DL: 0.9 }, a: { rush: .8, cover: .45, box: .4, disg: .9 }, sackMul: 1.2, intMul: 1.1, blurb: 'Rush five, drop a lineman into coverage. Quarterbacks throw it to the wrong color.' },
-  { id: 'tampa2', name: 'Tampa 2', fam: 'soft', from: 1996, to: 2014, origin: 'tam', w: { DL: 1.15, LB: 1.15, DB: 0.9 }, a: { rush: .5, cover: .8, box: .35, disg: .2 }, intMul: 1.2, var: -0.05, blurb: 'A fast middle linebacker runs the deep middle. Speed over size everywhere.' },
-  { id: 'pressure34', name: 'Exotic Pressure 3-4', fam: 'blitz', from: 2000, to: 2026, origin: 'rav', w: { LB: 1.2, DB: 0.95, DL: 0.95 }, a: { rush: .85, cover: .35, box: .5, disg: .7 }, sackMul: 1.3, var: 0.15, blurb: 'Overload blitzes and simulated pressure from a deep linebacker group.' },
-  { id: 'nickel', name: 'Nickel Base', fam: 'bal', from: 2008, to: 2026, w: { DB: 1.25, LB: 0.8 }, a: { rush: .5, cover: .7, box: .3, disg: .3 }, blurb: 'Five defensive backs as the base defense against three-receiver offenses.' },
-  { id: 'wide9', name: 'Wide-9 Front', fam: 'blitz', from: 2011, to: 2018, origin: 'phi', w: { DL: 1.35, LB: 0.85, DB: 0.85 }, a: { rush: 1.0, cover: .45, box: .2, disg: .1 }, sackMul: 1.25, blurb: 'Ends lined up way outside, pinning their ears back. Runs inside can gash it.' },
-  { id: 'cover3', name: 'Cover 3 Single-High', fam: 'bal', from: 2012, to: 2026, origin: 'sea', w: { DB: 1.25, DL: 0.9 }, a: { rush: .5, cover: .65, box: .65, disg: .15 }, intMul: 1.1, blurb: 'Big press corners and a rangy free safety let a strong safety live in the box.' },
-  { id: 'twohigh', name: 'Two-High Quarters', fam: 'soft', from: 2018, to: 2026, origin: 'chi', w: { DB: 1.25, LB: 1.05, DL: 0.8 }, a: { rush: .4, cover: .95, box: .25, disg: .6 }, sackMul: 0.9, blurb: 'Two deep safeties take away the big play and dare you to dink and dunk.' }
+  { id: 'base43', name: '4-3 Base', fam: 'bal', pers: { DL: 4, LB: 3, DB: 4 }, from: 1970, to: 2026, base: 1, w: {}, a: { rush: .5, cover: .5, box: .5, disg: .1 }, blurb: 'Four linemen, three linebackers, two corners and two safeties. No weakness, no trick.' },
+  { id: 'umbrella', name: 'Umbrella Zone', fam: 'soft', pers: { DL: 4, LB: 3, DB: 4 }, from: 1970, to: 1985, base: 1, w: { DB: 1.15, LB: 1.05, DL: 0.85 }, a: { rush: .25, cover: .8, box: .4, disg: .2 }, var: -0.05, blurb: 'Deep zones keep everything in front. Gives up yards, not touchdowns.' },
+  { id: 'reddog', name: 'Red Dog Blitz', fam: 'blitz', pers: { DL: 4, LB: 3, DB: 4 }, from: 1970, to: 1990, base: 1, w: { LB: 1.2, DL: 1.05, DB: 0.85 }, a: { rush: .9, cover: .25, box: .6, disg: .1 }, sackMul: 1.2, var: 0.1, blurb: 'Send the linebackers. Sacks or big plays, nothing in between.' },
+  { id: 'flex', name: 'Flex Defense', fam: 'bal', pers: { DL: 4, LB: 3, DB: 4 }, from: 1970, to: 1988, origin: 'dal', w: { DL: 1.15, LB: 1.05, DB: 0.85 }, a: { rush: .3, cover: .5, box: .85, disg: .25 }, blurb: 'Two linemen play off the ball to read the run. Built to stop the sweep.' },
+  { id: 'nonname', name: '53 Defense', fam: 'soft', pers: { DL: 3, LB: 4, DB: 4 }, from: 1972, to: 1982, origin: 'mia', w: { LB: 1.2, DB: 1.1, DL: 0.75 }, a: { rush: .2, cover: .7, box: .5, disg: .55 }, intMul: 1.15, blurb: 'A linebacker in a lineman\'s spot. Disciplined zone and few mistakes.' },
+  { id: 'curtain', name: 'Cover 2 Front Four', fam: 'bal', pers: { DL: 4, LB: 3, DB: 4 }, from: 1972, to: 1990, origin: 'pit', w: { DL: 1.25, DB: 1.05, LB: 0.8 }, a: { rush: .75, cover: .65, box: .4, disg: .1 }, sackMul: 1.15, blurb: 'Four dominant linemen get home without blitzing, and two safeties split the field.' },
+  { id: 'd34', name: '3-4', fam: 'bal', pers: { DL: 3, LB: 4, DB: 4 }, from: 1974, to: 2026, origin: 'nwe', w: { LB: 1.25, DL: 0.85, DB: 0.95 }, a: { rush: .55, cover: .5, box: .55, disg: .35 }, blurb: 'Four linebackers and a nose tackle. The pressure can come from anywhere.' },
+  { id: 'd46', name: '46 Defense', fam: 'blitz', pers: { DL: 4, LB: 4, DB: 3 }, from: 1984, to: 1995, origin: 'chi', w: { DL: 1.2, LB: 1.1, DB: 0.8 }, a: { rush: 1.0, cover: .2, box: .9, disg: .1 }, sackMul: 1.35, var: 0.15, blurb: 'Eight in the box and pressure every snap. Overwhelms protection, but corners are on an island.' },
+  { id: 'zblitz', name: 'Zone Blitz', fam: 'blitz', pers: { DL: 3, LB: 4, DB: 4 }, from: 1992, to: 2026, origin: 'pit', w: { LB: 1.2, DB: 1.0, DL: 0.9 }, a: { rush: .8, cover: .45, box: .4, disg: .9 }, sackMul: 1.2, intMul: 1.1, blurb: 'Rush five, drop a lineman into coverage. Quarterbacks throw it to the wrong color.' },
+  { id: 'tampa2', name: 'Tampa 2', fam: 'soft', pers: { DL: 4, LB: 3, DB: 4 }, from: 1996, to: 2014, origin: 'tam', w: { DL: 1.15, LB: 1.15, DB: 0.9 }, a: { rush: .5, cover: .8, box: .35, disg: .2 }, intMul: 1.2, var: -0.05, blurb: 'A fast middle linebacker runs the deep middle. Speed over size everywhere.' },
+  { id: 'pressure34', name: 'Exotic Pressure 3-4', fam: 'blitz', pers: { DL: 3, LB: 4, DB: 4 }, from: 2000, to: 2026, origin: 'rav', w: { LB: 1.2, DB: 0.95, DL: 0.95 }, a: { rush: .85, cover: .35, box: .5, disg: .7 }, sackMul: 1.3, var: 0.15, blurb: 'Overload blitzes and simulated pressure from a deep linebacker group.' },
+  { id: 'nickel', name: 'Nickel Base', fam: 'bal', pers: { DL: 4, LB: 2, DB: 5 }, from: 2008, to: 2026, w: { DB: 1.25, LB: 0.8 }, a: { rush: .5, cover: .7, box: .3, disg: .3 }, blurb: 'Five defensive backs as the base defense against three-receiver offenses.' },
+  { id: 'wide9', name: 'Wide-9 Front', fam: 'blitz', pers: { DL: 4, LB: 3, DB: 4 }, from: 2011, to: 2018, origin: 'phi', w: { DL: 1.35, LB: 0.85, DB: 0.85 }, a: { rush: 1.0, cover: .45, box: .2, disg: .1 }, sackMul: 1.25, blurb: 'Ends lined up way outside, pinning their ears back. Runs inside can gash it.' },
+  { id: 'cover3', name: 'Cover 3 Single-High', fam: 'bal', pers: { DL: 4, LB: 3, DB: 4 }, from: 2012, to: 2026, origin: 'sea', w: { DB: 1.25, DL: 0.9 }, a: { rush: .5, cover: .65, box: .65, disg: .15 }, intMul: 1.1, blurb: 'Big press corners and a rangy free safety let a strong safety live in the box.' },
+  { id: 'dime', name: 'Dime Coverage', fam: 'soft', pers: { DL: 4, LB: 1, DB: 6 }, from: 2015, to: 2026, w: { DB: 1.35, LB: 0.8, DL: 0.95 }, a: { rush: .45, cover: .9, box: .15, disg: .45 }, intMul: 1.1, blurb: 'Six defensive backs on the field against three- and four-receiver offenses. Fast, but light against the run.' },
+  { id: 'twohigh', name: 'Two-High Quarters', fam: 'soft', pers: { DL: 2, LB: 4, DB: 5 }, from: 2018, to: 2026, origin: 'chi', w: { DB: 1.25, LB: 1.05, DL: 0.8 }, a: { rush: .4, cover: .95, box: .25, disg: .6 }, sackMul: 0.9, blurb: 'Two deep safeties take away the big play and dare you to dink and dunk.' }
 ];
 const SCHEME = {}; OFF_SCHEMES.forEach(s => SCHEME[s.id] = Object.assign({ side: 'off' }, s)); DEF_SCHEMES.forEach(s => SCHEME[s.id] = Object.assign({ side: 'def' }, s));
 function schemeTo(s, y) { return s.to >= 2026 ? 9999 : s.to; } // the current schemes never expire
@@ -1785,19 +1810,21 @@ function trendWord(L, id) {
 function famOf(id, side) { const s = SCHEME[id]; return s ? s.fam : (side === 'def' ? 'bal' : 'bal'); }
 // How well a roster fits a scheme: the scheme's weighted unit rating minus a neutral one.
 function schemeFit(r, s) {
+  // rate the roster in this scheme's formation (needs depth: four receivers need four good receivers)
+  const F = Object.assign({}, STARTERS, s.pers || {}), U = r.d ? unitAvgs(r.d, F) : r, B = r.d ? unitAvgs(r.d, STARTERS) : r, P = persW(F);
   if (s.side === 'off') {
     const pw = PW[s.fam], rw = 2 - pw, w = s.w;
-    const parts = [['QB', 0.30 * pw], ['WR', 0.18 * pw], ['TE', 0.08], ['RB', 0.16 * rw], ['OL', 0.28]];
+    const parts = [['QB', 0.30 * pw, 1], ['WR', 0.18 * pw, P.WR], ['TE', 0.08, P.TE], ['RB', 0.16 * rw, P.RB], ['OL', 0.28, 1]];
     let a = 0, b = 0, n = 0, m = 0;
-    parts.forEach(([g, x]) => { a += r[g] * x * (w[g] || 1); b += x * (w[g] || 1); n += r[g] * x; m += x; });
+    parts.forEach(([g, x, k]) => { a += U[g] * x * k * (w[g] || 1); b += x * k * (w[g] || 1); n += B[g] * x; m += x; });
     return a / b - n / m;
   }
-  const parts = [['DL', 0.32], ['LB', 0.28], ['DB', 0.40]], w = s.w;
+  const parts = [['DL', 0.32, P.DL], ['LB', 0.28, P.LB], ['DB', 0.40, P.DB]], w = s.w;
   let a = 0, b = 0, n = 0, m = 0;
-  parts.forEach(([g, x]) => { a += r[g] * x * (w[g] || 1); b += x * (w[g] || 1); n += r[g] * x; m += x; });
+  parts.forEach(([g, x, k]) => { a += U[g] * x * k * (w[g] || 1); b += x * k * (w[g] || 1); n += B[g] * x; m += x; });
   return a / b - n / m;
 }
-function schemeCap(L, s) { return s.base ? 1 : Math.min(0.4, 0.1 + 0.08 * (L.year - s.from)); }
+function schemeCap(L, s) { return s.base ? 1 : Math.min(s.maxShare || 0.4, 0.1 + 0.08 * (L.year - s.from)); }
 function bestScheme(L, tid, side, r, pref) {
   const opts = schemesFor(L.year, side);
   let best = null, bv = -1e9;
@@ -1894,8 +1921,8 @@ function pickWeighted(sh) { let r = Math.random(); for (const [p, w] of sh) { r 
 function creditStats(L, tid, sc, rat, oppRat, coach, oppCoach) {
   const y = L.year, d = rat.d, pw = PW[coach.off] || 1, E = era(y);
   const so = SCHEME[coach.os] || {}, sd = SCHEME[(oppCoach || {}).ds] || {};
-  const starters = [];
-  GRPS.forEach(g => d[g].slice(0, STARTERS[g]).forEach(p => starters.push(p)));
+  const starters = [], F = rat.F || STARTERS;
+  GRPS.forEach(g => d[g].slice(0, F[g]).forEach(p => starters.push(p)));
   starters.forEach(p => stat(p, y, 'g', 1));
   // Yardage and the pass/run mix follow the real league averages for this season.
   const avgTD = E.pts * 0.7 / 7;
@@ -1913,7 +1940,13 @@ function creditStats(L, tid, sc, rat, oppRat, coach, oppCoach) {
     ints = R.poisson(clamp(E.int * (1 - (qb.ovr - 60) * 0.017) * (so.intMul || 1) * (sd.intMul || 1), 0.2, 2.6));
     stat(qb, y, 'int', ints);
   }
-  const rec = share([d.WR[0], d.WR[1], d.TE[0], d.RB[0], d.RB[1], d.WR[2]], [0.32, 0.22, 0.18, 0.14, 0.06, 0.08]);
+  // targets follow who is on the field
+  const recP = [], recW = [];
+  const addT = (arr, n, ws) => { for (let i = 0; i < n && i < ws.length; i++) if (arr[i]) { recP.push(arr[i]); recW.push(ws[i]); } };
+  addT(d.WR, Math.max(F.WR, 2), [0.3, 0.22, 0.15, 0.1, 0.07].map((x, i) => i < F.WR ? x : x * 0.3));
+  addT(d.TE, Math.max(F.TE, 1), [0.17, 0.08].map((x, i) => i < F.TE ? x : x * 0.3));
+  addT(d.RB, Math.max(F.RB, 1), [0.13, 0.05].map((x, i) => i < F.RB ? x : x * 0.4));
+  const rec = share(recP, recW);
   for (const [p, w] of rec) {
     const yds = Math.round(py * w * (0.75 + Math.random() * 0.5));
     stat(p, y, 'recy', yds); stat(p, y, 'rec', Math.max(0, Math.round(yds / E.ypc + R.norm())));
@@ -1931,9 +1964,15 @@ function creditDefense(L, tid, rat, oppRat, ints, coach, oppCoach) {
   const y = L.year, d = rat.d;
   const sm = ((SCHEME[(coach || {}).ds] || {}).sackMul || 1) * ((SCHEME[(oppCoach || {}).os] || {}).sackMul || 1);
   const sacks = R.poisson(clamp((2.2 + (rat.DL - oppRat.OL) * 0.06) * sm, 0.6, 6));
-  const rushers = share([d.DL[0], d.DL[1], d.DL[2], d.DL[3], d.LB[0], d.LB[1]], [0.25, 0.25, 0.15, 0.15, 0.1, 0.1]);
+  const Fd = rat.F || STARTERS, rP = [], rW = [];
+  for (let i = 0; i < Fd.DL; i++) if (d.DL[i]) { rP.push(d.DL[i]); rW.push(i < 2 ? 0.25 : 0.15); }
+  for (let i = 0; i < Math.min(Fd.LB, 4); i++) if (d.LB[i]) { rP.push(d.LB[i]); rW.push(Fd.DL <= 3 && i < 2 ? 0.2 : 0.1); }
+  const rushers = share(rP, rW);
   for (let i = 0; i < sacks; i++) stat(pickWeighted(rushers), y, 'sk', 1);
-  const cover = share([d.DB[0], d.DB[1], d.DB[2], d.DB[3], d.LB[0]], [0.24, 0.24, 0.2, 0.2, 0.12]);
+  const cP = [], cW = [];
+  for (let i = 0; i < Fd.DB; i++) if (d.DB[i]) { cP.push(d.DB[i]); cW.push(i < 2 ? 0.24 : i < 4 ? 0.2 : 0.12); }
+  if (d.LB[0]) { cP.push(d.LB[0]); cW.push(0.12); }
+  const cover = share(cP, cW);
   for (let i = 0; i < ints; i++) stat(pickWeighted(cover), y, 'dint', 1);
   if (!NOHIST) { const T = tstat(L, tid); T.sk += sacks; T.take += ints; }
   return sacks;
@@ -1943,14 +1982,15 @@ function creditDefense(L, tid, rat, oppRat, ints, coach, oppCoach) {
 function noteInjury(L, p, wks) { p.injY = p.injY || {}; p.injY[L.year] = (p.injY[L.year] || 0) + wks; }
 function recentInjuryWeeks(p, y) { let s = 0; for (let k = y - 2; k <= y; k++) s += (p.injY && p.injY[k]) || 0; return s; }
 function injuries(L, rat) {
-  GRPS.forEach(g => rat.d[g].slice(0, STARTERS[g]).forEach(p => {
+  const F = rat.F || STARTERS;
+  GRPS.forEach(g => rat.d[g].slice(0, F[g]).forEach(p => {
     if (p.inj && p.playHurt && Math.random() < 0.3) {
       const extra = R.int(1, 2); p.inj += extra; noteInjury(L, p, extra);
       if (p.team === L.user) addNews(L, `${p.pos} ${p.name} aggravated his injury playing hurt. Now out ${p.inj} weeks.`);
     }
   }));
   if (Math.random() < 0.38) {
-    const pool = []; ['QB','RB','WR','TE','OL','DL','LB','DB'].forEach(g => rat.d[g].slice(0, STARTERS[g]).forEach(p => pool.push(p)));
+    const pool = []; ['QB','RB','WR','TE','OL','DL','LB','DB'].forEach(g => rat.d[g].slice(0, F[g]).forEach(p => pool.push(p)));
     const p = R.pick(pool); if (!p) return;
     p.inj = Math.random() < 0.04 ? 20 : 1 + R.poisson(1.4);
     noteInjury(L, p, Math.min(p.inj, rules(L.year).games));
@@ -2522,12 +2562,12 @@ function declineDraftOffer(L) { const D = L.draft; if (D) { D.offer = null; D.no
 function aiPick(L) {
   draftTradeUp(L);
   const tid = onClock(L), D = L.draft; if (tid == null) return;
-  const counts = groupCounts(L, tid), seen = new Set((D.ai && D.ai[tid]) || []);
+  const counts = groupCounts(L, tid), seen = new Set((D.ai && D.ai[tid]) || []), SFd = startersFor(L, tid);
   let best = null, bs = -1e9;
   for (const id of D.pool) {
     const p = L.players[id];
     let s = (seen.has(id) ? p.pot : p.scout) + R.norm() * 3;
-    if (counts[p.grp] < STARTERS[p.grp] + 1) s += 3;
+    if (counts[p.grp] < SFd[p.grp] + 1) s += 3;
     if ((p.grp === 'K' || p.grp === 'P') && counts[p.grp] >= 1) s -= 12;
     if (p.grp === 'QB' && counts.QB >= 3) s -= 4;
     if (s > bs) { bs = s; best = p; }
@@ -2900,7 +2940,7 @@ function fitFor(L, p, tid, cache) {
     let others;
     if (cache) { others = (cache[tid].g[p.grp] || []).slice(); if (p.team === tid) { const i = others.indexOf(p.ovr); if (i >= 0) others.splice(i, 1); } }
     else others = roster(L, tid).filter(x => x.grp === p.grp && x.id !== p.id).map(x => x.ovr).sort((a, b) => b - a);
-    const bar = others[STARTERS[p.grp] - 1] || 0;
+    const nS = Math.max(1, startersFor(L, tid)[p.grp]), bar = others[nS - 1] || 0;
     if (p.ovr > bar) { v += 0.08; reasons.push(['+', 'would start']); } else { v -= 0.06; reasons.push(['-', 'would be a backup']); }
   }
   if (p.team === tid || p.prevTeam === tid) { v += 0.05; reasons.push(['+', 'loyal to your team']); }
@@ -2923,8 +2963,9 @@ function interestedTeams(L, p, cache) {
     if (t.id === L.user) return false;
     if (cap != null && cache[t.id].pay + ask * 0.9 > cap) return false;
     const others = cache[t.id].g[p.grp] || [];
-    const bar = others[STARTERS[p.grp]] != null ? others[STARTERS[p.grp] - 1] : 0;
-    return p.ovr >= bar - 2 || others.length < STARTERS[p.grp] + 1;
+    const nS = Math.max(1, startersFor(L, t.id)[p.grp]);
+    const bar = others[nS] != null ? others[nS - 1] : 0;
+    return p.ovr >= bar - 2 || others.length < nS + 1;
   });
 }
 function isMarketFA(p) { return p.team === -1 && p.retiredYear == null; }
@@ -3190,7 +3231,7 @@ function aiCapCompliance(L) {
   for (const t of L.teams) {
     if (t.id === L.user) continue;
     let over = payroll(L, t.id, y) - c; if (over <= 0) continue;
-    const d = depth(L, t.id), st = new Set(); GRPS.forEach(g => d[g].slice(0, STARTERS[g]).forEach(p => st.add(p.id)));
+    const d = depth(L, t.id), st = new Set(), SF = startersFor(L, t.id); GRPS.forEach(g => d[g].slice(0, SF[g]).forEach(p => st.add(p.id)));
     const cand = roster(L, t.id).filter(p => onBooks(p, y)).sort((a, b) => (st.has(a.id) - st.has(b.id)) || (value(a) / salFor(a, y) - value(b) / salFor(b, y)));
     const cut = [];
     for (const p of cand) { if (over <= 0) break; over -= salFor(p, y); cut.push(p); retireIfUnsigned(L, p); }
@@ -3214,7 +3255,7 @@ function leaders(L, key, n, year) {
 
 function myDraftSlots(L) { const D = L.draft; if (!D || !D.slotPick) return []; const out = []; for (let i = D.pick; i < D.slotPick.length; i++) { const k = pickById(L, D.slotPick[i]); if (k && k.own === L.user) out.push(i + 1); } return out; }
 
-const API = { shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
+const API = { offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
   value, release, sign, proposeTrade, tradeVerdict, teamPicks, pickById, pickLabel, projectedOverall, pickWeight, playerWeight, ensurePicks, myDraftSlots, aiTrades, acceptOffer, rejectOffer, offerValid, cutTo, ratings, teamOverall, startRegular, canStartSeason, simWeek, simPlayoffRound, roundName,
   sortTeams, divisions, pct, startDraft, onClock, makePick, aiPick, draftUntilUser, draftAll, scoutPlayer, beginDraft, SCOUT_VISITS, endDraft, startNextSeason, leaders, potKnown, shownPot, roman, addNews };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.GG = API;
@@ -3276,7 +3317,7 @@ const HELP = [
 
 { id: 'coach', title: 'Coach tab', tab: 'coach', body: `
 <ul>
-<li><b>Depth chart.</b> The order of starters and backups at each position. Move players up and down, sort by overall or potential, or reset to Auto (best healthy rating). Injured players are skipped automatically.</li>
+<li><b>Depth chart.</b> The order of starters and backups at each position. How many start at each position comes from your schemes (see <a data-help="schemes">Era schemes</a>). Move players up and down, sort by overall or potential, or reset to Auto (best healthy rating). Injured players are skipped automatically.</li>
 <li><b>Offensive and defensive scheme.</b> Pick from the schemes that exist that season (see <a data-help="schemes">Era schemes</a>). Each shows how well your roster fits it.</li>
 <li><b>Aggressiveness.</b> Higher means more fourth-down tries and deep shots: bigger wins and bigger losses.</li>
 <li><b>Develop young starters.</b> Starters 26 and under who play most of the season get an extra development bump in the offseason.</li>
@@ -3290,6 +3331,7 @@ const HELP = [
 <li><b>Fit.</b> Each scheme leans on different position groups. Power I needs a great back and line, Run and Shoot needs receivers, and Cover 3 needs a secondary. Fit shows how much better your current roster rates in that system.</li>
 <li><b>Matchups.</b> Schemes beat some schemes and lose to others, like rock-paper-scissors. Quick passing beats blitz-heavy defenses, eight-man boxes stop the run but give up the deep ball, and two-high coverage takes away big plays but gets run on. No scheme is better on average.</li>
 <li><b>New and old.</b> A brand-new scheme gives a bonus for a few years while defenses learn it. Once a third of the league runs one, opponents are ready for it. Schemes in their last years fade, and when one disappears, any team still running it switches.</li>
+<li><b>Personnel.</b> Each scheme puts its own players on the field: Power I uses two backs and two tight ends, Run and Shoot four receivers and no tight end, Empty Five-Wide five receivers and no back; on defense the 3-4 uses four linebackers, the 46 eight in the box, Nickel five defensive backs, Dime six. Your depth chart starts that many at each position, so a four-receiver offense needs four good receivers, and the scheme's Fit accounts for your depth.</li>
 <li><b>Families.</b> Every scheme is run-first, balanced or pass-first on offense, and bend-don't-break, balanced or pressure on defense. Your weekly game plan can lean a different way for one game.</li>
 </ul>` },
 
@@ -3433,7 +3475,7 @@ const HELP_FOR_TAB = { home: 'office', roster: 'roster', stats: 'stats', league:
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-10a';
+const APP_VERSION = '2026-11-10b';
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
 const ui = { tab: 'home', grp: 'ALL', lg: 'stand', leadKey: 'py', resWeek: null, open: null, confirm: null,
@@ -3775,7 +3817,7 @@ function planCard() {
   const qbOpt = qbs.map(p => `<option value="${p.id}"${startQB && p.id === startQB.id ? ' selected' : ''}${p.inj && !(p.playHurt && G.canPlayHurt(p)) ? ' disabled' : ''}>${esc(p.name)} · ${G.eff(p)} OVR${p.inj ? (p.playHurt ? ' · playing hurt' : ' · injured') : ''}</option>`).join('');
   const using = G.coachFor(L, L.user);
   return `<section class="card"><h3>Game plan vs ${esc(o.city)}</h3>
-    <p class="small"><b>Scouting report:</b> ${oc.os ? `${esc(G.SCHEME[oc.os].name)} (${esc(OFF[oc.off])}) offense, ${esc(G.SCHEME[oc.ds].name)} (${esc(DEF[oc.def])}) defense` : `${esc(OFF[oc.off])} offense, ${esc(DEF[oc.def])} defense`}, aggressiveness ${oc.aggr}.</p>
+    <p class="small"><b>Scouting report:</b> ${oc.os ? `<i>${esc(G.offPers(G.formation(oc)))}; ${esc(G.defPers(G.formation(oc)))}.</i> ` : ''}${oc.os ? `${esc(G.SCHEME[oc.os].name)} (${esc(OFF[oc.off])}) offense, ${esc(G.SCHEME[oc.ds].name)} (${esc(DEF[oc.def])}) defense` : `${esc(OFF[oc.off])} offense, ${esc(DEF[oc.def])} defense`}, aggressiveness ${oc.aggr}.</p>
     ${oc.os && base.os ? (() => { const a = G.schemeEdge(L.year, base.os, oc.ds), b = -G.schemeEdge(L.year, oc.os, base.ds); const w = v => `<span class="${v > 0.25 ? 'good' : v < -0.25 ? 'bad' : ''}">${v >= 0 ? '+' : ''}${v.toFixed(1)} pts</span>`; return `<p class="small"><b>Scheme matchup:</b> your ${esc(G.SCHEME[base.os].name)} vs their ${esc(G.SCHEME[oc.ds].name)}: ${w(a)}. Your ${esc(G.SCHEME[base.ds].name)} vs their ${esc(G.SCHEME[oc.os].name)}: ${w(b)}.</p>`; })() : ''}
     <p class="small">Counters: ${G.DEF_VS[dHint][oc.off] < 0 ? `a <b>${esc(DEF[dHint])}</b> defense slows their offense` : `a <b>${esc(DEF[dHint])}</b> defense is the safe call, since blitzing or sitting back gets run on`}${oHint ? `, and a <b>${esc(OFF[oHint])}</b> attack exploits their defense` : '. Their base defense has no scheme weakness, so lean on your best unit'}.</p>
     <div class="fld">Offense this week${segRow('off', OFF)}</div>
@@ -4018,7 +4060,7 @@ function chips(key, cur) {
 }
 function vRoster() {
   const max = G.rules(L.year).rosterMax, all = G.roster(L, L.user), d = G.depth(L, L.user);
-  const starterIds = new Set(); G.GRPS.forEach(g => d[g].slice(0, G.STARTERS[g]).forEach(p => starterIds.add(p.id)));
+  const SFu = G.startersFor(L, L.user), starterIds = new Set(); G.GRPS.forEach(g => d[g].slice(0, SFu[g]).forEach(p => starterIds.add(p.id)));
   const rc = cmp(ui.rSort), list = all.filter(p => ui.grp === 'ALL' || p.grp === ui.grp).sort((a, b) => G.GRPS.indexOf(a.grp) - G.GRPS.indexOf(b.grp) || rc(a, b));
   const act = G.active(L, L.user).length, onIR = all.length - act;
   return `<section class="card"><div class="split"><h3>${esc(me().name)} roster</h3><span class="count ${act > max ? 'bad' : ''}">${act} / ${max}${onIR ? ` <span class="small">+ ${onIR} on IR</span>` : ''}</span></div>
@@ -4311,6 +4353,7 @@ function schemeCard(side, c, r) {
     const fit = G.schemeFit(raw, G.SCHEME[x.id]), tw = G.trendWord(L, x.id), n = Math.round(G.schemeShare(L, x.id) * L.teams.length), on = x.id === cur;
     return `<div class="pl wide scheme ${on ? 'on' : ''}"><div class="pl-main"><span class="pos">${({ run: 'RUN', bal: 'BAL', pass: 'PASS', soft: 'BEND', blitz: 'BLTZ' })[x.fam]}</span><div class="pl-name">${esc(x.name)}${on ? ' <span class="good">· running it</span>' : ''}
       <div class="pl-sub">${esc(FAM_TXT[x.fam])} · ${yrs(x)} · ${n} team${n === 1 ? '' : 's'}${tw ? ` · <span class="${tw.c}">${esc(tw.t)}</span>` : ''}</div>
+      <div class="pl-sub">${esc(side === 'off' ? G.offPers(G.formation({ os: x.id })) : G.defPers(G.formation({ ds: x.id })))}</div>
       <div class="pl-sub">${esc(x.blurb)}</div></div></div>
       <div class="pl-r"><span class="lbl">FIT</span><span class="fit ${fit > 0.4 ? 'good' : fit < -0.4 ? 'bad' : ''}">${fit >= 0 ? '+' : ''}${fit.toFixed(1)}</span></div>
       ${on ? '' : `<div class="pl-btns"><button class="btn sm" data-act="scheme" data-id="${x.id}">Run it</button></div>`}</div>`;
@@ -4341,7 +4384,7 @@ function vCoach() {
     <div class="list">${staffRows}</div>${poolRows ? `<h3 class="sub">Available coaches</h3><p class="small">Top coaches prefer winning teams.</p><div class="list">${poolRows}</div>` : ''}</section>`;
   const segc = (key, opts) => `<div class="seg">${opts.map(([v, n]) => `<button class="${c[key] === v ? 'on' : ''}" data-act="coach" data-key="${key}" data-id="${v}">${n}</button>`).join('')}</div>`;
   const bar = (n, v) => `<div class="bar"><span class="bar-l">${n}</span><span class="bar-t"><span class="bar-f ${grade(v)}" style="width:${Math.max(4, Math.min(100, (v - 30) / 0.65))}%"></span></span><span class="bar-v">${Math.round(v)}</span></div>`;
-  const dg = ui.dcGrp || 'QB', chart = G.depthChart(L, L.user, dg), dep = G.depth(L, L.user)[dg].slice(0, G.STARTERS[dg]).map(p => p.id);
+  const SF = G.startersFor(L, L.user), dg = ui.dcGrp || 'QB', chart = G.depthChart(L, L.user, dg), dep = G.depth(L, L.user)[dg].slice(0, SF[dg]).map(p => p.id);
   const custom = !!(me().dc && me().dc[dg]);
   const dcRows = chart.map((p, i) => {
     const out = p.striking || p.holdout || (p.inj && !(p.playHurt && G.canPlayHurt(p))), st = dep.includes(p.id);
@@ -4352,8 +4395,9 @@ function vCoach() {
       <button class="btn sm ar" data-act="dcMove" data-id="${p.id}" data-key="-1"${i === 0 ? ' disabled' : ''} aria-label="Move up">▲</button><button class="btn sm ar" data-act="dcMove" data-id="${p.id}" data-key="1"${i === chart.length - 1 ? ' disabled' : ''} aria-label="Move down">▼</button></div>`;
   }).join('');
   return staffCard + `<section class="card"><div class="split"><h3>Depth chart</h3><span class="small">${custom ? 'Custom order' : 'Sorted by rating'}</span></div>
-      <div class="chips">${G.GRPS.map(g => `<button class="chip ${dg === g ? 'on' : ''}" data-act="chip" data-key="dcGrp" data-id="${g}">${g} ${G.STARTERS[g]}</button>`).join('')}</div>
-      <p class="small">The top ${G.STARTERS[dg]} healthy players start (green). Injured players are skipped unless you let them play hurt, which costs ${G.HURT_PENALTY} rating points and risks a longer injury.</p>
+      <p class="small"><b>On the field:</b> ${esc(G.offPers(SF))} on offense, ${esc(G.defPers(SF))} on defense. Your schemes decide this; change them below and the depth chart follows.</p>
+      <div class="chips">${G.GRPS.map(g => `<button class="chip ${dg === g ? 'on' : ''}" data-act="chip" data-key="dcGrp" data-id="${g}">${g} ${SF[g]}</button>`).join('')}</div>
+      <p class="small">${SF[dg] ? `The top ${SF[dg]} healthy player${SF[dg] === 1 ? '' : 's'} start${SF[dg] === 1 ? 's' : ''} (green).` : `Your formation doesn't use a ${dg} as a starter; they play as backups and in packages.`} Injured players are skipped unless you let them play hurt, which costs ${G.HURT_PENALTY} rating points and risks a longer injury.</p>
       <div class="list">${dcRows || '<p>No players at this position.</p>'}</div>
       <div class="row"><button class="btn sm" data-act="dcSort" data-key="ovr" data-id="${dg}">Order by overall</button><button class="btn sm" data-act="dcSort" data-key="pot" data-id="${dg}">Order by potential</button>${custom ? `<button class="btn sm" data-act="dcReset" data-id="${dg}">Auto (best healthy OVR)</button>` : ''}</div>
       <p class="small">Ordering changes who starts. Ordering by potential plays your young players ahead of better veterans.</p></section>
