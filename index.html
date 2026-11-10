@@ -530,11 +530,18 @@ function prospectFromDraft(L, r, year) {
   });
 }
 
-function genProspect(L, year) {
+// filler: true for the extra prospects added to a real draft class (late-round depth, never early picks).
+function genProspect(L, year, filler) {
   const grp = R.pick(['QB','RB','RB','WR','WR','TE','OL','OL','OL','DL','DL','DL','LB','LB','DB','DB','DB','K','P'].filter(g => g !== 'K' && g !== 'P' || Math.random() < 0.3));
-  const pot = clamp(Math.round(52 + R.norm() * 10), 40, 96);
+  const pot = clamp(Math.round((filler ? 46 : 52) + R.norm() * (filler ? 6 : 10)), 40, filler ? 72 : 96);
   const ovr = clamp(pot - R.int(8, 18), 36, 78);
-  return mkPlayer(L, { grp, age: R.int(21, 23), ovr, pot, team: -3, college: R.pick(COLLEGES), real: false, reveal: year, scout: clamp(Math.round(pot + R.norm() * 8), 40, 92) });
+  const kp = grp === 'K' || grp === 'P';
+  const scout = clamp(Math.round(pot + R.norm() * (filler ? 4 : 8)), 40, filler ? (kp ? 54 : 60) : (kp ? 70 : 92));
+  return mkPlayer(L, { grp, age: R.int(21, 23), ovr, pot, team: -3, college: R.pick(COLLEGES), real: false, reveal: year, scout, filler: filler || undefined });
+}
+// Generated extras in a real class are late-round depth: cap their grades (also fixes classes built before this rule).
+function tameFillers(L, pool) {
+  for (const id of pool) { const p = L.players[id]; if (!p || p.realPick || !p.filler && !pool.realClass) continue; const kp = p.grp === 'K' || p.grp === 'P'; p.scout = Math.min(p.scout, kp ? 54 : 60); p.pot = Math.min(p.pot, 72); }
 }
 
 /* ---------- league creation ---------- */
@@ -618,6 +625,8 @@ function ensureLeague(L) {
   if (L.phase === 'offseason') ensureFA(L);
   if (L.styles !== 2) { aiStyles(L, false); L.styles = 2; }
   if (L.teams.some(t => t.coach && (!t.coach.os || !t.coach.ds))) aiStyles(L, false, true); else ensureSchemes(L);
+  // drafts and classes built before fillers were capped
+  for (const pool of [L.draft && L.draft.pool, L.nextClass && L.nextClass.real && L.nextClass.pool]) if (pool && pool.some(id => L.players[id] && L.players[id].realPick)) { pool.realClass = true; tameFillers(L, pool); delete pool.realClass; }
 }
 function mkTeam(id, a) {
   const [pfr, abbr, city, name, conf, div] = a;
@@ -2528,8 +2537,9 @@ function ensureNextClass(L, imports) {
   if (C) C.pool.forEach(id => { if (L.players[id] && L.players[id].team === -3) delete L.players[id]; });
   const pool = [];
   if (rows && rows.length) rows.forEach(r => pool.push(prospectFromDraft(L, r, dy).id));
-  const target = rules(dy).draftRounds * L.teams.length + 30;
-  while (pool.length < target) pool.push(genProspect(L, dy).id);
+  const real = !!(rows && rows.length);
+  const target = rules(dy).draftRounds * L.teams.length + (real ? 10 : 30);
+  while (pool.length < target) pool.push(genProspect(L, dy, real).id);
   // each prospect gets graded in a random week, regardless of how good he is
   const games = rules(L.year).games;
   pool.forEach(id => { L.players[id].sw = R.int(0, games - 1); });
@@ -2551,7 +2561,9 @@ function startDraft(L, imports) {
   const compN = compAwards(L, dy).length;
   const target = rounds * order.length + compN + 30;
   let genCount = 0;
-  while (pool.length < target) { pool.push(genProspect(L, dy).id); genCount++; }
+  const realClass = pool.some(id => L.players[id] && L.players[id].realPick);
+  while (pool.length < target) { pool.push(genProspect(L, dy, realClass).id); genCount++; }
+  if (realClass) { pool.realClass = true; tameFillers(L, pool); delete pool.realClass; }
   ensurePicks(L);
   const slotPick = [];
   const comps = compAwards(L, dy);
@@ -2684,6 +2696,8 @@ function aiPick(L) {
     const p = L.players[id];
     let s = (seen.has(id) ? p.pot : p.scout) + R.norm() * 3;
     if (counts[p.grp] < SFd[p.grp] + 1) s += 3;
+    // kickers and punters are late-round picks (only a handful ever went in round 1)
+    if ((p.grp === 'K' || p.grp === 'P') && D.pick < order32(D) * 3) s -= 25;
     if ((p.grp === 'K' || p.grp === 'P') && counts[p.grp] >= 1) s -= 12;
     if (p.grp === 'QB' && counts.QB >= 3) s -= 4;
     if (s > bs) { bs = s; best = p; }
@@ -2691,6 +2705,7 @@ function aiPick(L) {
   if (best) makePick(L, best.id);
 }
 
+function order32(D) { return D.order.length; }
 function draftUntilUser(L) { let c; while ((c = onClock(L)) !== null && c !== L.user) aiPick(L); maybeDraftOffer(L); }
 function draftAll(L) { while (onClock(L) !== null) aiPick(L); }
 
@@ -3650,7 +3665,7 @@ const HELP_FOR_TAB = { home: 'office', roster: 'roster', stats: 'stats', league:
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-10h';
+const APP_VERSION = '2026-11-10i';
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
 const ui = { tab: 'home', grp: 'ALL', lg: 'stand', leadKey: 'py', resWeek: null, open: null, confirm: null,
