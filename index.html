@@ -3474,7 +3474,7 @@ const HELP = [
 { id: 'moves', title: 'Moves tab: trades', tab: 'moves', body: `
 <ul>
 <li><b>Trade offers</b> at the top: offers AI teams sent you, plus offers from your trading block. Accept or reject. During the season they last a week; otherwise they last until kickoff.</li>
-<li><b>Trade.</b> Pick a partner, then tap players or picks under You send and You receive. Each side has its own position filter, you can sort by position, overall, potential or yearly salary (which then shows in place of age), and there's a search box for any player in the league. Picks for the next three drafts can be traded, and each shows its projected overall slot. Compensatory picks can't be traded.</li>
+<li><b>Trade.</b> Pick a partner, or <b>All teams</b> to browse the whole league (picking a player or pick makes his team your partner), then tap players or picks under You send and You receive. Each side has its own position filter, you can sort by position, overall, potential or yearly salary (which then shows in place of age), and there's a search box for any player in the league. Picks for the next three drafts can be traded, and each shows its projected overall slot. Compensatory picks can't be traded.</li>
 <li><b>How the AI values a deal.</b> Stars are worth far more than depth: two or three good players don't buy one great one, and a player who wouldn't make their roster is worth almost nothing to them. Age, potential and contract matter. On harder difficulties they ask for more.</li>
 <li><b>Trading block.</b> Put players or picks in You send, choose what you want back (best offer, players, picks or young players) and a position you need, then tap Find offers. Up to five teams' best offers land in Trade offers.</li>
 <li><b>Deadline.</b> No trades after week 9 until the season ends. In-season trades must keep both teams at or under the roster limit, and cap years must stay under the cap.</li>
@@ -3613,7 +3613,7 @@ const HELP_FOR_TAB = { home: 'office', roster: 'roster', stats: 'stats', league:
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-10e';
+const APP_VERSION = '2026-11-10f';
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
 const ui = { tab: 'home', grp: 'ALL', lg: 'stand', leadKey: 'py', resWeek: null, open: null, confirm: null,
@@ -4476,25 +4476,31 @@ function vMoves() {
       <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></div>
       <button class="btn sm" data-act="sign" data-id="${p.id}"${inSeason && n >= max ? ' disabled' : ''}>Sign ${G.money(G.askPrice(L, p) * (inSeason ? 0.6 : 1))}</button></div>`).join('') : '<p>No free agents at this position.</p>'}</div></section>`);
   const others = L.teams.filter(t => t.id !== L.user);
-  const tt = ui.tradeTeam == null ? others[0].id : ui.tradeTeam;
+  // "All teams" (-1): browse the whole league; the partner is whichever team you pick from
+  const allT = ui.tradeTeam === -1;
+  const tt = allT ? (ui.getTeam != null ? ui.getTeam : -1) : (ui.tradeTeam == null ? others[0].id : ui.tradeTeam);
   const pkg = sel => ({ players: sel.filter(x => x[0] === 'p').map(x => +x.slice(2)), picks: sel.filter(x => x[0] === 'k').map(x => +x.slice(2)) });
   // drop anything that changed teams since it was selected
   ui.give = ui.give.filter(x => x[0] === 'p' ? (L.players[+x.slice(2)] || {}).team === L.user : (G.pickById(L, +x.slice(2)) || {}).own === L.user);
-  ui.get = ui.get.filter(x => x[0] === 'p' ? (L.players[+x.slice(2)] || {}).team === tt : (G.pickById(L, +x.slice(2)) || {}).own === tt);
+  ui.get = tt < 0 ? [] : ui.get.filter(x => x[0] === 'p' ? (L.players[+x.slice(2)] || {}).team === tt : (G.pickById(L, +x.slice(2)) || {}).own === tt);
   // each side has its own position filter
   const gGive = ui.tGrpGive || 'ALL', gGet = ui.tGrpGet || 'ALL';
   const tc = cmp(ui.tSort || 'pos'), showPot = ui.tSort === 'pot';
   const mine = G.roster(L, L.user).filter(p => gGive === 'ALL' || p.grp === gGive).sort(tc);
-  const theirs = G.roster(L, tt).filter(p => gGet === 'ALL' || p.grp === gGet).sort(tc);
+  const LIM = 150;
+  let theirsAll = allT ? others.flatMap(t => G.roster(L, t.id)) : G.roster(L, tt);
+  theirsAll = theirsAll.filter(p => gGet === 'ALL' || p.grp === gGet).sort(tc);
+  const theirs = theirsAll.slice(0, allT ? LIM : 999);
   const posSel = (side, cur) => `<label class="fld tpos">Position<select id="tGrp-${side}">${['ALL'].concat(G.GRPS).map(g => `<option value="${g}"${cur === g ? ' selected' : ''}>${g === 'ALL' ? 'All positions' : g}</option>`).join('')}</select></label>`;
-  const btnP = (p, side) => { const key = 'p:' + p.id, on = ui[side].includes(key), lk = side === 'give' && G.tradeLocked(L, p); return `<button class="tp ${on ? 'on' : ''}" data-act="tp" data-side="${side}" data-id="${key}"${lk ? ' disabled title="Just signed"' : ''}><span class="pos">${esc(p.pos)}</span><span class="tp-n">${esc(p.name)}${lk ? ' (new)' : ''}</span><span class="tp-a">${ui.tSort === 'sal' ? G.money(yearSal(p)) : p.age}</span>${rating(showPot ? G.shownPot(L, p) : p.ovr)}</button>`; };
-  const btnK = (k, side) => { const key = 'k:' + k.id, on = ui[side].includes(key); return `<button class="tp ${on ? 'on' : ''}" data-act="tp" data-side="${side}" data-id="${key}"><span class="pos pk">PICK</span><span class="tp-n">${k.y} R${k.rnd}${k.orig !== k.own ? ' ' + esc(L.teams[k.orig].abbr) : ''}</span><span class="tp-a">≈#${G.projectedOverall(L, k)}</span></button>`; };
+  const btnP = (p, side) => { const key = 'p:' + p.id, on = ui[side].includes(key), lk = side === 'give' && G.tradeLocked(L, p); return `<button class="tp ${on ? 'on' : ''}" data-act="tp" data-side="${side}" data-id="${key}"${lk ? ' disabled title="Just signed"' : ''}><span class="pos">${esc(p.pos)}</span><span class="tp-n">${esc(p.name)}${lk ? ' (new)' : ''}</span><span class="tp-a">${allT && side === 'get' ? esc(L.teams[p.team].abbr) + ' · ' : ''}${ui.tSort === 'sal' ? G.money(yearSal(p)) : p.age}</span>${rating(showPot ? G.shownPot(L, p) : p.ovr)}</button>`; };
+  const btnK = (k, side) => { const key = 'k:' + k.id, on = ui[side].includes(key); return `<button class="tp ${on ? 'on' : ''}" data-act="tp" data-side="${side}" data-id="${key}"><span class="pos pk">PICK</span><span class="tp-n">${allT && side === 'get' ? esc(L.teams[k.own].abbr) + ' ' : ''}${k.y} R${k.rnd}${k.orig !== k.own ? ' (' + esc(L.teams[k.orig].abbr) + ')' : ''}</span><span class="tp-a">≈#${G.projectedOverall(L, k)}</span></button>`; };
   const col = (side, players, tid, label) => {
-    const picks = G.teamPicks(L, tid);
+    const picks = side === 'get' && allT ? others.flatMap(t => G.teamPicks(L, t.id)).sort((a, b) => a.y - b.y || a.rnd - b.rnd).slice(0, LIM) : G.teamPicks(L, tid);
     return `<div><div class="eyebrow">${label} (${ui[side].length})</div>
       <div class="seg mini"><button class="${(ui.tview || 'p') === 'p' ? 'on' : ''}" data-act="tview" data-id="p">Players</button><button class="${ui.tview === 'k' ? 'on' : ''}" data-act="tview" data-id="k">Picks (${picks.length})</button></div>
       ${ui.tview === 'k' ? '' : posSel(side, side === 'give' ? gGive : gGet)}
-      <div class="tlist">${(ui.tview === 'k' ? picks.map(k => btnK(k, side)) : players.map(p => btnP(p, side))).join('') || '<p class="small">No players at this position.</p>'}</div></div>`;
+      <div class="tlist">${(ui.tview === 'k' ? picks.map(k => btnK(k, side)) : players.map(p => btnP(p, side))).join('') || '<p class="small">No players at this position.</p>'}</div>
+      ${side === 'get' && allT ? `<p class="small">${tt >= 0 ? `Trading with <b>${esc(tname(L.teams[tt]))}</b>. Picking from another team switches partners.` : 'Every team in the league. Pick a player or pick and that team becomes your partner.'}${ui.tview !== 'k' && theirsAll.length > LIM ? ` Showing the top ${LIM} of ${theirsAll.length}; filter by position to see more.` : ''}</p>` : ''}</div>`;
   };
   const give = pkg(ui.give), get = pkg(ui.get), ready = ui.give.length && ui.get.length;
   let gauge = '';
@@ -4507,7 +4513,7 @@ function vMoves() {
     <p class="small">Trade players and draft picks for the next three drafts. Picks show their projected overall slot.</p>
     <label class="fld">Find a player on another team<input id="tq" type="search" placeholder="Type a name" value="${esc(ui.tq || '')}" autocomplete="off"></label>
     <div id="tqres">${searchResults()}</div>
-    <label class="fld">Trade partner<select id="tradeTeam">${others.map(t => `<option value="${t.id}"${t.id === tt ? ' selected' : ''}>${esc(tname(t))} (${rec(t)})</option>`).join('')}</select></label>
+    <label class="fld">Trade partner<select id="tradeTeam"><option value="-1"${allT ? ' selected' : ''}>All teams</option>${others.map(t => `<option value="${t.id}"${!allT && t.id === tt ? ' selected' : ''}>${esc(tname(t))} (${rec(t)})</option>`).join('')}</select></label>
     ${ui.tview === 'k' ? '' : sortSeg('tSort', true, 'pos', true)}<div class="trade">${col('give', mine, L.user, 'You send')}${col('get', theirs, tt, 'You receive')}</div>
     <div class="trade summary"><div><div class="eyebrow">Sending</div>${chosen(ui.give)}</div><div><div class="eyebrow">Receiving</div>${chosen(ui.get)}</div></div>
     ${gauge}
@@ -4709,9 +4715,14 @@ function act(a, el) {
     case 'tview': ui.tview = id; break;
     case 'acceptOffer': { const e = G.acceptOffer(L, +id); flash(e || 'Trade accepted.'); break; }
     case 'rejectOffer': G.rejectOffer(L, +id); flash('Offer rejected.'); break;
-    case 'tp': { ui.found = null; const side = el.dataset.side, arr = ui[side]; const i = arr.indexOf(id); if (i >= 0) arr.splice(i, 1); else if (arr.length < 6) arr.push(id); else flash('A deal can include up to 6 items per side.'); break; }
+    case 'tp': { ui.found = null; const side = el.dataset.side;
+      if (side === 'get' && ui.tradeTeam === -1) {
+        const owner = id[0] === 'p' ? (L.players[+id.slice(2)] || {}).team : (G.pickById(L, +id.slice(2)) || {}).own;
+        if (owner != null && owner !== ui.getTeam) { if (ui.get.length) flash(`Now trading with ${tname(L.teams[owner])}.`); ui.get = []; ui.getTeam = owner; }
+      }
+      const arr = ui[side]; const i = arr.indexOf(id); if (i >= 0) arr.splice(i, 1); else if (arr.length < 6) arr.push(id); else flash('A deal can include up to 6 items per side.'); break; }
     case 'clearTrade': ui.give = []; ui.get = []; ui.found = null; break;
-    case 'propose': { const pk = sel => ({ players: sel.filter(x => x[0] === 'p').map(x => +x.slice(2)), picks: sel.filter(x => x[0] === 'k').map(x => +x.slice(2)) }); const tt = ui.tradeTeam == null ? L.teams.find(t => t.id !== L.user).id : ui.tradeTeam; const r = G.proposeTrade(L, tt, pk(ui.give), pk(ui.get)); flash(r.msg); if (r.ok) { ui.give = []; ui.get = []; } break; }
+    case 'propose': { const pk = sel => ({ players: sel.filter(x => x[0] === 'p').map(x => +x.slice(2)), picks: sel.filter(x => x[0] === 'k').map(x => +x.slice(2)) }); const tt = ui.tradeTeam === -1 ? ui.getTeam : (ui.tradeTeam == null ? L.teams.find(t => t.id !== L.user).id : ui.tradeTeam); if (tt == null || tt < 0) { flash('Pick something to receive first.'); break; } const r = G.proposeTrade(L, tt, pk(ui.give), pk(ui.get)); flash(r.msg); if (r.ok) { ui.give = []; ui.get = []; } break; }
     case 'coach': me().coach[el.dataset.key] = id; break;
     case 'scheme': { const e = G.setScheme(L, id); flash(e || `You now run the ${G.SCHEME[id].name}.`); break; }
     case 'plan': G.setGamePlan(L, el.dataset.key, id || null); break;
@@ -4786,7 +4797,7 @@ document.addEventListener('change', e => {
   if (t.id === 'ringTeam') { ui.ringTeam = +t.value; render(); return; }
   if (t.id === 'tGrp-give' || t.id === 'tGrp-get') { ui[t.id === 'tGrp-give' ? 'tGrpGive' : 'tGrpGet'] = t.value; render(); }
   else if (t.id === 'startQB') { G.setStarterQB(L, +t.value); save(); render(); }
-  else if (t.id === 'tradeTeam') { ui.tradeTeam = +t.value; ui.get = []; render(); }
+  else if (t.id === 'tradeTeam') { ui.tradeTeam = +t.value; ui.get = []; ui.getTeam = null; render(); }
   else if (t.id === 'aggr') { me().coach.aggr = +t.value; save(); render(); }
   else if (t.id === 'startYear') { ui.startYear = +t.value; ui.startTeam = $('#pickTeam') && $('#pickTeam').value; render(); }
   else if (t.id === 'pickTeam') { ui.startTeam = t.value; }
