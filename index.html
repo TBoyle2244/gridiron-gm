@@ -3108,22 +3108,56 @@ function placeBid(L, pid, sal, yrs) {
 function withdrawBid(L, pid) { if (L.fa && L.fa.bids) delete L.fa.bids[pid]; }
 function bidOutlook(L, pid) {
   const p = L.players[pid], b = L.fa && L.fa.bids && L.fa.bids[pid]; if (!p || !b) return null;
-  const sc = offerScore(L, p, L.user, b.sal, b.yrs), r = Math.max(1, L.fa.round || 1), min = ROUND_MIN[r - 1];
-  const n = Math.min(interestedTeams(L, p).length, value(p) >= 75 ? 5 : 3);
-  return { score: sc, teams: n, label: sc < min ? 'Below what he will accept' : (sc >= min + 0.15 ? 'Strong offer' : (n >= 3 ? 'Competitive, others are bidding' : 'Fair offer')) };
+  const v = marketView(L, pid, b.sal, b.yrs), mine = v.offers.find(o => o.tid === L.user), sc = mine.score, n = v.count - 1;
+  const label = sc < v.min ? 'Below what he will accept' : v.rank === 1 ? (n ? 'Leading right now' : 'Strong offer, no one else bidding') : `Ranked ${v.rank} of ${v.count}: raise it to lead`;
+  return { score: sc, teams: n, rank: v.rank, label };
+}
+// The market: which AI teams plan to bid on a free agent in the coming round, and roughly how much.
+// Decided ahead of time so you can see it; the real bids land within about 4% of these.
+const MKT_CACHE = new WeakMap();
+function marketFor(L, pid, round) {
+  ensureFA(L); const F = L.fa, p = L.players[pid]; if (!F || F.era !== 'ufa' || !p) return [];
+  const rr = round || Math.min(FA_ROUNDS, (F.round || 0) + 1); // the round about to be played
+  if (!F.mkt || F.mkt.r !== rr) F.mkt = { r: rr, b: {} };
+  if (F.mkt.b[pid]) return F.mkt.b[pid];
+  const y = capYear(L), cap = capFor(y), max = rules(y).rosterMax;
+  let C = MKT_CACHE.get(F); if (!C || C.r !== rr) { C = { r: rr, c: teamCache(L, y) }; MKT_CACHE.set(F, C); }
+  const ask = baseAsk(L, p), out = [];
+  const teams = interestedTeams(L, p, C.c).sort(() => Math.random() - 0.5).slice(0, value(p) >= 75 ? 5 : 3);
+  for (const t of teams) {
+    if (t.id === p.team) continue;
+    if (C.c[t.id].size >= max + 8) continue;
+    const sal = Math.round(ask * (0.85 + Math.random() * 0.35) * ROUND_DISC[rr - 1]), yrs = clamp(contractYears(p) + R.int(-1, 1), 1, 5);
+    if (cap != null && C.c[t.id].pay + sal > cap) continue;
+    out.push({ tid: t.id, sal, yrs });
+  }
+  F.mkt.b[pid] = out;
+  return out;
+}
+// Where a bid of yours would stand against the market: rank among all offers by how the player sees them.
+function marketView(L, pid, sal, yrs) {
+  const p = L.players[pid], m = marketFor(L, pid);
+  const all = m.map(b => ({ tid: b.tid, sal: b.sal, yrs: b.yrs, score: offerScore(L, p, b.tid, b.sal, b.yrs) }));
+  let mine = null;
+  if (sal) { mine = { tid: L.user, sal, yrs, score: offerScore(L, p, L.user, sal, yrs) }; all.push(mine); }
+  all.sort((a, b) => b.score - a.score);
+  const r = Math.min(FA_ROUNDS, ((L.fa && L.fa.round) || 0) + 1); // judged by the round about to be played
+  return { offers: all, rank: mine ? all.indexOf(mine) + 1 : null, count: all.length, min: ROUND_MIN[r - 1] };
 }
 function resolveRound(L) {
   const F = L.fa, y = capYear(L), cap = capFor(y), r = F.round, max = rules(y).rosterMax;
-  const pool = freeAgents(L).filter(isMarketFA).sort((a, b) => value(b) - value(a)).slice(0, 220);
+  const all = freeAgents(L).filter(isMarketFA).sort((a, b) => value(b) - value(a));
+  // the top of the market, plus anyone you bid on
+  const pool = all.slice(0, 220).concat(all.slice(220).filter(p => F.bids && F.bids[p.id]));
   const signed = [], C = teamCache(L, y), ulim = limitFor(L, L.user, y);
+  if (F.mkt && F.mkt.r !== r) F.mkt = null;
   for (const p of pool) {
-    const ask = baseAsk(L, p), bids = [];
-    const teams = interestedTeams(L, p, C).sort(() => Math.random() - 0.5).slice(0, value(p) >= 75 ? 5 : 3);
-    for (const t of teams) {
-      if (C[t.id].size >= max + 8) continue;
-      const sal = Math.round(ask * (0.85 + Math.random() * 0.35) * ROUND_DISC[r - 1]), yrs = clamp(contractYears(p) + R.int(-1, 1), 1, 5);
-      if (cap != null && C[t.id].pay + sal > cap) continue;
-      bids.push({ tid: t.id, sal, yrs });
+    const bids = [];
+    for (const m of marketFor(L, p.id, r)) {
+      if (C[m.tid].size >= max + 8) continue;
+      const sal = Math.round(m.sal * (0.96 + Math.random() * 0.08));
+      if (cap != null && C[m.tid].pay + sal > cap) continue;
+      bids.push({ tid: m.tid, sal, yrs: m.yrs });
     }
     const ub = F.bids && F.bids[p.id];
     if (ub && (ulim == null || C[L.user].pay + ub.sal <= ulim)) bids.push({ tid: L.user, sal: ub.sal, yrs: ub.yrs });
@@ -3146,6 +3180,7 @@ function resolveRound(L) {
   }
   if (F.bids) for (const id in F.bids) if (!L.players[id] || !isMarketFA(L.players[id])) delete F.bids[id];
   F.last = signed;
+  F.mkt = null; // next round's market forms fresh
 }
 // Opening the market: unhandled unrestricted players leave; restricted ones take their tender.
 function startMarket(L) {
@@ -3381,7 +3416,7 @@ function leaders(L, key, n, year) {
 
 function myDraftSlots(L) { const D = L.draft; if (!D || !D.slotPick) return []; const out = []; for (let i = D.pick; i < D.slotPick.length; i++) { const k = pickById(L, D.slotPick[i]); if (k && k.own === L.user) out.push(i + 1); } return out; }
 
-const API = { footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
+const API = { marketFor, marketView, footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
   value, release, sign, proposeTrade, tradeVerdict, teamPicks, pickById, pickLabel, projectedOverall, pickWeight, playerWeight, ensurePicks, myDraftSlots, aiTrades, acceptOffer, rejectOffer, offerValid, cutTo, ratings, teamOverall, startRegular, canStartSeason, simWeek, simPlayoffRound, roundName,
   sortTeams, divisions, pct, startDraft, onClock, makePick, aiPick, draftUntilUser, draftAll, scoutPlayer, beginDraft, SCOUT_VISITS, endDraft, startNextSeason, leaders, potKnown, shownPot, roman, addNews };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.GG = API;
@@ -3486,7 +3521,7 @@ const HELP = [
 <li><b>Through 1976 (Rozelle Rule).</b> Free agency barely exists: a team that signs another club's player owes compensation, so players stay put. Expiring contracts renew automatically unless you let a player go.</li>
 <li><b>1977–1988.</b> Your expiring veterans are restricted. You can tender them, and other teams can send offer sheets you can match or let go for draft-pick compensation. You can send offer sheets too.</li>
 <li><b>1989–1992 (Plan B).</b> Each team protects a set number of players. Everyone else becomes an unrestricted free agent.</li>
-<li><b>1993 on (unrestricted free agency).</b> Veterans with expiring deals hit the open market. Free agency runs in rounds: you and AI teams bid salary and years, and the player weighs money, years, team quality, playing time, scheme fit and loyalty. The bid outlook tells you where you stand, and asking prices drop in later rounds.</li>
+<li><b>1993 on (unrestricted free agency).</b> Veterans with expiring deals hit the open market. Free agency runs in rounds: you and AI teams bid salary and years, and the player weighs money, years, team quality, playing time, scheme fit and loyalty. Each free agent shows the offers other teams are expected to make this round (team, about how much, how many years), with the current leader marked; real bids land within a few percent. Once you bid, it tells you whether you're leading or what rank your offer is, judged the way the player judges it (money, years, team, playing time, fit and loyalty, not just salary). Your own expiring players show who would bid if they reach the market. Asking prices drop in later rounds.</li>
 <li><b>Re-signing.</b> Before free agency, decide on your expiring players: re-sign at his price, tag him (once a year, from 1993) or let him go.</li>
 <li><b>Extensions.</b> Once unrestricted free agency exists (1993 on), you can extend a player in the last year of his contract, before he reaches the market.</li>
 <li><b>In-season signings.</b> Unsigned players can be signed during the season if you have a roster spot.</li>
@@ -3613,7 +3648,7 @@ const HELP_FOR_TAB = { home: 'office', roster: 'roster', stats: 'stats', league:
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-10f';
+const APP_VERSION = '2026-11-10g';
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
 const ui = { tab: 'home', grp: 'ALL', lg: 'stand', leadKey: 'py', resWeek: null, open: null, confirm: null,
@@ -4070,7 +4105,8 @@ function faCard() {
   if (!(ufa && F.round > 0)) h += `<h3 class="sub">Your expiring contracts (${exp.length})</h3>`;
   if (!(ufa && F.round > 0)) h += exp.length ? `<div class="list">${exp.map(p => {
     const rfa = G.isRestricted(L, p), price = rfa ? G.tenderPrice(L, p) : G.resignPrice(L, p);
-    const why = ufa && !rfa ? reasonsText(G.fitFor(L, p, L.user).reasons) : '';
+    const mk = ufa && !rfa ? G.marketFor(L, p.id) : [];
+    const why = (ufa && !rfa ? reasonsText(G.fitFor(L, p, L.user).reasons) : '') + (ufa && !rfa ? `<br><span class="small">If he reaches the market: ${mk.length ? mk.map(o => `${esc(L.teams[o.tid].abbr)} ≈${G.money(o.sal)}×${o.yrs}`).join(' · ') : 'no teams expected to bid in round 1'}</span>` : '');
     const btns = `<button class="btn sm primary" data-act="resign" data-id="${p.id}">${rfa ? 'Tender' : 'Re-sign'} ${G.money(price)}</button>${F.era === 'ufa' && !F.tagged && !rfa ? `<button class="btn sm" data-act="tag" data-id="${p.id}">Tag</button>` : ''}<button class="btn sm" data-act="letGo" data-id="${p.id}">Let go</button>`;
     return prow(p, (rfa ? 'Restricted' : (ufa ? 'Unrestricted · market value ' + G.money(G.marketValue(L, p)) : 'Asking ' + G.money(price))) + why, btns);
   }).join('')}</div><p class="small">${ufa ? 'This is your exclusive window. Once you start free agency, unrestricted players you haven\'t re-signed or tagged hit the open market, where you can still bid but other teams will too. Restricted players stay at their tender price.' : 'Anyone you don\'t handle re-signs at his asking price when the season starts.'}</p>` : '<p class="small">None. Everyone is signed for next season.</p>';
@@ -4107,6 +4143,13 @@ function ctFilter(list) {
   const g = ui.ctGrp || 'ALL';
   return list.filter(p => g === 'ALL' || p.grp === g).sort(cmp(ui.ctSort || 'pos'));
 }
+// Other teams' expected offers for a free agent (estimates: real bids land within a few percent).
+function marketLine(p, mine) {
+  const v = G.marketView(L, p.id, mine && mine.sal, mine && mine.yrs), others = v.offers.filter(o => o.tid !== L.user);
+  if (!others.length) return `<span class="small">No other teams expected to bid this round.</span>`;
+  const lead = v.offers[0];
+  return `<span class="small">Expected offers: ${others.map(o => `<span class="${o === lead ? 'warn' : ''}">${esc(L.teams[o.tid].abbr)} ≈${G.money(o.sal)}×${o.yrs}${o === lead ? ' (leading)' : ''}</span>`).join(' · ')}</span>`;
+}
 function marketList(F) {
   if (F.round > G.FA_ROUNDS) return '';
   const list = ctFilter(G.freeAgents(L).filter(p => p.retiredYear == null)).slice(0, ui.mktShow || 30);
@@ -4115,8 +4158,8 @@ function marketList(F) {
     const fit = G.fitFor(L, p, L.user);
     const bidUI = b ? `<div class="bid"><span>Your bid <b>${G.money(b.sal)}</b> × <b>${b.yrs}</b> yr${b.yrs > 1 ? 's' : ''}</span>
         <span class="bidctl"><button class="btn sm ar" data-act="bid" data-id="${p.id}" data-key="sal-">−$</button><button class="btn sm ar" data-act="bid" data-id="${p.id}" data-key="sal+">+$</button><button class="btn sm ar" data-act="bid" data-id="${p.id}" data-key="yrs-">−yr</button><button class="btn sm ar" data-act="bid" data-id="${p.id}" data-key="yrs+">+yr</button><button class="btn sm" data-act="bid" data-id="${p.id}" data-key="x">Withdraw</button></span>
-        <span class="small ${o && o.label.startsWith('Below') ? 'bad' : 'good'}">${o ? esc(o.label) + ` · ${o.teams ? `about ${o.teams} other team${o.teams === 1 ? '' : 's'} likely to bid` : 'no other teams likely to bid'}` : ''}</span></div>`
-      : `<button class="btn sm primary" data-act="bid" data-id="${p.id}" data-key="new">Bid ${G.money(ask)}</button>`;
+        <span class="small ${o && (o.label.startsWith('Below') || o.label.startsWith('Ranked')) ? 'bad' : 'good'}">${o ? esc(o.label) : ''}</span>${marketLine(p, b)}</div>`
+      : `<div class="bid"><button class="btn sm primary" data-act="bid" data-id="${p.id}" data-key="new">Bid ${G.money(ask)}</button>${marketLine(p, null)}</div>`;
     return `<div class="pl wide"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">Age ${p.age + 1} · ${p.prevTeam != null && L.teams[p.prevTeam] ? 'was ' + esc(L.teams[p.prevTeam].abbr) + ' · ' : ''}asking ${G.money(ask)}${reasonsText(fit.reasons)}</div></div>
       <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></div><div class="pl-btns">${bidUI}</div></div>`;
   }).join('');
