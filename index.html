@@ -227,6 +227,7 @@ details.help summary{cursor:pointer;list-style:none;display:flex;align-items:cen
 .fitrow{display:flex;gap:12px;align-items:flex-start;padding:8px 0;border-top:1px solid var(--line,rgba(0,0,0,.08))}.fitg{font-weight:800;min-width:2.4em;text-align:center;font-size:18px}.fitbig{font-weight:800;font-size:22px}
 .pl.mine{box-shadow:inset 3px 0 0 var(--accent,#c9a227)}.row.trk .fld{flex:1;min-width:140px}
 .mktbar{display:flex;flex-wrap:wrap;gap:8px}.mktbar .fld{flex:1;min-width:120px;margin:0}
+.whybox{flex-basis:100%;margin-bottom:6px;line-height:1.5}
 .finder{margin-top:14px;padding:12px;border:1px solid var(--accent,#c9a227);border-radius:10px}.finder .btn{margin-top:6px}
 .savewarn{border:2px solid #b3261e;background:color-mix(in srgb,#b3261e 8%,var(--card,#fff))}.savewarn .eyebrow{color:#b3261e}
 </style>
@@ -1650,6 +1651,46 @@ function holdoutCheck(L) {
     if (t.id === L.user) { p.holdout = true; addNews(L, `HOLDOUT: ${p.pos} ${p.name} refuses to report until he gets a new contract.`); }
     else { renegotiate(L, p.id, true); }
   }
+}
+
+// How a player fits a team's schemes (his own team, or one he could join): where he'd slot in
+// the formation, whether the scheme leans on his position, and whether its style suits him.
+function playerFit(L, p, tid) {
+  const t = L.teams[tid], F = startersFor(L, tid), g = p.grp, why = [];
+  if (g === 'K' || g === 'P') return { score: 70, grade: 'B-', why: [['', 'Kickers and punters fit any scheme']] };
+  const isDef = ['DL', 'LB', 'DB'].includes(g), sch = SCHEME[isDef ? t.coach.ds : t.coach.os] || { w: {}, name: 'scheme' };
+  const n = F[g] || 0, w = (sch.w || {})[g] || 1;
+  if (!n) return { score: 30, grade: gradeLetter(30), why: [['-', `Your ${sch.name} doesn't use a ${g} as a starter`]] };
+  const mates = roster(L, tid).filter(x => x.grp === g && x.id !== p.id).map(x => x.ovr).sort((a, b) => b - a);
+  const rank = mates.filter(o => o > p.ovr).length + 1, starts = rank <= n;
+  let sc = starts ? 74 : rank === n + 1 ? 64 : 58;
+  why.push([starts ? '+' : '-', starts ? `Would start: #${rank} of ${n} ${g}${n > 1 ? 's' : ''} in your formation` : `Would be a backup: #${rank} at ${g} (${n} start)`]);
+  if (w >= 1.15) { sc += 12; why.push(['+', `Your ${sch.name} leans on the ${g} position`]); }
+  else if (w <= 0.85) { sc -= 10; why.push(['-', `Your ${sch.name} doesn't lean on the ${g} position`]); }
+  const fam = sch.fam, style = isDef ? ({ blitz: ['DL', 'LB'], soft: ['DB'] })[fam] : ({ run: ['RB', 'OL', 'TE'], pass: ['QB', 'WR'] })[fam];
+  if (style && style.includes(g)) { sc += 6; why.push(['+', `Suits a ${({ run: 'run-first', pass: 'pass-first', blitz: 'pressure', soft: "bend-don't-break" })[fam]} scheme`]); }
+  sc += clamp((p.ovr - 70) * 0.3, -6, 6);
+  sc = clamp(Math.round(sc), 0, 100);
+  return { score: sc, grade: gradeLetter(sc), why };
+}
+// Why a player feels the way he does, and why he's holding out.
+function moraleReasons(L, p) {
+  const out = [], t = L.teams[p.team]; if (!t) return out;
+  const y = capYear(L), sal = salFor(p, y), mv = marketValue(L, p, y);
+  if (sal != null && p.ovr >= 72 && sal < 0.65 * mv) out.push(['-', `Underpaid: earns ${money(sal)}, about ${Math.round(sal / mv * 100)}% of his ${money(mv)} market value`]);
+  else if (sal != null && sal >= mv * 0.95) out.push(['+', 'Paid what he is worth']);
+  const g = t.w + t.l + t.t, last = t.hist[t.hist.length - 1];
+  if (g >= 3) out.push([t.w > t.l ? '+' : t.w < t.l ? '-' : '', `Team is ${t.w}-${t.l}${t.t ? '-' + t.t : ''}`]);
+  else if (last) out.push([last.w > last.l ? '+' : last.w < last.l ? '-' : '', `Last season ${last.w}-${last.l}${last.res && last.res !== 'Missed playoffs' ? ', made the playoffs' : ''}`]);
+  const d = depth(L, p.team), F = startersFor(L, p.team), st = (d[p.grp] || []).slice(0, F[p.grp]).some(x => x.id === p.id);
+  if (p.holdout) out.push(['-', 'Not playing: holding out']);
+  else if (st) out.push(['+', 'Starting']);
+  else if (p.ovr >= 70) out.push(['-', 'A good player stuck on the bench']);
+  return out;
+}
+function holdoutInfo(L, p) {
+  const y = capYear(L), sal = salFor(p, y) || 0, mv = marketValue(L, p, y);
+  return { sal, mv, pct: mv ? Math.round(sal / mv * 100) : 0, price: renegotiatePrice(L, p), mor: mor(p), word: moraleWord(p), why: moraleReasons(L, p) };
 }
 function renegotiatePrice(L, p) { return Math.round(marketValue(L, p, capYear(L)) * 1.05); }
 function renegotiate(L, pid, quiet) {
@@ -3432,7 +3473,7 @@ function leaders(L, key, n, year) {
 
 function myDraftSlots(L) { const D = L.draft; if (!D || !D.slotPick) return []; const out = []; for (let i = D.pick; i < D.slotPick.length; i++) { const k = pickById(L, D.slotPick[i]); if (k && k.own === L.user) out.push(i + 1); } return out; }
 
-const API = { marketFor, marketView, footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
+const API = { playerFit, moraleReasons, holdoutInfo, marketFor, marketView, footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
   value, release, sign, proposeTrade, tradeVerdict, teamPicks, pickById, pickLabel, projectedOverall, pickWeight, playerWeight, ensurePicks, myDraftSlots, aiTrades, acceptOffer, rejectOffer, offerValid, cutTo, ratings, teamOverall, startRegular, canStartSeason, simWeek, simPlayoffRound, roundName,
   sortTeams, divisions, pct, startDraft, onClock, makePick, aiPick, draftUntilUser, draftAll, scoutPlayer, beginDraft, SCOUT_VISITS, endDraft, startNextSeason, leaders, potKnown, shownPot, roman, addNews };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.GG = API;
@@ -3518,7 +3559,7 @@ const HELP = [
 <li><b>Personnel:</b> whether your players suit your schemes' formations and the positions they lean on. Four-receiver offenses need four good receivers.</li>
 <li><b>Coaches:</b> whether your coordinators prefer the style of scheme you run.</li>
 <li><b>Chemistry:</b> a new scheme costs about a point a game in its first season and a little in its second while it's installed. Keeping starters together from one season to the next adds a small bonus; turning over most of the lineup costs a little. AI teams pay the same costs, so they don't switch schemes on a whim.</li>
-<li>Each scheme card shows the grade you'd have if you switched, including the installation cost. The Roster tab tags each player <b>Key</b> (a position your scheme leans on), <b>Starter</b>, <b>Depth</b> or <b>Not used</b>.</li>
+<li>Each scheme card shows the grade you'd have if you switched, including the installation cost. The Roster tab tags each player <b>Key</b> (a position your scheme leans on), <b>Starter</b>, <b>Depth</b> or <b>Not used</b>, with a <b>scheme fit grade</b>. Tap a player to see why: where he'd slot in your formation, whether your scheme leans on his position, and whether its style suits him. Free agents and players on the You receive side of a trade show the same fit grade for your team.</li>
 <li>Free agents notice too: a player at a key position in your scheme likes you more, and one with no role in it likes you less.</li>
 </ul>` },
 
@@ -3556,7 +3597,8 @@ const HELP = [
 { id: 'morale', title: 'Morale and holdouts', body: `
 <ul>
 <li>Every player has morale: Happy, Content, Unhappy or Angry. Winning and starting raise it. Losing lowers it, and so does sitting a good player on the bench.</li>
-<li>From 1977, a good player (72+) who is badly underpaid and unhappy may <b>hold out</b>: he won't play until he gets a new deal. Holdouts appear on the Office tab. You can give him a new contract, wait (each week there's a small chance he reports anyway, angrier) or trade him.</li>
+<li>Tap a player on the Roster tab to see what is driving his morale (record, playing time, pay).</li>
+<li>From 1977, a good player (72+) who is paid under 65% of his market value and whose morale falls below 40 may <b>hold out</b>. The holdout card shows exactly why: his pay against his market value, his morale and what's behind it, and the new deal that ends it: he won't play until he gets a new deal. Holdouts appear on the Office tab. You can give him a new contract, wait (each week there's a small chance he reports anyway, angrier) or trade him.</li>
 <li>Morale matters in free agency: happy players give their team a loyalty discount.</li>
 </ul>` },
 
@@ -3665,7 +3707,7 @@ const HELP_FOR_TAB = { home: 'office', roster: 'roster', stats: 'stats', league:
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-10i';
+const APP_VERSION = '2026-11-10j';
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
 const ui = { tab: 'home', grp: 'ALL', lg: 'stand', leadKey: 'py', resWeek: null, open: null, confirm: null,
@@ -3855,8 +3897,8 @@ function ownerCard() {
 function holdoutCard() {
   const hs = G.roster(L, L.user).filter(p => p.holdout);
   if (!hs.length) return '';
-  return `<section class="card offers"><h3>Holdouts (${hs.length})</h3><p class="small">These players won't play until they get a new deal. Each week there's a small chance one reports anyway, angrier than before. You can also trade them.</p>
-    <div class="list">${hs.map(p => `<div class="pl wide"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">Paid ${G.money(G.salFor(p, G.capYear(L)) || 0)} · market ${G.money(G.marketValue(L, p))}</div></div><div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div></div>
+  return `<section class="card offers"><h3>Holdouts (${hs.length})</h3><p class="small">These players won't play until they get a new deal. A player holds out when he's rated 72 or better, paid under 65% of his market value, and his morale has dropped below 40. Each week there's a small chance one reports anyway, angrier than before. You can also trade them.</p>
+    <div class="list">${hs.map(p => `<div class="pl wide"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">${(() => { const h = G.holdoutInfo(L, p); return `<b>Why he's holding out:</b> he's rated ${p.ovr} but paid ${G.money(h.sal)}, ${h.pct}% of his ${G.money(h.mv)} market value, and his morale is ${h.word} (${h.mor}).${reasonsText(h.why.filter(r => !/^Underpaid/.test(r[1])))}<br>A new deal at ${G.money(h.price)} ends it today.`; })()}</div></div><div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div></div>
       <div class="pl-btns"><button class="btn sm primary" data-act="reneg" data-id="${p.id}">New deal at ${G.money(G.renegotiatePrice(L, p))}</button><button class="btn sm" data-act="shop" data-id="${p.id}">Shop him</button></div></div>`).join('')}</div></section>`;
 }
 function lastGameCard() {
@@ -4143,7 +4185,7 @@ function faCard() {
 
 function reasonsText(rs) {
   if (!rs || !rs.length) return '';
-  return '<br>' + rs.map(([s, t]) => `<span class="${s === '+' ? 'good' : 'bad'}">${s === '+' ? '▲' : '▼'} ${esc(t)}</span>`).join(' · ');
+  return '<br>' + rs.map(([s, t]) => s ? `<span class="${s === '+' ? 'good' : 'bad'}">${s === '+' ? '▲' : '▼'} ${esc(t)}</span>` : `<span>• ${esc(t)}</span>`).join(' · ');
 }
 function marketHeader(F) {
   const done = F.round > G.FA_ROUNDS;
@@ -4180,7 +4222,7 @@ function marketList(F) {
         <span class="bidctl"><button class="btn sm ar" data-act="bid" data-id="${p.id}" data-key="sal-">−$</button><button class="btn sm ar" data-act="bid" data-id="${p.id}" data-key="sal+">+$</button><button class="btn sm ar" data-act="bid" data-id="${p.id}" data-key="yrs-">−yr</button><button class="btn sm ar" data-act="bid" data-id="${p.id}" data-key="yrs+">+yr</button><button class="btn sm" data-act="bid" data-id="${p.id}" data-key="x">Withdraw</button></span>
         <span class="small ${o && (o.label.startsWith('Below') || o.label.startsWith('Ranked')) ? 'bad' : 'good'}">${o ? esc(o.label) : ''}</span>${marketLine(p, b)}</div>`
       : `<div class="bid"><button class="btn sm primary" data-act="bid" data-id="${p.id}" data-key="new">Bid ${G.money(ask)}</button>${marketLine(p, null)}</div>`;
-    return `<div class="pl wide"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">Age ${p.age + 1} · ${p.prevTeam != null && L.teams[p.prevTeam] ? 'was ' + esc(L.teams[p.prevTeam].abbr) + ' · ' : ''}asking ${G.money(ask)}${reasonsText(fit.reasons)}</div></div>
+    return `<div class="pl wide"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">Age ${p.age + 1} · ${p.prevTeam != null && L.teams[p.prevTeam] ? 'was ' + esc(L.teams[p.prevTeam].abbr) + ' · ' : ''}asking ${G.money(ask)} · scheme fit <b>${G.playerFit(L, p, L.user).grade}</b>${reasonsText(fit.reasons)}</div></div>
       <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></div><div class="pl-btns">${bidUI}</div></div>`;
   }).join('');
   const grpName = { QB: 'Quarterbacks', RB: 'Running backs', WR: 'Wide receivers', TE: 'Tight ends', OL: 'Offensive line', DL: 'Defensive line', LB: 'Linebackers', DB: 'Defensive backs', K: 'Kickers', P: 'Punters' };
@@ -4297,9 +4339,9 @@ function vRoster() {
     <p class="small">Green positions are starters, set on the Coach tab's depth chart. Tap a player for options.</p>${chips('grp', ui.grp)}${sortSeg('rSort', false, 'ovr', true)}
     <div class="list">${list.map(p => `<div class="pl ${ui.open === p.id ? 'open' : ''}">
       <button class="pl-main" data-act="open" data-id="${p.id}"><span class="pos ${starterIds.has(p.id) ? 'st' : ''}">${esc(p.pos)}</span>
-      <div class="pl-name">${esc(p.name)}${p.inj ? `<span class="inj">INJ ${p.inj >= 20 ? 'season' : p.inj + 'w'}</span>` : ''}<div class="pl-sub">${p.num ? '#' + p.num + ' · ' : ''}${(() => { const C = L.camp; if (!C || C.year !== L.year || (L.phase !== 'preseason' && L.phase !== 'regular')) return ''; const r = C.mine.find(x => x.id === p.id); if (!r || r.a === r.b) return ''; const d = r.a - r.b; return `<span class="${d > 0 ? 'good' : 'bad'}">${d > 0 ? '▲' + d : '▼' + (-d)} camp</span> · `; })()}${p.ir ? '<b class="bad">INJURED RESERVE</b> · ' : ''}${p.holdout ? '<b class="bad">HOLDOUT</b> · ' : ''}${p.striking ? '<b class="bad">ON STRIKE</b> · ' : ''}${p.repl ? '<b class="warn">Replacement player</b> · ' : ''}${(() => { const rt = G.roleTag(L, p); return rt ? `<span class="${rt.c}">${rt.t}</span> · ` : ''; })()}Age ${p.age} · ${p.yrs ? p.yrs + ' yr' + (p.yrs > 1 ? 's' : '') : 'Rookie'} · <span class="${G.mor(p) < 50 ? 'bad' : (G.mor(p) >= 75 ? 'good' : '')}">${G.moraleWord(p)}</span> · ${conText(p)}${statLine(p) ? ' · ' + statLine(p) : ''}</div></div>
+      <div class="pl-name">${esc(p.name)}${p.inj ? `<span class="inj">INJ ${p.inj >= 20 ? 'season' : p.inj + 'w'}</span>` : ''}<div class="pl-sub">${p.num ? '#' + p.num + ' · ' : ''}${(() => { const C = L.camp; if (!C || C.year !== L.year || (L.phase !== 'preseason' && L.phase !== 'regular')) return ''; const r = C.mine.find(x => x.id === p.id); if (!r || r.a === r.b) return ''; const d = r.a - r.b; return `<span class="${d > 0 ? 'good' : 'bad'}">${d > 0 ? '▲' + d : '▼' + (-d)} camp</span> · `; })()}${p.ir ? '<b class="bad">INJURED RESERVE</b> · ' : ''}${p.holdout ? '<b class="bad">HOLDOUT</b> · ' : ''}${p.striking ? '<b class="bad">ON STRIKE</b> · ' : ''}${p.repl ? '<b class="warn">Replacement player</b> · ' : ''}${(() => { const rt = G.roleTag(L, p), f = G.playerFit(L, p, L.user); return rt ? `<span class="${rt.c}">${rt.t}</span>, fit <b>${f.grade}</b> · ` : ''; })()}Age ${p.age} · ${p.yrs ? p.yrs + ' yr' + (p.yrs > 1 ? 's' : '') : 'Rookie'} · <span class="${G.mor(p) < 50 ? 'bad' : (G.mor(p) >= 75 ? 'good' : '')}">${G.moraleWord(p)}</span> · ${conText(p)}${statLine(p) ? ' · ' + statLine(p) : ''}</div></div>
       <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></button>
-      ${ui.open === p.id ? `<div class="pl-act">${p.college ? `<span class="small">${esc(p.college)}${p.draft ? ` · drafted ${p.draft.year} R${p.draft.rnd}` : ''}</span>` : ''}${G.canIR(L, p) ? `<button class="btn sm" data-act="ir" data-id="${p.id}">Place on injured reserve</button>` : ''}${p.ir ? (() => { const i = G.irReturnInfo(L, p); return i.ok ? `<button class="btn sm primary" data-act="irOff" data-id="${p.id}">Activate from IR</button>` : `<span class="small">${esc(i.why)}</span>`; })() : ''}${(p.holdout || (G.mor(p) < 50 && G.underpaid(L, p))) && p.con ? `<button class="btn sm primary" data-act="reneg" data-id="${p.id}">New deal ${G.money(G.renegotiatePrice(L, p))}</button>` : ''}${G.extInfo(L, p) ? `<button class="btn sm primary" data-act="extend" data-id="${p.id}">Extend ${G.money(G.extInfo(L, p).sal)}</button>` : ''}${G.canPlayHurt(p) ? `<button class="btn sm" data-act="hurt" data-id="${p.id}">${p.playHurt ? 'Rest him' : 'Play through injury'}</button>` : ''}${confirmBtn('rel' + p.id, G.deadCharge(L, p) ? `Release (${G.money(G.deadCharge(L, p))} dead money)` : 'Release')}<button class="btn sm" data-act="shop" data-id="${p.id}">Offer in trade</button></div>` : ''}
+      ${ui.open === p.id ? `<div class="pl-act"><div class="small whybox"><b>Scheme fit ${G.playerFit(L, p, L.user).grade}:</b> ${reasonsText(G.playerFit(L, p, L.user).why)}<br><b>Morale ${G.moraleWord(p)} (${G.mor(p)}):</b> ${reasonsText(G.moraleReasons(L, p)) || 'nothing notable'}${p.holdout ? `<br><b class="bad">Holding out</b> until he gets a new deal (${G.money(G.renegotiatePrice(L, p))}).` : ''}</div>${p.college ? `<span class="small">${esc(p.college)}${p.draft ? ` · drafted ${p.draft.year} R${p.draft.rnd}` : ''}</span>` : ''}${G.canIR(L, p) ? `<button class="btn sm" data-act="ir" data-id="${p.id}">Place on injured reserve</button>` : ''}${p.ir ? (() => { const i = G.irReturnInfo(L, p); return i.ok ? `<button class="btn sm primary" data-act="irOff" data-id="${p.id}">Activate from IR</button>` : `<span class="small">${esc(i.why)}</span>`; })() : ''}${(p.holdout || (G.mor(p) < 50 && G.underpaid(L, p))) && p.con ? `<button class="btn sm primary" data-act="reneg" data-id="${p.id}">New deal ${G.money(G.renegotiatePrice(L, p))}</button>` : ''}${G.extInfo(L, p) ? `<button class="btn sm primary" data-act="extend" data-id="${p.id}">Extend ${G.money(G.extInfo(L, p).sal)}</button>` : ''}${G.canPlayHurt(p) ? `<button class="btn sm" data-act="hurt" data-id="${p.id}">${p.playHurt ? 'Rest him' : 'Play through injury'}</button>` : ''}${confirmBtn('rel' + p.id, G.deadCharge(L, p) ? `Release (${G.money(G.deadCharge(L, p))} dead money)` : 'Release')}<button class="btn sm" data-act="shop" data-id="${p.id}">Offer in trade</button></div>` : ''}
     </div>`).join('')}</div></section>`;
 }
 
@@ -4561,7 +4603,7 @@ function vMoves() {
   theirsAll = theirsAll.filter(p => gGet === 'ALL' || p.grp === gGet).sort(tc);
   const theirs = theirsAll.slice(0, allT ? LIM : 999);
   const posSel = (side, cur) => `<label class="fld tpos">Position<select id="tGrp-${side}">${['ALL'].concat(G.GRPS).map(g => `<option value="${g}"${cur === g ? ' selected' : ''}>${g === 'ALL' ? 'All positions' : g}</option>`).join('')}</select></label>`;
-  const btnP = (p, side) => { const key = 'p:' + p.id, on = ui[side].includes(key), lk = side === 'give' && G.tradeLocked(L, p); return `<button class="tp ${on ? 'on' : ''}" data-act="tp" data-side="${side}" data-id="${key}"${lk ? ' disabled title="Just signed"' : ''}><span class="pos">${esc(p.pos)}</span><span class="tp-n">${esc(p.name)}${lk ? ' (new)' : ''}</span><span class="tp-a">${allT && side === 'get' ? esc(L.teams[p.team].abbr) + ' · ' : ''}${ui.tSort === 'sal' ? G.money(yearSal(p)) : p.age}</span>${rating(showPot ? G.shownPot(L, p) : p.ovr)}</button>`; };
+  const btnP = (p, side) => { const key = 'p:' + p.id, on = ui[side].includes(key), lk = side === 'give' && G.tradeLocked(L, p); return `<button class="tp ${on ? 'on' : ''}" data-act="tp" data-side="${side}" data-id="${key}"${lk ? ' disabled title="Just signed"' : ''}><span class="pos">${esc(p.pos)}</span><span class="tp-n">${esc(p.name)}${lk ? ' (new)' : ''}</span><span class="tp-a">${side === 'get' ? 'fit ' + G.playerFit(L, p, L.user).grade + ' · ' : ''}${allT && side === 'get' ? esc(L.teams[p.team].abbr) + ' · ' : ''}${ui.tSort === 'sal' ? G.money(yearSal(p)) : p.age}</span>${rating(showPot ? G.shownPot(L, p) : p.ovr)}</button>`; };
   const btnK = (k, side) => { const key = 'k:' + k.id, on = ui[side].includes(key); return `<button class="tp ${on ? 'on' : ''}" data-act="tp" data-side="${side}" data-id="${key}"><span class="pos pk">PICK</span><span class="tp-n">${allT && side === 'get' ? esc(L.teams[k.own].abbr) + ' ' : ''}${k.y} R${k.rnd}${k.orig !== k.own ? ' (' + esc(L.teams[k.orig].abbr) + ')' : ''}</span><span class="tp-a">≈#${G.projectedOverall(L, k)}</span></button>`; };
   const col = (side, players, tid, label) => {
     const picks = side === 'get' && allT ? others.flatMap(t => G.teamPicks(L, t.id)).sort((a, b) => a.y - b.y || a.rnd - b.rnd).slice(0, LIM) : G.teamPicks(L, tid);
