@@ -17,7 +17,10 @@ const HELP = [
 <p><b>Asking for a trade.</b> To a contender, somewhere you'd start, or anywhere. After two weeks your team shops you (before the deadline or in the offseason) and brings back up to three deals. Turn them down and it keeps looking. A team won't trade its best player on a long deal unless the relationship has broken down. The AI can still trade or cut you on its own.</p>
 <p><b>Alerts</b> at the top of the Career tab: trades, releases, injuries, honors, milestones. <b>Season goals</b>: three targets set at kickoff; each one you meet builds trust and raises your next contract. <b>Awards race</b>: from week 7, where you'd finish if the season ended today.</p>
 <p><b>Legacy.</b> Your career totals ranked against everyone who has played in this league at your position, your awards and Super Bowl rings, and a Hall of Fame meter. Our football data has real rosters but not real awards, so you're ranked against your league's history, not the real all-time list.</p>
-<p><b>Retiring.</b> After the season, in the offseason or in camp. You get the voters' verdict right away (as of four years later) and any team that retires your jersey. Sim ahead to see the real vote. You can play until 45 if anyone will sign you.</p>` },
+<p><b>Earnings.</b> Your salary each season adds up to career earnings, shown on the Career tab.</p>
+<p><b>Changing positions.</b> In the offseason or at camp you can move to a new spot: corner to safety or tackle to guard costs nothing (same position group); receiver to tight end or linebacker to defensive end costs a few points of overall. The list shows where you'd land on your team's depth chart. One cross-group move per offseason.</p>
+<p><b>Retiring.</b> After the season, in the offseason or in camp. You get the voters' verdict right away (as of four years later) and any team that retires your jersey. Sim ahead to see the real vote. Your career can also end for you: a serious injury (more likely after 30), age (from 34, or 37 for quarterbacks and kickers; better players last longer), or no team wanting you. Nobody plays past 45.</p>
+<p><b>Life after football.</b> Once retired you can join a coaching staff as a coordinator (offense if you played offense) and follow your coaching career as the years go by; winners get promoted. Or take over a front office: pick your old team or one of the worst teams, and this save becomes a GM league in the same history. Your separate GM league isn't touched.</p>` },
 { id: 'quick', title: 'Quick start', body: `
 <ol>
 <li><b>Pick a season and a team.</b> Any year from 1970 to 2026. After 1970, every team starts with its real roster for that year.</li>
@@ -206,6 +209,13 @@ const HELP = [
 <li><b>Fourth down:</b> go for it, punt or try a field goal (the odds are shown). After a touchdown from 1994 on you can go for two.</li>
 </ul>` },
 
+{ id: 'weather', title: 'Stadiums and weather', body: `
+<p>Every team plays in its real stadium for the era: Lambeau Field, the Astrodome, the Metrodome, Candlestick Park and so on, with its roof (open air, dome or retractable) and its city's climate.</p>
+<ul><li>The next game card shows the stadium and the forecast; what you see is what you get.</li>
+<li>Late-season games in cold cities get colder. Snow, wind and rain cut scoring and push teams to run more; snow and wind hurt most. Domes play a little faster.</li>
+<li>Warm-weather and dome teams struggle a bit more in freezing games.</li>
+<li>Retractable roofs close in bad weather. The Super Bowl is played in good conditions.</li>
+<li>The weather shows in box scores and on the Games tab in a player career.</li></ul>` },
 { id: 'stats', title: 'Stats tab', tab: 'stats', body: `
 <ul>
 <li><b>Teams:</b> season team stats. <b>My players:</b> your players' season stats. <b>Careers:</b> career totals.</li>
@@ -215,7 +225,8 @@ const HELP = [
 <li><b>Records:</b> league records, Super Bowl champions and the <b>Ring of Honor</b>.</li>
 </ul>` },
 
-{ id: 'honors', title: 'Awards, Hall of Fame and Ring of Honor', body: `
+{ id: 'honors', title: 'Awards, Pro Bowl, Hall of Fame and Ring of Honor', body: `
+<p><b>Pro Bowl.</b> When the regular season ends, each conference names a Pro Bowl squad (3 quarterbacks, 4 receivers, 4 corners and so on) from that season's stats. Pro Bowls count a little toward the Hall of Fame and show on player pages and the Stats tab (All-Pro &amp; Pro Bowl). Team pages also have a <b>record book</b>: single-season and career records with that franchise.</p>
 <ul>
 <li>Awards and All-Pro teams are voted on each season's stats and team success.</li>
 <li>The Hall of Fame inducts a few retired players each year based on career value, awards and All-Pro selections, judged against their own position.</li>
