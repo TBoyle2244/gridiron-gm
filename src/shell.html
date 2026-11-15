@@ -236,6 +236,12 @@ button.crest{cursor:pointer;font:inherit;color:inherit;background:transparent}
 .calert .x { border: 0; background: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 0 2px; }
 .tbar { height: 8px; border-radius: 6px; background: var(--line); overflow: hidden; margin: 8px 0 4px; }
 .tbar i { display: block; height: 100%; background: var(--gold); border-radius: 6px; }
+.dcgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px 16px; }
+.dcgrp.mine { grid-column: 1 / -1; }
+.dcrow { display: grid; grid-template-columns: 22px 1fr auto 32px; gap: 8px; align-items: center; padding: 5px 6px; border-top: 1px solid var(--line); font-size: 14px; }
+.dcrow.st { background: color-mix(in srgb, var(--field) 12%, transparent); }
+.dcrow.me { outline: 2px solid var(--gold); outline-offset: -2px; border-radius: 6px; }
+.dcn, .dcpos { color: var(--muted); font-size: 12px; } .dco { text-align: right; font-weight: 600; }
 </style>
 <header id="top"></header>
 <main id="main"></main>

@@ -2,7 +2,7 @@
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-15c';
+const APP_VERSION = '2026-11-15d';
 let SLOT = (() => { try { return localStorage.getItem('gg-slot') === 'career' ? 'career' : 'league'; } catch (e) { return 'league'; } })();
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
@@ -422,6 +422,7 @@ function findGame(key) {
   if (src === 'w') return L.schedule[+a] && L.schedule[+a][+b];
   if (src === 'p') return L.playoffs && L.playoffs.rounds[+a] && L.playoffs.rounds[+a].games[+b];
   if (src === 'a') return L.myGames && L.myGames[a] && L.myGames[a][+b];
+  if (src === 'c') { const x = L.career && L.career.games[+a]; return x && x.gm; }
   return null;
 }
 function boxCard(key) {
@@ -1292,8 +1293,9 @@ function cGameLine(l) {
   return s.join(' · ') || (l.g ? 'Played' : '');
 }
 function cGameRow(g) {
+  const i = L.career.games.indexOf(g), bx = g.gm && g.gm.box ? ` <button class="btn sm" data-act="box" data-id="c:${i}">Box</button>` : '';
   if (g.bye) return `<tr><td class="l">${g.y} W${g.wk}</td><td class="l" colspan="3">Bye</td></tr>`;
-  return `<tr><td class="l">${g.y} ${typeof g.wk === 'number' ? 'W' + g.wk : esc(g.wk)}</td><td class="l">${g.home ? 'vs' : 'at'} ${esc(L.teams[g.opp].abbr)}</td><td class="${g.res === 'W' ? 'good' : g.res === 'L' ? 'bad' : ''}">${g.res} ${g.my}-${g.op}</td><td class="l small">${g.po ? 'Playoffs' : esc(g.why || cGameLine(g.line))}${g.wx ? ` <span class="muted">· ${esc(G.wxText(g.wx))}</span>` : ''}</td></tr>`;
+  return `<tr><td class="l">${g.y} ${typeof g.wk === 'number' ? 'W' + g.wk : esc(g.wk)}</td><td class="l">${g.home ? 'vs' : 'at'} ${esc(L.teams[g.opp].abbr)}</td><td class="${g.res === 'W' ? 'good' : g.res === 'L' ? 'bad' : ''}">${g.res} ${g.my}-${g.op}</td><td class="l small">${g.po ? 'Playoffs' + (cGameLine(g.line || {}) ? ' · ' + esc(cGameLine(g.line)) : '') : esc(g.why || cGameLine(g.line))}${g.wx ? ` <span class="muted">· ${esc(G.wxText(g.wx))}</span>` : ''}</td><td>${bx}</td></tr>`;
 }
 function cPhaseCard(p) {
   const C = L.career, ph = L.phase;
@@ -1383,6 +1385,7 @@ function cSeasonCard(p) {
   if (p.retiredYear != null || !(L.phase === 'regular' || L.phase === 'playoffs' || L.phase === 'season-over')) return '';
   const C = L.career, last = C.games.find(g => g.y === L.year && !g.bye), goals = G.careerGoalStatus(L), race = G.careerAwardRace(L);
   let h = `<section class="card"><h3>${L.year} season</h3><p>${esc(statLine(p) || 'No stats yet.')}</p>`;
+  if (last && last.gm && last.gm.box) h += `<div class="row"><button class="btn sm" data-act="box" data-id="c:${L.career.games.indexOf(last)}">Last game's box score</button></div>`;
   if (last) h += `<p class="small">Last game: ${typeof last.wk === 'number' ? 'Week ' + last.wk : esc(last.wk)}, ${last.res} ${last.my}-${last.op} ${last.home ? 'vs' : 'at'} ${esc(L.teams[last.opp].abbr)}. ${esc(last.po ? '' : last.why || cGameLine(last.line))}</p>`;
   if (goals.length) h += `<p class="small"><b>Season goals:</b> ${goals.map(g => `<span class="${g.met ? 'good' : ''}">${g.met ? '✓' : '○'} ${esc(g.txt)}</span>`).join(' · ')}</p>`;
   if (race) h += `<p class="small"><b>If the season ended today:</b> ${race.map(r => `${esc(r.k)} #${r.r}`).join(' · ')}</p>`;
@@ -1419,26 +1422,40 @@ function cAfterCard(p) {
   return h ? `<section class="card"><h3>Life after football</h3>${h}</section>` : '';
 }
 function vCareer() {
+  if (ui.box) { const b = boxCard(ui.box); if (b) return b; }
   if (!L) return vCareerSetup();
   if (L.career.pid == null) return modeSeg() + vCareerCreate();
   const p = CP();
-  let h = cAlerts() + cHeader(p) + cPhaseCard(p) + cSeasonCard(p) + cMovesCard(p) + cTrainCard(p) + cLegacyCard(p);
+  let h = cAlerts() + cHeader(p) + cPhaseCard(p) + cSeasonCard(p) + (p.retiredYear == null ? cDepthCard(p, false) : '') + cMovesCard(p) + cTrainCard(p) + cLegacyCard(p);
   h += `<section class="card"><h3>Your story</h3><ul class="news">${L.career.log.slice(0, 30).map(n => `<li><span class="nw">${n.y}</span>${esc(n.txt)}</li>`).join('')}</ul></section>`;
   h += `<section class="card"><h3>Wire</h3><ul class="news">${L.news.slice(0, 12).map(n => `<li><span class="nw">${n.y}${n.w ? ' W' + n.w : ''}</span>${esc(n.s)}</li>`).join('')}</ul></section>`;
   return h;
 }
 function vGames() {
+  if (ui.box) { const b = boxCard(ui.box); if (b) return b; }
   const G0 = L.career.games || [];
   if (!G0.length) return `<section class="card"><h3>Games</h3><p>No games yet.</p></section>`;
   const ys = [...new Set(G0.map(g => g.y))], y = ui.gYear && ys.includes(ui.gYear) ? ui.gYear : ys[0];
   const rows = G0.filter(g => g.y === y).slice().reverse();
   return `<section class="card"><h3>Your games</h3><div class="chips">${ys.map(x => `<button class="chip ${x === y ? 'on' : ''}" data-act="gYear" data-id="${x}">${x}</button>`).join('')}</div>
-    <div class="tscroll"><table class="tbl"><thead><tr><th class="l">Week</th><th class="l">Opp</th><th>Result</th><th class="l">You</th></tr></thead><tbody>${rows.map(cGameRow).join('')}</tbody></table></div></section>`;
+    <div class="tscroll"><table class="tbl"><thead><tr><th class="l">Week</th><th class="l">Opp</th><th>Result</th><th class="l">You</th><th></th></tr></thead><tbody>${rows.map(cGameRow).join('')}</tbody></table></div></section>`;
 }
 function vTeamC() {
   const p = CP();
   if (!p || p.team < 0) return `<section class="card"><h3>Team</h3><p>You're not on a team right now.</p></section>`;
-  return teamPage(L.teams[p.team]);
+  return cDepthCard(p, true) + teamPage(L.teams[p.team]);
+}
+// The depth chart as the coach has it: your group first, then every other position
+function cDepthCard(p, all) {
+  if (!p || p.team < 0) return '';
+  const D = G.depth(L, p.team), N = G.startersFor(L, p.team), order = [p.grp].concat(G.GRPS.filter(g => g !== p.grp));
+  const r = G.careerRole(L, p);
+  const grp = g => {
+    const list = (D[g] || []).slice(0, Math.max(N[g] + 3, 4)), n = N[g] || 0;
+    return `<div class="dcgrp${g === p.grp ? ' mine' : ''}"><div class="eyebrow">${g} · ${n} starter${n === 1 ? '' : 's'}</div>${list.map((x, i) => `<div class="dcrow${x.id === p.id ? ' me' : ''}${i < n ? ' st' : ''}"><span class="dcn">${i + 1}</span><span class="dcnm">${x.id === p.id ? '<b>You</b>' : pLink(x)}${x.inj ? ' <span class="bad small">inj</span>' : ''}</span><span class="dcpos">${esc(x.pos)}</span><span class="dco">${x.ovr}</span></div>`).join('')}${(D[g] || []).length > list.length ? `<div class="small muted">+${D[g].length - list.length} more</div>` : ''}</div>`;
+  };
+  return `<section class="card"><h3>Depth chart</h3><p class="small">${r ? `You: <b>${esc(r.label)}</b>. ` : ''}Starters are highlighted. The coach sets this from ratings and health${L.career.forced && L.career.forced.y === L.year ? '; you won your job by asking' : ''}.</p>
+    <div class="dcgrid">${(all ? order : [p.grp]).map(grp).join('')}</div>${all ? '' : `<div class="row"><button class="btn sm" data-act="tab" data-id="team">Whole depth chart</button></div>`}</section>`;
 }
 function careerAct(a, el) {
   const id = el.dataset.id;

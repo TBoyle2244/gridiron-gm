@@ -4151,7 +4151,7 @@ function careerWeek(L) {
   for (const k in h) if (typeof h[k] === 'number' && k !== 'tm') { const d = h[k] - (before[k] || 0); if (d) line[k] = d; }
   if (g && g.done) {
     const home = g.h === tid, my = home ? g.hs : g.as, op = home ? g.as : g.hs;
-    C.games.unshift({ y, wk: wk + 1, tid, opp: home ? g.a : g.h, home, my, op, res: my > op ? 'W' : my < op ? 'L' : 'T', line, why: line.g ? null : p.holdout ? 'Holdout' : p.inj ? 'Injured' : 'Did not play', wx: g.wx });
+    C.games.unshift({ y, wk: wk + 1, tid, opp: home ? g.a : g.h, home, my, op, res: my > op ? 'W' : my < op ? 'L' : 'T', line, why: line.g ? null : p.holdout ? 'Holdout' : p.inj ? 'Injured' : 'Did not play', wx: g.wx, gm: Object.assign({ wk: 'Week ' + (wk + 1) }, g, { box: slimBox(g.box) }) });
     C.games = C.games.slice(0, 120);
     const sc = OFFG.includes(p.grp) ? offScore(line) : DEFG.includes(p.grp) ? (line.sk || 0) * 4 + (line.dint || 0) * 5 : 0;
     addTrust(L, (my > op ? 0.8 : my < op ? -0.5 : 0) + (sc >= 18 ? 1.5 : sc >= 9 ? 0.6 : 0));
@@ -4171,7 +4171,14 @@ function careerPlayoffRound(L) {
   simPlayoffRound(L);
   if (!p || tid < 0 || !L.playoffs) return;
   const rd = L.playoffs.rounds[L.playoffs.rounds.length - 1], g = rd && rd.games.find(x => x.h === tid || x.a === tid);
-  if (g) { const home = g.h === tid, my = home ? g.hs : g.as, op = home ? g.as : g.hs; L.career.games.unshift({ y: L.year, wk: name, tid, opp: home ? g.a : g.h, home, my, op, res: my > op ? 'W' : 'L', line: {}, po: 1 }); if (name === 'Super Bowl' && my > op) { careerLog(L, `Won Super Bowl ${roman(L.year - 1965)}.`); careerAlert(L, `Super Bowl champions! You won Super Bowl ${roman(L.year - 1965)}.`, 'good'); } }
+  if (g) { const home = g.h === tid, my = home ? g.hs : g.as, op = home ? g.as : g.hs; L.career.games.unshift({ y: L.year, wk: name, tid, opp: home ? g.a : g.h, home, my, op, res: my > op ? 'W' : 'L', line: careerBoxLine(g, p), po: 1, wx: g.wx, gm: Object.assign({ wk: name }, g, { box: slimBox(g.box) }) }); if (name === 'Super Bowl' && my > op) { careerLog(L, `Won Super Bowl ${roman(L.year - 1965)}.`); careerAlert(L, `Super Bowl champions! You won Super Bowl ${roman(L.year - 1965)}.`, 'good'); } }
+}
+// Playoff stats don't go into season totals, so read his line from the box score
+function careerBoxLine(g, p) {
+  const l = g.box && g.box.lines && g.box.lines.find(x => x.id === p.id || (x.n === p.name && x.pos === p.pos));
+  if (!l) return {};
+  const o = { g: 1 }; ['cmp', 'att', 'py', 'ptd', 'int', 'ra', 'ry', 'rtd', 'rec', 'recy', 'rectd', 'sk', 'dint', 'fgm'].forEach(k => { if (l[k]) o[k] = l[k]; });
+  return o;
 }
 function careerSeasonEnd(L) {
   const C = L.career, p = careerP(L); if (!p || C.endY === L.year) return;
