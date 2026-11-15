@@ -2,7 +2,7 @@
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-15d';
+const APP_VERSION = '2026-11-15e';
 let SLOT = (() => { try { return localStorage.getItem('gg-slot') === 'career' ? 'career' : 'league'; } catch (e) { return 'league'; } })();
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
@@ -1277,9 +1277,8 @@ function cHeader(p) {
   const pot = Math.max(p.pot, p.ovr);
   return `<section class="card hero"><div class="eyebrow">${esc(p.pos)}${p.num != null && p.team >= 0 ? ' · #' + p.num : ''} · Age ${p.age}${p.yrs ? ' · Year ' + (p.yrs + 1) : ' · Rookie'}</div>
     <h2>${pLink(p)}</h2><p>${p.team >= 0 ? tLink(p.team) : esc(cStatus(p))}${r ? ' · ' + esc(r.label) : ''}</p>
-    <div class="stats4"><div>${rating(p.ovr)}<span>Overall</span></div><div>${rating(pot)}<span>Ceiling</span></div><div><b>${sal != null ? G.money(sal) : '–'}</b><span>${p.con ? `Thru ${p.con.ext ? p.con.ext.exp : p.con.exp}` : 'No contract'}</span></div><div><b>${C.trust}</b><span>Coach trust</span></div></div>
+    <div class="stats4"><div>${rating(p.ovr)}<span>Overall</span></div><div>${rating(pot)}<span>Ceiling</span></div><div><b>${sal != null ? G.money(sal) : '–'}</b><span>${p.con ? `Thru ${p.con.ext ? p.con.ext.exp : p.con.exp}` : 'No contract'}</span></div><div><b>${C.fo == null ? 50 : C.fo}</b><span>Front office</span></div></div>
     <p class="small">Career earnings: <b>${G.money(G.careerEarnings(L))}</b></p>
-    ${p.team >= 0 ? trustBar(C.trust) : ''}
     ${p.inj ? `<p class="small bad">Injured: out ${p.inj >= 20 ? 'for the season' : p.inj + ' week' + (p.inj > 1 ? 's' : '')}.</p>` : ''}${p.holdout ? '<p class="small warn">You are holding out.</p>' : ''}</section>`;
 }
 function cGameLine(l) {
@@ -1348,21 +1347,33 @@ function cOffersCard(list) {
       <td class="l"><button class="btn sm primary" data-act="cSign" data-id="${i}">Sign</button>${o.h ? '' : ` <button class="btn sm" data-act="cHaggle" data-id="${i}">Ask for more</button>`}${o.own && !o.disc ? ` <button class="btn sm" data-act="cDisc" data-id="${i}">Hometown discount</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
     <p class="small">Asking for more works about half the time; a team that says no may pull its offer. A hometown discount (12% less, one more year) builds your coach's trust.</p></section>`;
 }
+function cOrgCard(p) {
+  const S = G.careerStanding(L); if (!S) return '';
+  const C = L.career, r = G.careerRole(L, p), bar = (lab, v, txt, why) => `<div class="orgrow"><span class="orglab">${lab}</span><div class="tbar"><i style="width:${v}%"></i></div><b>${v}</b></div><p class="small"><b>${esc(txt)}.</b> ${why}</p>`;
+  const out = [];
+  out.push(bar('Coach trust', S.trust, `${S.coach}: ${S.trustTxt}`, 'Decides your playing time and whether he gives you a starting job. Grows when you win, play well, meet your goals and accept your role; drops when you make demands, hold out or ask out.'));
+  out.push(bar('Front office', S.fo, S.foTxt, 'How the general manager sees you: production for your pay, honors and goals add to it; holdouts, trade requests and turned-down raises cost you. It decides whether they re-sign you, give you a raise, or shop you (below 20, expect trade rumors).'));
+  const btns = [];
+  if (r && !r.starter && L.phase !== 'draft') btns.push(`<button class="btn" data-act="cStart"${S.accepted ? ' disabled' : ''}>Ask to start</button>`);
+  if (!S.accepted) btns.push(`<button class="btn" data-act="cAccept">Accept any role</button>`);
+  if (btns.length) out.push(`<div class="row">${btns.join('')}${r && r.ahead && !r.starter ? `<span class="small">Ahead of you: ${esc(r.ahead.name)} (${r.ahead.ovr})</span>` : ''}</div>`);
+  if (C.treq) out.push(`<div class="row"><span>Trade request in (${esc(({ contender: 'to a contender', start: 'where you\'d start', any: 'anywhere' })[C.treq.kind])}).</span><button class="btn sm" data-act="cTradeNo">Take it back</button></div>`);
+  else if (G.canTradeNow(L)) out.push(`<details class="trq"><summary>Ask for a trade</summary><div class="row"><button class="btn sm" data-act="cTrade" data-id="contender">To a contender</button><button class="btn sm" data-act="cTrade" data-id="start">Where I'd start</button><button class="btn sm" data-act="cTrade" data-id="any">Anywhere</button></div><p class="small">Coach trust drops 15 and the front office 10. After two weeks your team brings back deals.</p></details>`);
+  return `<section class="card"><h3>Coach and front office</h3>${out.join('')}</section>`;
+}
 function cMovesCard(p) {
   if (p.retiredYear != null) return '';
   const C = L.career, out = [];
   if (C.deals && C.deals.list.length) out.push(`<p><b>Trade offers for you:</b></p><div class="tscroll"><table class="tbl"><tbody>${C.deals.list.map((d, i) => { const t = L.teams[d.tid], l = t.hist[t.hist.length - 1]; return `<tr><td class="l">${tLink(d.tid)}</td><td class="l small">${l ? `${l.w}-${l.l} · ${esc(l.res)}` : ''}</td><td><button class="btn sm primary" data-act="cDeal" data-id="${i}">Go there</button></td></tr>`; }).join('')}</tbody></table></div><div class="row"><button class="btn sm" data-act="cDealNo">Turn them all down</button></div>`);
   if (p.team >= 0) {
     const r = G.careerRole(L, p);
-    if (r && !r.starter && L.phase !== 'draft') out.push(`<div class="row"><button class="btn" data-act="cStart">Ask to start</button><span class="small">${r.ahead ? `Ahead of you: ${esc(r.ahead.name)} (${r.ahead.ovr})` : ''}</span></div>`);
+    if (false) out.push(`<div class="row"><button class="btn" data-act="cStart">Ask to start</button><span class="small">${r.ahead ? `Ahead of you: ${esc(r.ahead.name)} (${r.ahead.ovr})` : ''}</span></div>`);
     const I = G.careerRaiseInfo(L);
     if (I) {
       if (p.holdout) out.push(`<div class="row"><button class="btn" data-act="cHold" data-id="off">End the holdout and report</button></div>`);
       else if (I.asked && I.under && !I.rookie && (L.phase === 'preseason' || L.phase === 'regular')) out.push(`<div class="row"><button class="btn danger" data-act="cHold" data-id="on">Hold out</button><span class="small">You'll miss games until they give in or you report. Costs trust.</span></div>`);
       else out.push(`<div class="row"><button class="btn" data-act="cRaise"${I.asked || I.rookie || !I.under ? ' disabled' : ''}>Ask for a raise</button><span class="small">You make ${I.pct}% of your market value.${I.rookie ? ' Rookie-scale deal.' : I.asked ? ' Already asked this year.' : !I.under ? ' That\'s fair pay.' : ''}</span></div>`);
     }
-    if (C.treq) out.push(`<div class="row"><span>Trade request in (${esc(({ contender: 'to a contender', start: 'where you\'d start', any: 'anywhere' })[C.treq.kind])}).</span><button class="btn sm" data-act="cTradeNo">Take it back</button></div>`);
-    else if (G.canTradeNow(L)) out.push(`<div class="row"><span class="small">Ask for a trade:</span><button class="btn sm" data-act="cTrade" data-id="contender">To a contender</button><button class="btn sm" data-act="cTrade" data-id="start">Where I'd start</button><button class="btn sm" data-act="cTrade" data-id="any">Anywhere</button></div>`);
   }
   if (L.phase === 'offseason' || L.phase === 'preseason') {
     const sw = G.careerSwitchOpts(L);
@@ -1426,7 +1437,7 @@ function vCareer() {
   if (!L) return vCareerSetup();
   if (L.career.pid == null) return modeSeg() + vCareerCreate();
   const p = CP();
-  let h = cAlerts() + cHeader(p) + cPhaseCard(p) + cSeasonCard(p) + (p.retiredYear == null ? cDepthCard(p, false) : '') + cMovesCard(p) + cTrainCard(p) + cLegacyCard(p);
+  let h = cAlerts() + cHeader(p) + cPhaseCard(p) + cSeasonCard(p) + (p.retiredYear == null ? cOrgCard(p) + cDepthCard(p, false) : '') + cMovesCard(p) + cTrainCard(p) + cLegacyCard(p);
   h += `<section class="card"><h3>Your story</h3><ul class="news">${L.career.log.slice(0, 30).map(n => `<li><span class="nw">${n.y}</span>${esc(n.txt)}</li>`).join('')}</ul></section>`;
   h += `<section class="card"><h3>Wire</h3><ul class="news">${L.news.slice(0, 12).map(n => `<li><span class="nw">${n.y}${n.w ? ' W' + n.w : ''}</span>${esc(n.s)}</li>`).join('')}</ul></section>`;
   return h;
@@ -1485,6 +1496,7 @@ function careerAct(a, el) {
     case 'cRaise': flash(G.careerAskRaise(L)); break;
     case 'cHold': flash(G.careerHoldout(L, id === 'on')); break;
     case 'cStart': flash(G.careerAskStart(L)); break;
+    case 'cAccept': flash(G.careerAcceptRole(L)); break;
     case 'cTrade': flash(G.careerRequestTrade(L, id)); break;
     case 'cTradeNo': flash(G.careerCancelTrade(L)); break;
     case 'cDeal': { const e = G.careerTakeDeal(L, +id); flash(e || 'Traded.'); break; }

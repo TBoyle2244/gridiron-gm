@@ -3733,7 +3733,7 @@ function careerClass(L) { const D = L.draft; return D ? D.pool.map(id => L.playe
 // Start a career: the season before the chosen draft plays out, then the draft opens with you in the pool.
 function startCareer(L, imports) {
   L.user = NO_TEAM; L.job = null;
-  L.career = { pid: null, y0: L.year + 1, trust: 50, focus: 'technique', plan: 'balanced', log: [], games: [], alerts: [], goals: null, ms: [], seasons: {} };
+  L.career = { pid: null, y0: L.year + 1, trust: 50, fo: 50, focus: 'technique', plan: 'balanced', log: [], games: [], alerts: [], goals: null, ms: [], seasons: {} };
   aiStyles(L, false, true);
   if (L.phase === 'preseason') startRegular(L);
   while (L.phase === 'regular') simWeek(L);
@@ -3767,6 +3767,24 @@ function careerBegin(L, p) { L.career.pid = p.id; L.career.name = p.name; addNew
 function careerLog(L, txt) { const C = L.career; C.log.unshift({ y: L.year + (L.phase === 'offseason' || L.phase === 'draft' || L.phase === 'season-over' ? 1 : 0), w: L.phase === 'regular' ? L.week : null, txt }); C.log = C.log.slice(0, 120); }
 function careerAlert(L, txt, kind) { const C = L.career; C.alerts.unshift({ id: (C.aid = (C.aid || 0) + 1), y: L.year, txt, kind: kind || 'info' }); C.alerts = C.alerts.slice(0, 8); }
 function dismissAlert(L, id) { if (L.career) L.career.alerts = L.career.alerts.filter(a => a.id !== +id); }
+function addFO(L, d) { const C = L.career; C.fo = clamp(Math.round((C.fo == null ? 50 : C.fo) + d), 0, 100); }
+const TRUST_LABELS = [[80, 'Loves you'], [60, 'Trusts you'], [45, 'Neutral'], [25, 'Frustrated'], [0, 'On thin ice']];
+const FO_LABELS = [[80, 'Franchise cornerstone'], [60, 'Valued'], [45, 'Neutral'], [25, 'Unsure about you'], [0, 'Looking to move you']];
+const label = (v, T) => T.find(([m]) => v >= m)[1];
+// Where you stand with the organization: the head coach (playing time) and the front office (your contract and your future here)
+function careerStanding(L) {
+  const C = L.career, p = careerP(L); if (!p || p.team < 0 || p.retiredYear != null) return null;
+  const t = L.teams[p.team], hc = t.staff && t.staff.hc;
+  const fo = C.fo == null ? 50 : C.fo, tr = C.trust == null ? 50 : C.trust;
+  return { coach: hc ? hc.name : 'The coach', trust: tr, trustTxt: label(tr, TRUST_LABELS), fo, foTxt: label(fo, FO_LABELS), accepted: C.acceptY === L.year };
+}
+function careerAcceptRole(L) {
+  const C = L.career, p = careerP(L); if (!p || p.team < 0) return 'You are not on a team.';
+  if (C.acceptY === L.year) return 'You already told them.';
+  C.acceptY = L.year; addTrust(L, 6); addFO(L, 3);
+  careerLog(L, 'Told the coach you\'ll accept whatever role he gives you.');
+  return 'The coach appreciates it. You can\'t ask to start again this season.';
+}
 function addTrust(L, d) { const C = L.career; C.trust = clamp(Math.round((C.trust == null ? 50 : C.trust) + d), 0, 100); }
 
 // His role on his team
@@ -3783,7 +3801,7 @@ function careerDraftToMe(L) {
   if (p.team >= 0) {
     const d = p.draft; careerLog(L, `Drafted by the ${L.teams[p.team].city} ${L.teams[p.team].name}: round ${d.rnd}, pick #${d.pick}.`);
     careerAlert(L, `With pick #${d.pick}, the ${L.teams[p.team].city} ${L.teams[p.team].name} select you.`, 'good');
-    L.career.trust = 50;
+    L.career.trust = 50; L.career.fo = 50;
   }
 }
 function careerFinishDraft(L) {
@@ -3815,7 +3833,7 @@ function careerOffers(L) {
     };
     if (exp) {
       const ranked = roster(L, p.team).slice().sort((a, b) => value(b) - value(a));
-      if (ranked.indexOf(p) < rules(y).rosterMax && p.age < 37 && (C.trust >= 25 || value(p) >= 75)) list.push(make(p.team, 0.95 + Math.random() * 0.07 + (C.trust - 50) * 0.002, true));
+      if (ranked.indexOf(p) < rules(y).rosterMax && p.age < 37 && ((C.fo == null ? 50 : C.fo) >= 25 || value(p) >= 75)) list.push(make(p.team, 0.95 + Math.random() * 0.07 + ((C.fo == null ? 50 : C.fo) - 50) * 0.002, true));
     }
     const era = faEra(y), open = free || (exp && (era === 'ufa' || !list.length));
     if (open) {
@@ -3840,7 +3858,7 @@ function careerSign(L, i) {
   }
   if (old >= 0 && old !== o.tid) p.prevTeam = old;
   p.team = o.tid; setContract(p, o.sal, y, o.yrs); delete p.holdout; delete p.askMult;
-  if (old !== o.tid) { noteFASign(L, p, o.tid); C.trust = 50; ensureNumbers(L); }
+  if (old !== o.tid) { noteFASign(L, p, o.tid); C.trust = 50; C.fo = 50 + (o.camp ? -5 : 0); ensureNumbers(L); } else addFO(L, o.disc ? 10 : 4);
   const t = L.teams[o.tid], verb = old === o.tid ? 'Re-signed with' : 'Signed with';
   plog(L, p, `${verb} ${t.abbr}: ${o.yrs} yr${o.yrs > 1 ? 's' : ''}, ${money(o.sal)} a year.`);
   addNews(L, `${t.abbr} ${old === o.tid ? 're-signed' : 'signed'} ${p.pos} ${p.name}: ${o.yrs} yr${o.yrs > 1 ? 's' : ''} at ${money(o.sal)}.`);
@@ -3886,23 +3904,23 @@ function careerAskRaise(L) {
   if (I.asked) return 'You already asked this year.';
   if (!I.under) return `You make ${I.pct}% of your market value. Your team won't tear up a fair deal.`;
   L.career.raiseY = L.year;
-  const odds = clamp(0.25 + (value(p) - 68) * 0.03 + (L.career.trust - 50) * 0.006, 0.08, 0.85);
+  const odds = clamp(0.25 + (value(p) - 68) * 0.03 + ((L.career.fo == null ? 50 : L.career.fo) - 50) * 0.008, 0.08, 0.85);
   if (Math.random() < odds) { renegotiate(L, p.id, true); careerLog(L, `Got a new deal from ${L.teams[p.team].abbr}: ${money(salFor(p, capYear(L)))} a year.`); addTrust(L, 3); return `They agreed: ${money(salFor(p, capYear(L)))} a year.`; }
-  addTrust(L, -5); careerLog(L, 'Asked for a raise. The team said no.');
+  addTrust(L, -5); addFO(L, -3); careerLog(L, 'Asked for a raise. The team said no.');
   return 'They said no. You can hold out, or play it out.';
 }
 function careerHoldout(L, on) {
   const p = careerP(L); if (!p || p.team < 0) return 'You are not under contract.';
   if (on) {
     const I = careerRaiseInfo(L); if (!I.asked || I.rookie || !I.under) return 'Ask for a raise first.';
-    p.holdout = true; addTrust(L, -12); careerLog(L, 'Started a holdout.'); addNews(L, `HOLDOUT: ${p.pos} ${p.name} refuses to report to ${L.teams[p.team].abbr} without a new contract.`);
+    p.holdout = true; addTrust(L, -12); addFO(L, -15); careerLog(L, 'Started a holdout.'); addNews(L, `HOLDOUT: ${p.pos} ${p.name} refuses to report to ${L.teams[p.team].abbr} without a new contract.`);
     return 'You are holding out. You miss games until the team gives in or you report.';
   }
   delete p.holdout; addTrust(L, 4); careerLog(L, 'Ended the holdout and reported.'); return 'You reported to the team.';
 }
 function careerHoldoutWeek(L) {
   const p = careerP(L); if (!p || !p.holdout || p.team < 0) return;
-  addTrust(L, -2);
+  addTrust(L, -2); addFO(L, -2);
   const odds = clamp(0.1 + (value(p) - 70) * 0.012, 0.04, 0.3);
   if (Math.random() < odds) { renegotiate(L, p.id, true); delete p.holdout; careerLog(L, `The holdout worked: a new deal at ${money(salFor(p, capYear(L)))} a year.`); careerAlert(L, `Your holdout is over. ${L.teams[p.team].abbr} gave you a new contract: ${money(salFor(p, capYear(L)))} a year.`, 'good'); }
   else if (Math.random() < 0.06 && !pastDeadline(L)) careerShop(L, true);
@@ -3912,6 +3930,7 @@ function careerHoldoutWeek(L) {
 function careerAskStart(L) {
   const p = careerP(L), r = careerRole(L, p); if (!r) return 'You are not on a team.';
   if (r.starter) return 'You already start.';
+  if (L.career.acceptY === L.year) return 'You said you\'d accept any role this season.';
   if (L.career.startY === L.year + ':' + L.phase) return 'You already asked. Earn it on the field first.';
   L.career.startY = L.year + ':' + L.phase;
   const gap = r.ahead ? r.ahead.ovr - p.ovr : 0;
@@ -3931,7 +3950,7 @@ function careerRequestTrade(L, kind) {
   const p = careerP(L); if (!p || p.team < 0) return 'You are not on a team.';
   if (L.phase === 'draft') return 'Wait until the draft is over.';
   L.career.treq = { kind: kind || 'any', at: nowKey(L), wk: L.phase === 'regular' ? L.week : -1, y: L.year, ph: L.phase };
-  addTrust(L, -15); careerLog(L, `Asked for a trade (${({ contender: 'to a contender', start: 'somewhere you would start', any: 'anywhere' })[kind] || 'anywhere'}).`);
+  addTrust(L, -15); addFO(L, -10); careerLog(L, `Asked for a trade (${({ contender: 'to a contender', start: 'somewhere you would start', any: 'anywhere' })[kind] || 'anywhere'}).`);
   addNews(L, `${p.pos} ${p.name} has asked ${L.teams[p.team].abbr} for a trade.`);
   return 'Your request is in. Give the team a couple of weeks to shop you.';
 }
@@ -3968,7 +3987,7 @@ function careerTakeDeal(L, i, forced) {
   if (d.picks.some(id => { const k = pickById(L, id); return !k || k.own !== d.tid; })) { C.deals.list.splice(+i, 1); return 'That deal fell through.'; }
   const from = p.team;
   execTrade(L, from, d.tid, { players: [p.id], picks: [] }, { players: [], picks: d.picks });
-  C.treq = null; C.deals = null; C.trust = 50;
+  C.treq = null; C.deals = null; C.trust = 50; C.fo = 50;
   const t = L.teams[d.tid];
   careerLog(L, `Traded from ${L.teams[from].abbr} to the ${t.city} ${t.name}${forced ? '' : ' (your request)'}.`);
   careerAlert(L, `You've been traded to the ${t.city} ${t.name}.`, forced ? 'warn' : 'good');
@@ -4083,13 +4102,16 @@ function careerWeek(L) {
     C.games = C.games.slice(0, 120);
     const sc = OFFG.includes(p.grp) ? offScore(line) : DEFG.includes(p.grp) ? (line.sk || 0) * 4 + (line.dint || 0) * 5 : 0;
     addTrust(L, (my > op ? 0.8 : my < op ? -0.5 : 0) + (sc >= 18 ? 1.5 : sc >= 9 ? 0.6 : 0));
+    if (sc >= 18) addFO(L, 0.6);
   } else if (tid >= 0) C.games.unshift({ y, wk: wk + 1, tid, bye: 1, line: {} });
   if (p.inj >= 4 && !(before.injNoted === p.inj)) { /* injury alert below */ }
   if (p.inj && !C.injAlert) { careerAlert(L, `You're hurt: out ${p.inj >= 20 ? 'for the season' : p.inj + ' week' + (p.inj > 1 ? 's' : '')}.`, 'inj'); C.injAlert = 1; }
   if (!p.inj) C.injAlert = 0;
+  if (startTeam >= 0 && p.team !== startTeam && p.team >= 0 && !C.deals) { C.trust = 50; C.fo = 50; }
   if (startTeam >= 0 && p.team !== startTeam && p.team >= 0 && !C.deals) careerAlert(L, `You've been traded to the ${L.teams[p.team].city} ${L.teams[p.team].name}.`, 'warn');
   if (startTeam >= 0 && p.team === -1) { careerAlert(L, `${L.teams[startTeam].abbr} released you. Teams with room may call.`, 'bad'); careerLog(L, `Released by ${L.teams[startTeam].abbr}.`); C.offers = null; }
   careerMilestones(L, tot);
+  if (p.team >= 0 && (C.fo == null ? 50 : C.fo) < 20 && !C.deals && canTradeNow(L) && Math.random() < 0.05) { careerAlert(L, 'Trade rumors: the front office is shopping you.', 'warn'); careerShop(L, true); }
   // losing the job
   const r = careerRole(L, p); if (r && C.wasStarter && !r.starter && !p.inj && !p.holdout) careerAlert(L, `You've lost your starting job to ${r.ahead ? r.ahead.name : 'a teammate'}.`, 'warn');
   C.wasStarter = !!(r && r.starter);
@@ -4112,10 +4134,12 @@ function careerSeasonEnd(L) {
   const C = L.career, p = careerP(L); if (!p || C.endY === L.year) return;
   C.endY = L.year;
   const met = careerGoalStatus(L).filter(g => g.met).length, tot = C.goals && C.goals.y === L.year ? C.goals.list.length : 0;
+  const awn = (p.awards || []).filter(a => a.y === L.year).length;
+  if (p.team >= 0) { const sal = salFor(p, L.year) || 0, mv = marketValue(L, p, L.year) || 1; addFO(L, met * 3 - (tot - met) + awn * 4 + (sal < mv * 0.8 ? 3 : sal > mv * 1.4 ? -4 : 0) - (p.inj >= 6 ? 2 : 0)); }
   if (tot) { addTrust(L, met * 4 - (tot - met) * 2); C.mkt = met * 0.03; careerLog(L, `${L.year} season goals: met ${met} of ${tot}.`); }
   const aw = (p.awards || []).filter(a => a.y === L.year).map(a => AWARD_NAMES[a.a]);
   if (aw.length) { careerLog(L, `${L.year} honors: ${aw.join(', ')}.`); careerAlert(L, `${L.year} honors: ${aw.join(', ')}.`, 'good'); }
-  C.seasons[L.year] = { tid: p.team, ovr: p.ovr, met, tot, trust: C.trust };
+  C.seasons[L.year] = { tid: p.team, ovr: p.ovr, met, tot, trust: C.trust, fo: C.fo };
 }
 // The next stop: what one tap of the big button does.
 function careerNext(L, imports, how) {
@@ -4226,7 +4250,7 @@ function careerLegacy(L) {
   return { score: Math.round(s), line: line && Math.round(line), pct: line ? Math.round(s / line * 100) : null, rings, jerseys, hof: p.hof || 0, verdict: C.verdict || null };
 }
 
-const API = { PB_SLOTS, proBowl, stadium, forecast, wxText, wxEffect, recordBook, REC_KEYS, careerSwitchOpts, careerSwitch, careerEarnings, careerCoachOpts, careerBecomeCoach, careerCoachNow, careerFrontOfficeOpts, careerToGM, NO_TEAM, CAREER_TIERS, CAREER_Q, CAREER_GRPS, CAREER_POS, CAREER_FOCUS, CAREER_PLANS, careerPreview, careerClass, startCareer, careerCreate, careerChooseReal, careerP, isCareer, careerRole, careerOffers, careerSign, careerHaggle, careerDiscount, careerRaiseInfo, careerAskRaise, careerHoldout, careerAskStart, careerRequestTrade, careerCancelTrade, careerTakeDeal, careerDeclineDeals, canTradeNow, setCareerFocus, setCareerPlan, careerGoalStatus, careerAwardRace, careerNext, careerSimYear, careerCanRetire, careerRetire, careerRanks, careerLegacy, careerTotal, hofLine, dismissAlert, STAT_NAME, COLLEGES, plog, practiceSquad, unsignedRights, psSize, psEligible, toPracticeSquad, promoteFromPS, signFromPS, signRefuserIfMoved, optionInfo, exerciseOption, declineOption, transitionTag, tagPrice, tradeablePick, rookieYears, playerFit, moraleReasons, holdoutInfo, marketFor, marketView, footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
+const API = { careerStanding, careerAcceptRole, PB_SLOTS, proBowl, stadium, forecast, wxText, wxEffect, recordBook, REC_KEYS, careerSwitchOpts, careerSwitch, careerEarnings, careerCoachOpts, careerBecomeCoach, careerCoachNow, careerFrontOfficeOpts, careerToGM, NO_TEAM, CAREER_TIERS, CAREER_Q, CAREER_GRPS, CAREER_POS, CAREER_FOCUS, CAREER_PLANS, careerPreview, careerClass, startCareer, careerCreate, careerChooseReal, careerP, isCareer, careerRole, careerOffers, careerSign, careerHaggle, careerDiscount, careerRaiseInfo, careerAskRaise, careerHoldout, careerAskStart, careerRequestTrade, careerCancelTrade, careerTakeDeal, careerDeclineDeals, canTradeNow, setCareerFocus, setCareerPlan, careerGoalStatus, careerAwardRace, careerNext, careerSimYear, careerCanRetire, careerRetire, careerRanks, careerLegacy, careerTotal, hofLine, dismissAlert, STAT_NAME, COLLEGES, plog, practiceSquad, unsignedRights, psSize, psEligible, toPracticeSquad, promoteFromPS, signFromPS, signRefuserIfMoved, optionInfo, exerciseOption, declineOption, transitionTag, tagPrice, tradeablePick, rookieYears, playerFit, moraleReasons, holdoutInfo, marketFor, marketView, footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
   value, release, sign, proposeTrade, tradeVerdict, teamPicks, pickById, pickLabel, projectedOverall, pickWeight, playerWeight, ensurePicks, myDraftSlots, aiTrades, acceptOffer, rejectOffer, offerValid, cutTo, ratings, teamOverall, startRegular, canStartSeason, simWeek, simPlayoffRound, roundName,
   sortTeams, divisions, pct, startDraft, onClock, makePick, aiPick, draftUntilUser, draftAll, scoutPlayer, beginDraft, SCOUT_VISITS, endDraft, startNextSeason, leaders, potKnown, shownPot, roman, addNews };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.GG = API;
