@@ -2,7 +2,7 @@
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-15b';
+const APP_VERSION = '2026-11-15c';
 let SLOT = (() => { try { return localStorage.getItem('gg-slot') === 'career' ? 'career' : 'league'; } catch (e) { return 'league'; } })();
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
@@ -142,7 +142,7 @@ function render() {
   const t = L ? me() : null, cp = L && L.career ? G.careerP(L) : null;
   if (L && L.career) {
     $('#top').innerHTML = `<div class="top-inner">
-    ${cp && cp.team >= 0 ? `<button class="crest" data-act="tm" data-id="${cp.team}" aria-label="Team">${esc(L.teams[cp.team].abbr)}</button>` : `<div class="crest">${cp && cp.retiredYear != null ? 'RET' : cp && cp.team === -1 ? 'FA' : 'GM'}</div>`}
+    ${cp && cp.team >= 0 ? `<button class="crest" data-act="tm" data-id="${cp.team}" aria-label="Team">${esc(L.teams[cp.team].abbr)}</button>` : `<div class="crest">${cp && cp.retiredYear != null ? 'RET' : cp && cp.team === -1 ? 'FA' : 'DFT'}</div>`}
     <div class="top-txt"><div class="top-team">${cp ? esc(cp.name) : 'Player career'}</div><div class="top-sub">${ui.tab === 'help' ? 'How to play' : esc(phaseLabel())}${cp && cp.team >= 0 && L.phase !== 'preseason' && ui.tab !== 'help' ? ' · ' + esc(L.teams[cp.team].abbr) + ' ' + rec(L.teams[cp.team]) : ''}</div></div>
     <button class="helpbtn${ui.tab === 'help' ? ' on' : ''}" data-act="help" aria-label="Help">${ui.tab === 'help' ? '✕' : '?'}</button></div>`;
     if (!CTABS.some(x => x[0] === ui.tab) && ui.tab !== 'help' && ui.tab !== 'page') ui.tab = 'home';
@@ -173,9 +173,9 @@ const tLink = (tid, txt) => L.teams[tid] ? `<button class="lnk" data-act="tm" da
 function openPage(k, id) {
   if (ui.tab !== 'page') { ui.pgBack = ui.tab; ui.pgStack = []; }
   else if (ui.pg) ui.pgStack.push(ui.pg);
-  ui.pg = { k, id }; ui.tab = 'page'; ui.open = null; window.scrollTo(0, 0);
+  ui.pg = { k, id }; ui.tab = 'page'; ui.open = null; toTop();
 }
-function pageBack() { ui.pg = (ui.pgStack || []).pop() || null; if (!ui.pg) ui.tab = ui.pgBack || 'home'; window.scrollTo(0, 0); }
+function pageBack() { ui.pg = (ui.pgStack || []).pop() || null; if (!ui.pg) ui.tab = ui.pgBack || 'home'; toTop(); }
 function vPage() {
   const g = ui.pg; if (!g) { ui.tab = 'home'; return vHome(); }
   const back = `<div class="row pgnav"><button class="btn sm" data-act="pgBack">← Back</button></div>`;
@@ -1196,6 +1196,9 @@ function vData() {
 
 /* ---------- player career mode ---------- */
 const isC = () => !!(L && L.career);
+function toTop() { const m = document.getElementById('main'); if (m) m.scrollTop = 0; try { window.scrollTo(0, 0); } catch (e) { /* ignore */ } }
+// iOS can leave the page shifted after the keyboard closes; snap it back
+document.addEventListener('focusout', () => setTimeout(() => { try { window.scrollTo(0, 0); } catch (e) { /* ignore */ } }, 50));
 const CP = () => G.careerP(L);
 const CTABS = [['home', 'Career'], ['games', 'Games'], ['team', 'Team'], ['stats', 'Stats'], ['league', 'League'], ['data', 'Data']];
 function modeSeg() {
@@ -1453,11 +1456,11 @@ function careerAct(a, el) {
     case 'cWay': ui.cWay = id; break;
     case 'cTier': ui.cNew.tier = id; break;
     case 'cAns': { const [i, j] = id.split(':').map(Number); ui.cNew.ans[i] = j; break; }
-    case 'cCreate': { const c = ui.cNew; if (!c.name.trim()) { flash('Give your player a name.'); break; } const e = G.careerCreate(L, Object.assign({}, c, { pos: c.pos || G.CAREER_POS[c.grp][0], ht: c.ht || HT[DEF_HT[c.grp]], wt: c.wt || DEF_WT[c.grp] })); if (e) flash(e); else { track('career-create/' + c.grp + '/' + c.tier); window.scrollTo(0, 0); } break; }
-    case 'cReal': { const e = G.careerChooseReal(L, +id); if (e) flash(e); else { track('career-real'); window.scrollTo(0, 0); } break; }
+    case 'cCreate': { const c = ui.cNew; if (!c.name.trim()) { flash('Give your player a name.'); break; } const e = G.careerCreate(L, Object.assign({}, c, { pos: c.pos || G.CAREER_POS[c.grp][0], ht: c.ht || HT[DEF_HT[c.grp]], wt: c.wt || DEF_WT[c.grp] })); if (e) flash(e); else { track('career-create/' + c.grp + '/' + c.tier); toTop(); } break; }
+    case 'cReal': { const e = G.careerChooseReal(L, +id); if (e) flash(e); else { track('career-real'); toTop(); } break; }
     case 'cRealGrp': ui.cRealGrp = id; ui.cRealShow = 80; break;
     case 'cRealMore': ui.cRealShow = (ui.cRealShow || 80) + 80; break;
-    case 'cNext': { const e = G.careerNext(L, IM, id); if (e) flash(e); window.scrollTo(0, 0); break; }
+    case 'cNext': { const e = G.careerNext(L, IM, id); if (e) flash(e); toTop(); break; }
     case 'cYear': { for (let i = 0; i < +id; i++) G.careerSimYear(L, IM); break; }
     case 'cSign': { const e = G.careerSign(L, +id); flash(e || 'Signed.'); break; }
     case 'cHaggle': flash(G.careerHaggle(L, +id)); break;
@@ -1526,13 +1529,13 @@ function act(a, el) {
   const id = el.dataset.id;
   if (careerAct(a, el)) return;
   switch (a) {
-    case 'tab': ui.tab = id; ui.open = null; ui.box = null; window.scrollTo(0, 0); track('tab/' + id, true); break;
+    case 'tab': ui.tab = id; ui.open = null; ui.box = null; toTop(); track('tab/' + id, true); break;
     case 'confirm':
       if (ui.confirm !== id) { ui.confirm = id; render(); return; }
       ui.confirm = null;
       if (id === 'reset') { L = null; DB.set(SLOT, null).catch(() => {}); ui.tab = 'home'; ui.cNew = null; flash(SLOT === 'career' ? 'Career deleted.' : 'League deleted. Your imported data is still here.'); }
-      else if (id.startsWith('cGM')) { const e = G.careerToGM(L, +id.slice(3)); if (e) flash(e); else { ui.tab = 'home'; flash(`Welcome to the front office. You run the ${tname(me())}.`); window.scrollTo(0, 0); } }
-      else if (id === 'cRetire') { const e = G.careerRetire(L); flash(e || 'You have retired.'); window.scrollTo(0, 0); }
+      else if (id.startsWith('cGM')) { const e = G.careerToGM(L, +id.slice(3)); if (e) flash(e); else { ui.tab = 'home'; flash(`Welcome to the front office. You run the ${tname(me())}.`); toTop(); } }
+      else if (id === 'cRetire') { const e = G.careerRetire(L); flash(e || 'You have retired.'); toTop(); }
       else if (id.startsWith('fire')) { const e = G.fireCoach(L, id.slice(4)); flash(e || 'Coach fired. Hire a replacement before kickoff.'); }
       else if (id.startsWith('rel')) { const dc = G.deadCharge(L, L.players[+id.slice(3)]); G.release(L, +id.slice(3)); ui.open = null; flash('Player released to the waiver pool.' + (dc ? ` ${G.money(dc)} in dead money stays on your ${G.capYear(L)} payroll.` : '')); }
       break;
@@ -1621,7 +1624,7 @@ function act(a, el) {
     case 'pickFound': { const p = L.players[+id]; if (p) { ui.tradeTeam = p.team; ui.get = ['p:' + p.id]; ui.tview = 'p'; ui.tGrpGet = 'ALL'; ui.found = null; ui.tq = ''; } break; }
     case 'findTrade': { const pk = sel => ({ players: sel.filter(x => x[0] === 'p').map(x => +x.slice(2)), picks: sel.filter(x => x[0] === 'k').map(x => +x.slice(2)) }); const r = G.findTrades(L, pk(ui.give)); ui.found = r.err ? { err: r.err } : { offers: r.offers, give: ui.give.slice() }; ui.focus = '.found'; break; }
     case 'takeFound': { const F = ui.found, o = F && F.offers && F.offers[+id]; if (!o) break; const pk = sel => ({ players: sel.filter(x => x[0] === 'p').map(x => +x.slice(2)), picks: sel.filter(x => x[0] === 'k').map(x => +x.slice(2)) }); const r = G.proposeTrade(L, o.from, pk(F.give), o.get); flash(r.msg); if (r.ok) { ui.give = []; ui.get = []; ui.found = null; } break; }
-    case 'help': if (ui.tab === 'help') { ui.tab = ui.helpBack || 'home'; } else { ui.helpBack = ui.tab; ui.helpOpen = SLOT === 'career' ? 'career' : HELP_FOR_TAB[ui.tab] || 'quick'; ui.helpQ = ''; ui.tab = 'help'; ui.focus = '#h-' + ui.helpOpen; } window.scrollTo(0, 0); track('help/' + (ui.helpOpen || ''), true); break;
+    case 'help': if (ui.tab === 'help') { ui.tab = ui.helpBack || 'home'; } else { ui.helpBack = ui.tab; ui.helpOpen = SLOT === 'career' ? 'career' : HELP_FOR_TAB[ui.tab] || 'quick'; ui.helpQ = ''; ui.tab = 'help'; ui.focus = '#h-' + ui.helpOpen; } toTop(); track('help/' + (ui.helpOpen || ''), true); break;
     case 'helpGo': if (ui.tab !== 'help') { ui.helpBack = ui.tab; ui.tab = 'help'; } ui.helpOpen = id; ui.helpQ = ''; ui.focus = '#h-' + id; track('help/' + id, true); break;
     case 'helpNudgeX': ui.helpSeen = true; try { localStorage.setItem('gg-help-seen', '1'); } catch (e) { /* ignore */ } break;
     case 'blockWant': ui.blockWant = id; if (id === 'picks') ui.blockPos = ''; break;
@@ -1630,7 +1633,7 @@ function act(a, el) {
       const r = G.shopBlock(L, pk(ui.give), { want: ui.blockWant || 'best', pos: ui.blockWant === 'picks' ? '' : (ui.blockPos || '') });
       if (r.err) { ui.blockMsg = r.err; break; }
       ui.blockMsg = r.n ? '' : 'No team made an offer. Try a different ask, another position, or add more to the package.';
-      if (r.n) { flash(`${r.n} team${r.n === 1 ? '' : 's'} made offers. They're under Trade offers at the top.`); ui.focus = '.offers'; window.scrollTo(0, 0); }
+      if (r.n) { flash(`${r.n} team${r.n === 1 ? '' : 's'} made offers. They're under Trade offers at the top.`); ui.focus = '.offers'; toTop(); }
       break;
     }
     case 'campAll': ui.campAll = !ui.campAll; break;
@@ -1641,7 +1644,7 @@ function act(a, el) {
     case 'irOff': { const e = G.activateIR(L, +id); flash(e || 'Activated from injured reserve.'); break; }
     case 'dOffer': { if (id === 'yes') { const e = G.acceptDraftOffer(L); flash(e || 'Trade accepted. You moved down.'); G.draftUntilUser(L); } else { G.declineDraftOffer(L); flash('You kept the pick.'); } break; }
     case 'st': ui.st = id; ui.statPid = null; break;
-    case 'box': ui.box = id || null; if (id) window.scrollTo(0, 0); break;
+    case 'box': ui.box = id || null; if (id) toTop(); break;
     case 'histYear': ui.histYear = +id; break;
     case 'takeJob': { const e = G.takeJob(L, +id); flash(e || `Welcome to ${tname(me())}.`); ui.tab = 'home'; break; }
     case 'hire': { const e = G.hireCoach(L, +id); flash(e || 'Hired.'); break; }
