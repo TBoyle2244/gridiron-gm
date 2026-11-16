@@ -3982,8 +3982,10 @@ function careerAutoSign(L) {
   const p = careerP(L); if (!p || p.retiredYear != null) return;
   const list = careerOffers(L); if (!list.length) return;
   const best = list.map((o, i) => [i, o.sal * (o.own && p.loyal > 0 ? 1.15 : 1)]).sort((a, b) => b[1] - a[1])[0][0];
+  const o = list[best];
   careerLog(L, 'Your agent took the best offer on the table.');
   careerSign(L, best);
+  careerAlert(L, `You didn't pick a contract, so your agent took the best offer: ${L.teams[o.tid].city} ${L.teams[o.tid].name}, ${o.yrs} yr${o.yrs > 1 ? 's' : ''} at ${money(o.sal)}.`, 'info');
 }
 
 /* --- raises and holdouts --- */
@@ -4246,7 +4248,12 @@ function careerNext(L, imports, how) {
 function careerNext0(L, imports, how) {
   const C = L.career, p = careerP(L);
   if (L.phase === 'draft') { if (p && p.team === -3 && how !== 'finish') careerDraftToMe(L); else careerFinishDraft(L); return null; }
-  if (L.phase === 'season-over') { careerSeasonEnd(L); startDraft(L, imports); careerFinishDraft(L); return null; }
+  if (L.phase === 'season-over') {
+    careerSeasonEnd(L); startDraft(L, imports); careerFinishDraft(L);
+    const q = careerP(L), n = careerOffers(L).length;
+    if (q && q.team >= 0 && n && !onBooks(q, capYear(L))) careerAlert(L, `Your contract is up. Your agent has ${n} offer${n > 1 ? 's' : ''} for you: pick one on the Career tab before training camp.`, 'warn');
+    return null;
+  }
   if (L.phase === 'offseason') {
     if (p && p.retiredYear == null && careerOffers(L).length && (p.team === -1 || !onBooks(p, capYear(L)))) careerAutoSign(L);
     if (C.treq && !C.deals && canTradeNow(L)) careerShop(L);

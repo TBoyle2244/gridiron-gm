@@ -2,7 +2,7 @@
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-15g';
+const APP_VERSION = '2026-11-15h';
 let SLOT = (() => { try { return localStorage.getItem('gg-slot') === 'career' ? 'career' : 'league'; } catch (e) { return 'league'; } })();
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
@@ -1280,7 +1280,7 @@ function cHeader(p) {
   const pot = Math.max(p.pot, p.ovr);
   return `<section class="card hero"><div class="eyebrow">${esc(p.pos)}${p.num != null && p.team >= 0 ? ' · #' + p.num : ''} · Age ${p.age}${p.yrs ? ' · Year ' + (p.yrs + 1) : ' · Rookie'}</div>
     <h2>${pLink(p)}</h2><p>${p.team >= 0 ? tLink(p.team) : esc(cStatus(p))}${r ? ' · ' + esc(r.label) : ''}</p>
-    <div class="stats4"><div>${rating(p.ovr)}<span>Overall</span></div><div>${rating(pot)}<span>Ceiling</span></div><div><b>${sal != null ? G.money(sal) : '–'}</b><span>${p.con ? `Thru ${p.con.ext ? p.con.ext.exp : p.con.exp}` : 'No contract'}</span></div><div><b>${C.fo == null ? 50 : C.fo}</b><span>Front office</span></div></div>
+    <div class="stats4"><div>${rating(p.ovr)}<span>Overall</span></div><div>${rating(pot)}<span>Ceiling</span></div><div><b>${sal != null ? G.money(sal) : p.con ? 'Expired' : '–'}</b><span>${p.con && sal == null ? 'Pick a new deal' : p.con ? ((p.con.ext ? p.con.ext.exp : p.con.exp) <= L.year && L.phase !== 'offseason' ? 'Contract year' : `Thru ${p.con.ext ? p.con.ext.exp : p.con.exp}`) : 'No contract'}</span></div><div><b>${C.fo == null ? 50 : C.fo}</b><span>Front office</span></div></div>
     <p class="small">Career earnings: <b>${G.money(G.careerEarnings(L))}</b></p>
     ${p.inj ? `<p class="small bad">Injured: out ${p.inj >= 20 ? 'for the season' : p.inj + ' week' + (p.inj > 1 ? 's' : '')}.</p>` : ''}${p.holdout ? '<p class="small warn">You are holding out.</p>' : ''}</section>`;
 }
@@ -1313,7 +1313,7 @@ function cPhaseCard(p) {
     const offers = G.careerOffers(L);
     return `<section class="card hero"><div class="eyebrow">${L.year + 1} offseason</div><h2>${offers.length ? 'Decide where you play' : 'Summer'}</h2>
       <p>${offers.length ? 'Your agent has offers below. If you go to camp without choosing, he takes the biggest deal.' : p.team >= 0 ? 'Pick your summer training below, then head to camp. Your growth or decline for your age happens there.' : 'No offers yet. Head to camp and hope for a call, or retire.'}</p>
-      <div class="row"><button class="btn primary" data-act="cNext">Go to ${L.year + 1} training camp</button></div></section>` + cOffersCard(offers);
+      ${offers.length ? '' : `<div class="row"><button class="btn primary" data-act="cNext">Go to ${L.year + 1} training camp</button></div>`}</section>` + (offers.length ? cOffersCard(offers) + `<section class="card"><p class="small">Not ready to choose? Your agent will sign the biggest offer (${esc(L.teams[offers.slice().sort((a, b) => b.sal - a.sal)[0].tid].abbr)}).</p><div class="row">${confirmBtn('cCamp', `Skip it and go to ${L.year + 1} camp`)}</div></section>` : '');
   }
   if (ph === 'preseason') {
     const lc = C.lastCamp && C.lastCamp.y === L.year ? C.lastCamp : null;
@@ -1338,7 +1338,7 @@ function cPhaseCard(p) {
   if (ph === 'season-over') {
     const c = L.champs[0], h = p.hist[L.year];
     return `<section class="card hero"><div class="eyebrow">Super Bowl ${G.roman(c.sb)}</div><h2>${esc(tname(L.teams[c.champ]))} win it all</h2>
-      <p>Your ${L.year}: ${h ? esc(statLine(p)) : 'no games played'}.</p>
+      <p>Your ${L.year}: ${h ? esc(statLine(p)) : 'no games played'}.</p>${p.con && p.team >= 0 && p.con.exp <= L.year && !(p.con.ext) ? '<p><b>Your contract is up.</b> After the draft your agent brings you offers to choose from.</p>' : ''}
       <div class="row"><button class="btn primary" data-act="cNext">On to the draft and the offseason</button></div></section>`;
   }
   return '';
@@ -1593,6 +1593,7 @@ function act(a, el) {
       ui.confirm = null;
       if (id === 'reset') { L = null; DB.set(SLOT, null).catch(() => {}); ui.tab = 'home'; ui.cNew = null; flash(SLOT === 'career' ? 'Career deleted.' : 'League deleted. Your imported data is still here.'); }
       else if (id.startsWith('cGM')) { const e = G.careerToGM(L, +id.slice(3)); if (e) flash(e); else { ui.tab = 'home'; flash(`Welcome to the front office. You run the ${tname(me())}.`); toTop(); } }
+      else if (id === 'cCamp') { const e = G.careerNext(L, IM); if (e) flash(e); toTop(); }
       else if (id === 'cRetire') { const e = G.careerRetire(L); flash(e || 'You have retired.'); toTop(); }
       else if (id.startsWith('fire')) { const e = G.fireCoach(L, id.slice(4)); flash(e || 'Coach fired. Hire a replacement before kickoff.'); }
       else if (id.startsWith('rel')) { const dc = G.deadCharge(L, L.players[+id.slice(3)]); G.release(L, +id.slice(3)); ui.open = null; flash('Player released to the waiver pool.' + (dc ? ` ${G.money(dc)} in dead money stays on your ${G.capYear(L)} payroll.` : '')); }
