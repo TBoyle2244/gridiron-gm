@@ -2,7 +2,7 @@
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-15f';
+const APP_VERSION = '2026-11-15g';
 let SLOT = (() => { try { return localStorage.getItem('gg-slot') === 'career' ? 'career' : 'league'; } catch (e) { return 'league'; } })();
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
@@ -1404,6 +1404,23 @@ function cTrainCard(p) {
     <div class="seg">${Object.keys(G.CAREER_PLANS).map(k => `<button class="${C.plan === k ? 'on' : ''}" data-act="cPlan" data-id="${k}">${esc(G.CAREER_PLANS[k].name)}</button>`).join('')}</div>
     <p class="small">Extra work grows you faster and raises your injury risk; light work is the reverse.</p></section>`;
 }
+function cScheduleCard(p) {
+  if (p.retiredYear != null || p.team < 0 || !L.schedule || !L.schedule.length || !(L.phase === 'regular' || L.phase === 'playoffs' || L.phase === 'season-over')) return '';
+  const tid = p.team, C = L.career;
+  const rows = L.schedule.map((wk, i) => {
+    const g = wk.find(x => x.h === tid || x.a === tid), cur = L.phase === 'regular' && i === L.week;
+    if (!g) return `<tr class="${cur ? 'nextwk' : ''}"><td class="l">${i + 1}</td><td class="l muted" colspan="3">Bye</td></tr>`;
+    const home = g.h === tid, o = L.teams[home ? g.a : g.h];
+    let res = '', you = '';
+    if (g.done) {
+      const my = home ? g.hs : g.as, op = home ? g.as : g.hs, mine = C.games.find(x => x.y === L.year && x.wk === i + 1 && !x.po);
+      res = `<span class="${my > op ? 'good' : my < op ? 'bad' : ''}">${my > op ? 'W' : my < op ? 'L' : 'T'} ${my}-${op}</span>`;
+      you = mine ? esc(mine.why || cGameLine(mine.line)) : '';
+    } else res = cur ? '<b>Next</b>' : '';
+    return `<tr class="${cur ? 'nextwk' : ''}"><td class="l">${i + 1}</td><td class="l">${home ? 'vs' : 'at'} ${tLink(o.id, esc(o.abbr))} <span class="small muted">${rec(o)}</span></td><td>${res}</td><td class="l small">${you}</td></tr>`;
+  }).join('');
+  return `<section class="card"><h3>${L.year} schedule</h3><div class="tscroll"><table class="tbl"><thead><tr><th class="l">Wk</th><th class="l">Opponent</th><th>Result</th><th class="l">You</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+}
 function cSeasonCard(p) {
   if (p.retiredYear != null || !(L.phase === 'regular' || L.phase === 'playoffs' || L.phase === 'season-over')) return '';
   const C = L.career, last = C.games.find(g => g.y === L.year && !g.bye), goals = G.careerGoalStatus(L), race = G.careerAwardRace(L);
@@ -1449,7 +1466,7 @@ function vCareer() {
   if (!L) return vCareerSetup();
   if (L.career.pid == null) return modeSeg() + vCareerCreate();
   const p = CP();
-  let h = cAlerts() + cHeader(p) + cPhaseCard(p) + cSeasonCard(p) + (p.retiredYear == null ? cOrgCard(p) + cSchemeCard(p) + cDepthCard(p, false) : '') + cMovesCard(p) + cTrainCard(p) + cLegacyCard(p);
+  let h = cAlerts() + cHeader(p) + cPhaseCard(p) + cSeasonCard(p) + cScheduleCard(p) + (p.retiredYear == null ? cOrgCard(p) + cSchemeCard(p) + cDepthCard(p, false) : '') + cMovesCard(p) + cTrainCard(p) + cLegacyCard(p);
   h += `<section class="card"><h3>Your story</h3><ul class="news">${L.career.log.slice(0, 30).map(n => `<li><span class="nw">${n.y}</span>${esc(n.txt)}</li>`).join('')}</ul></section>`;
   h += `<section class="card"><h3>Wire</h3><ul class="news">${L.news.slice(0, 12).map(n => `<li><span class="nw">${n.y}${n.w ? ' W' + n.w : ''}</span>${esc(n.s)}</li>`).join('')}</ul></section>`;
   return h;
