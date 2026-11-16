@@ -2,7 +2,7 @@
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-15j';
+const APP_VERSION = '2026-11-15k';
 let SLOT = (() => { try { return localStorage.getItem('gg-slot') === 'career' ? 'career' : 'league'; } catch (e) { return 'league'; } })();
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
@@ -1178,7 +1178,7 @@ function vCoach() {
 
 /* ---------- Data ---------- */
 function vData() {
-  const top = modeSeg();
+  const top = modeSeg() + (L && L.exCareer ? `<section class="card"><h3>Back to playing</h3><p class="small">This league started as a player career. Leave the front office and start a new player in the next draft.</p><div class="row">${confirmBtn('cAgain', 'New player, this league')}</div></section>` : '');
   const teamsOpt = G.TEAMS_1970.map(t => `<option value="${t[0]}"${ui.impTeam === t[0] ? ' selected' : ''}>${esc(t[2] + ' ' + t[3])} (${t[0]})</option>`).join('');
   let h = top + `<section class="card"><h3>Import from Pro-Football-Reference</h3>
     <p class="small">On the PFR page, open Share &amp; Export → Get table as CSV, copy the text, and paste it here. Rosters only matter when you start a new league. Draft classes can be added any time before that year's draft.</p>
@@ -1473,7 +1473,8 @@ function cAfterCard(p) {
     if (H.length) h += `<div class="tscroll"><table class="tbl"><tbody>${H.slice().reverse().map(x => `<tr><td class="l">${x.y}</td><td class="l">${esc(L.teams[x.tid].abbr)} ${esc(G.ROLE_NAME[x.role])}</td><td>${x.w}-${x.l}${x.t ? '-' + x.t : ''}</td><td class="l small">${esc(x.res)}</td></tr>`).join('')}</tbody></table></div>`;
   } else if (co.length) h += `<p><b>Coach:</b> teams want you on staff. Coordinators who win get head-coaching jobs.</p><div class="row">${co.map((o, i) => `<button class="btn sm" data-act="cCoach" data-id="${i}">${esc(G.ROLE_NAME[o.role])}, ${esc(L.teams[o.tid].abbr)}</button>`).join('')}</div>`;
   if (fo.length) h += `<p><b>Front office:</b> run a team as general manager in this same league. Your career stays in its history; this save becomes a GM league (your other GM league isn't touched).</p><div class="row">${fo.map(tid => confirmBtn('cGM' + tid, 'GM of the ' + L.teams[tid].name)).join('')}</div>`;
-  return h ? `<section class="card"><h3>Life after football</h3>${h}</section>` : '';
+  h += `<p><b>Play again:</b> start a new player in this same league (he enters the next draft, and ${esc(p.name)} stays in its history), or start over in a brand-new league.</p><div class="row">${confirmBtn('cAgain', 'New player, this league')}${confirmBtn('cFresh', 'New career, new league')}</div>`;
+  return `<section class="card"><h3>Life after football</h3>${h}</section>`;
 }
 function vCareer() {
   if (ui.box) { const b = boxCard(ui.box); if (b) return b; }
@@ -1481,6 +1482,7 @@ function vCareer() {
   if (L.career.pid == null) return modeSeg() + vCareerCreate();
   const p = CP();
   let h = cAlerts() + cHeader(p) + cPhaseCard(p) + cSeasonCard(p) + cScheduleCard(p) + (p.retiredYear == null ? cOrgCard(p) + cSchemeCard(p) + cDepthCard(p, false) : '') + cMovesCard(p) + cTrainCard(p) + cLegacyCard(p);
+  if (L.pastCareers && L.pastCareers.length) h += `<section class="card"><h3>Your earlier players</h3><p>${L.pastCareers.map(x => { const q = G.getP(L, x.pid); return q ? pLink(q) + ` <span class="small">(${esc(q.pos)}, ${Object.keys(q.hist || {}).length} seasons${q.hof > 0 ? ', Hall of Fame' : ''})</span>` : esc(x.name || ''); }).join(' · ')}</p></section>`;
   h += `<section class="card"><h3>Your story</h3><ul class="news">${L.career.log.slice(0, 30).map(n => `<li><span class="nw">${n.y}</span>${esc(n.txt)}</li>`).join('')}</ul></section>`;
   h += `<section class="card"><h3>Wire</h3><ul class="news">${L.news.slice(0, 12).map(n => `<li><span class="nw">${n.y}${n.w ? ' W' + n.w : ''}</span>${esc(n.s)}</li>`).join('')}</ul></section>`;
   return h;
@@ -1610,6 +1612,8 @@ function act(a, el) {
       if (id === 'reset') { L = null; DB.set(SLOT, null).catch(() => {}); ui.tab = 'home'; ui.cNew = null; flash(SLOT === 'career' ? 'Career deleted.' : 'League deleted. Your imported data is still here.'); }
       else if (id.startsWith('cGM')) { const e = G.careerToGM(L, +id.slice(3)); if (e) flash(e); else { ui.tab = 'home'; flash(`Welcome to the front office. You run the ${tname(me())}.`); toTop(); } }
       else if (id === 'cCamp') { const e = G.careerNext(L, IM); if (e) flash(e); toTop(); }
+      else if (id === 'cAgain') { flash('Playing on to the next draft…'); render(); setTimeout(() => { const e = G.careerAgain(L, IM); if (e) flash(e); else { ui.cNew = null; ui.cWay = null; ui.tab = 'home'; toTop(); } save(); render(); }, 30); return; }
+      else if (id === 'cFresh') { L = null; DB.set('career', null).catch(() => {}); SLOT = 'career'; try { localStorage.setItem('gg-slot', 'career'); } catch (e2) { /* private mode */ } ui.cNew = null; ui.cWay = null; ui.tab = 'home'; toTop(); }
       else if (id === 'cRetire') { const e = G.careerRetire(L); flash(e || 'You have retired.'); toTop(); }
       else if (id.startsWith('fire')) { const e = G.fireCoach(L, id.slice(4)); flash(e || 'Coach fired. Hire a replacement before kickoff.'); }
       else if (id.startsWith('rst')) { const e = G.restructure(L, +id.slice(3)); flash(e || 'Restructured.'); }
