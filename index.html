@@ -4852,7 +4852,7 @@ const HELP_FOR_TAB = { home: 'office', roster: 'roster', stats: 'stats', league:
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-15h';
+const APP_VERSION = '2026-11-15i';
 let SLOT = (() => { try { return localStorage.getItem('gg-slot') === 'career' ? 'career' : 'league'; } catch (e) { return 'league'; } })();
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
@@ -6125,12 +6125,20 @@ function cAlerts() {
   return A.map(a => `<div class="calert ${a.kind}"><span>${esc(a.txt)}</span><button class="x" data-act="cDismiss" data-id="${a.id}" aria-label="Dismiss">✕</button></div>`).join('');
 }
 function trustBar(v) { return `<div class="tbar"><i style="width:${v}%"></i></div>`; }
+// "$9.4M a year · 3 years left (thru 2010)", counting this season while it's being played
+function cConLine(p, y) {
+  if (!p.con) return 'No contract';
+  if (G.salFor(p, y) == null) return 'Pick a new deal';
+  const exp = p.con.ext ? p.con.ext.exp : p.con.exp, inSeason = L.phase === 'preseason' || L.phase === 'regular' || L.phase === 'playoffs';
+  const left = exp - (inSeason ? L.year : L.year + 1) + 1;
+  return left <= 1 ? `${inSeason ? 'Contract year' : 'Last year'} (thru ${exp})` : `${left} years left (thru ${exp})`;
+}
 function cHeader(p) {
   const r = G.careerRole(L, p), C = L.career, y = G.capYear(L), sal = p.con ? G.salFor(p, y) : null;
   const pot = Math.max(p.pot, p.ovr);
   return `<section class="card hero"><div class="eyebrow">${esc(p.pos)}${p.num != null && p.team >= 0 ? ' · #' + p.num : ''} · Age ${p.age}${p.yrs ? ' · Year ' + (p.yrs + 1) : ' · Rookie'}</div>
     <h2>${pLink(p)}</h2><p>${p.team >= 0 ? tLink(p.team) : esc(cStatus(p))}${r ? ' · ' + esc(r.label) : ''}</p>
-    <div class="stats4"><div>${rating(p.ovr)}<span>Overall</span></div><div>${rating(pot)}<span>Ceiling</span></div><div><b>${sal != null ? G.money(sal) : p.con ? 'Expired' : '–'}</b><span>${p.con && sal == null ? 'Pick a new deal' : p.con ? ((p.con.ext ? p.con.ext.exp : p.con.exp) <= L.year && L.phase !== 'offseason' ? 'Contract year' : `Thru ${p.con.ext ? p.con.ext.exp : p.con.exp}`) : 'No contract'}</span></div><div><b>${C.fo == null ? 50 : C.fo}</b><span>Front office</span></div></div>
+    <div class="stats4"><div>${rating(p.ovr)}<span>Overall</span></div><div>${rating(pot)}<span>Ceiling</span></div><div><b>${sal != null ? G.money(sal) + '/yr' : p.con ? 'Expired' : '–'}</b><span>${cConLine(p, y)}</span></div><div><b>${C.fo == null ? 50 : C.fo}</b><span>Front office</span></div></div>
     <p class="small">Career earnings: <b>${G.money(G.careerEarnings(L))}</b></p>
     ${p.inj ? `<p class="small bad">Injured: out ${p.inj >= 20 ? 'for the season' : p.inj + ' week' + (p.inj > 1 ? 's' : '')}.</p>` : ''}${p.holdout ? '<p class="small warn">You are holding out.</p>' : ''}</section>`;
 }
