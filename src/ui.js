@@ -2,7 +2,7 @@
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-15e';
+const APP_VERSION = '2026-11-15f';
 let SLOT = (() => { try { return localStorage.getItem('gg-slot') === 'career' ? 'career' : 'league'; } catch (e) { return 'league'; } })();
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
@@ -149,7 +149,10 @@ function render() {
     const ready = cp != null;
     $('#tabs').innerHTML = CTABS.map(([k, n]) => `<button class="tab ${ui.tab === k ? 'on' : ''}" data-act="tab" data-id="${k}"${!ready && k !== 'data' && k !== 'home' ? ' disabled' : ''}>${n}</button>`).join('');
     const view = { home: vCareer, games: vGames, team: vTeamC, stats: vStats, league: vLeague, data: vData, help: vHelp, page: vPage }[ui.tab] || vCareer;
-    $('#main').innerHTML = saveBanner() + (ui.msg ? `<div class="toast">${esc(ui.msg)}</div>` : '') + view();
+    // League and Stats screens show "your team" as the team you play for
+    const u0 = L.user; let body;
+    try { if (cp && cp.team >= 0 && ui.tab !== 'home') L.user = cp.team; body = view(); } finally { L.user = u0; }
+    $('#main').innerHTML = saveBanner() + (ui.msg ? `<div class="toast">${esc(ui.msg)}</div>` : '') + body;
     if (ui.focus) { const el = $(ui.focus); ui.focus = null; if (el) setTimeout(() => el.scrollIntoView({ block: 'start', behavior: 'smooth' }), 30); }
     ui.msg = null;
     return;
@@ -1342,10 +1345,19 @@ function cPhaseCard(p) {
 }
 function cOffersCard(list) {
   if (!list || !list.length) return '';
-  return `<section class="card"><h3>Contract offers</h3><div class="tscroll"><table class="tbl"><thead><tr><th class="l">Team</th><th>Per year</th><th>Yrs</th><th class="l">Role</th><th class="l">Last year</th><th></th></tr></thead><tbody>
-    ${list.map((o, i) => `<tr><td class="l">${tLink(o.tid, esc(L.teams[o.tid].abbr))}${o.own ? ' <span class="small">(yours)</span>' : ''}</td><td><b>${G.money(o.sal)}</b></td><td>${o.yrs}</td><td class="l">${esc(o.role)}</td><td class="l small">${esc(o.wins)}${o.res ? ' · ' + esc(o.res) : ''}</td>
+  return `<section class="card"><h3>Contract offers</h3><div class="tscroll"><table class="tbl"><thead><tr><th class="l">Team</th><th>Per year</th><th>Yrs</th><th class="l">Role</th><th>Fit</th><th class="l">Last year</th><th></th></tr></thead><tbody>
+    ${list.map((o, i) => `<tr><td class="l">${tLink(o.tid, esc(L.teams[o.tid].abbr))}${o.own ? ' <span class="small">(yours)</span>' : ''}</td><td><b>${G.money(o.sal)}</b></td><td>${o.yrs}</td><td class="l">${esc(o.role)}</td><td>${esc(o.fit || '')}</td><td class="l small">${esc(o.wins)}${o.res ? ' · ' + esc(o.res) : ''}</td>
       <td class="l"><button class="btn sm primary" data-act="cSign" data-id="${i}">Sign</button>${o.h ? '' : ` <button class="btn sm" data-act="cHaggle" data-id="${i}">Ask for more</button>`}${o.own && !o.disc ? ` <button class="btn sm" data-act="cDisc" data-id="${i}">Hometown discount</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
     <p class="small">Asking for more works about half the time; a team that says no may pull its offer. A hometown discount (12% less, one more year) builds your coach's trust.</p></section>`;
+}
+function cSchemeCard(p) {
+  const S = G.careerScheme(L); if (!S) return '';
+  const f = S.fit, side = S.mine === 'off' ? 'offense' : 'defense';
+  return `<section class="card"><h3>Your team's schemes</h3>
+    <p>Offense: <b>${esc(S.osName)}</b>${S.mine === 'off' ? ' (your side)' : ''} · Defense: <b>${esc(S.dsName)}</b>${S.mine === 'def' ? ' (your side)' : ''}</p>
+    <p>Your fit in this ${side}: <b>${esc(f.grade)}</b> (${f.score})</p>
+    <ul class="small whylist">${f.why.map(([s, t]) => `<li class="${s === '+' ? 'good' : s === '-' ? 'bad' : ''}">${s === '+' ? '+' : s === '-' ? '−' : '·'} ${esc(t)}</li>`).join('')}</ul>
+    <p class="small">Teams change schemes with new coaches or when the game changes. You'll get an alert, with what it means for you.</p></section>`;
 }
 function cOrgCard(p) {
   const S = G.careerStanding(L); if (!S) return '';
@@ -1357,14 +1369,14 @@ function cOrgCard(p) {
   if (r && !r.starter && L.phase !== 'draft') btns.push(`<button class="btn" data-act="cStart"${S.accepted ? ' disabled' : ''}>Ask to start</button>`);
   if (!S.accepted) btns.push(`<button class="btn" data-act="cAccept">Accept any role</button>`);
   if (btns.length) out.push(`<div class="row">${btns.join('')}${r && r.ahead && !r.starter ? `<span class="small">Ahead of you: ${esc(r.ahead.name)} (${r.ahead.ovr})</span>` : ''}</div>`);
-  if (C.treq) out.push(`<div class="row"><span>Trade request in (${esc(({ contender: 'to a contender', start: 'where you\'d start', any: 'anywhere' })[C.treq.kind])}).</span><button class="btn sm" data-act="cTradeNo">Take it back</button></div>`);
-  else if (G.canTradeNow(L)) out.push(`<details class="trq"><summary>Ask for a trade</summary><div class="row"><button class="btn sm" data-act="cTrade" data-id="contender">To a contender</button><button class="btn sm" data-act="cTrade" data-id="start">Where I'd start</button><button class="btn sm" data-act="cTrade" data-id="any">Anywhere</button></div><p class="small">Coach trust drops 15 and the front office 10. After two weeks your team brings back deals.</p></details>`);
+  if (C.treq) out.push(`<div class="row"><span>Trade request in (${esc(({ contender: 'to a contender', start: 'where you\'d start', scheme: 'to a scheme that fits you', any: 'anywhere' })[C.treq.kind])}).</span><button class="btn sm" data-act="cTradeNo">Take it back</button></div>`);
+  else if (G.canTradeNow(L)) out.push(`<details class="trq"><summary>Ask for a trade</summary><div class="row"><button class="btn sm" data-act="cTrade" data-id="contender">To a contender</button><button class="btn sm" data-act="cTrade" data-id="start">Where I'd start</button><button class="btn sm" data-act="cTrade" data-id="scheme">A scheme that fits me</button><button class="btn sm" data-act="cTrade" data-id="any">Anywhere</button></div><p class="small">Coach trust drops 15 and the front office 10. After two weeks your team brings back deals.</p></details>`);
   return `<section class="card"><h3>Coach and front office</h3>${out.join('')}</section>`;
 }
 function cMovesCard(p) {
   if (p.retiredYear != null) return '';
   const C = L.career, out = [];
-  if (C.deals && C.deals.list.length) out.push(`<p><b>Trade offers for you:</b></p><div class="tscroll"><table class="tbl"><tbody>${C.deals.list.map((d, i) => { const t = L.teams[d.tid], l = t.hist[t.hist.length - 1]; return `<tr><td class="l">${tLink(d.tid)}</td><td class="l small">${l ? `${l.w}-${l.l} · ${esc(l.res)}` : ''}</td><td><button class="btn sm primary" data-act="cDeal" data-id="${i}">Go there</button></td></tr>`; }).join('')}</tbody></table></div><div class="row"><button class="btn sm" data-act="cDealNo">Turn them all down</button></div>`);
+  if (C.deals && C.deals.list.length) out.push(`<p><b>Trade offers for you:</b></p><div class="tscroll"><table class="tbl"><tbody>${C.deals.list.map((d, i) => { const t = L.teams[d.tid], l = t.hist[t.hist.length - 1]; return `<tr><td class="l">${tLink(d.tid)}</td><td class="l small">${l ? `${l.w}-${l.l} · ${esc(l.res)}` : ''}${(() => { const S = G.careerScheme(L, d.tid); return S ? ` · ${esc(S.mine === 'off' ? S.osName : S.dsName)}, fit ${esc(S.fit.grade)}` : ''; })()}</td><td><button class="btn sm primary" data-act="cDeal" data-id="${i}">Go there</button></td></tr>`; }).join('')}</tbody></table></div><div class="row"><button class="btn sm" data-act="cDealNo">Turn them all down</button></div>`);
   if (p.team >= 0) {
     const r = G.careerRole(L, p);
     if (false) out.push(`<div class="row"><button class="btn" data-act="cStart">Ask to start</button><span class="small">${r.ahead ? `Ahead of you: ${esc(r.ahead.name)} (${r.ahead.ovr})` : ''}</span></div>`);
@@ -1437,7 +1449,7 @@ function vCareer() {
   if (!L) return vCareerSetup();
   if (L.career.pid == null) return modeSeg() + vCareerCreate();
   const p = CP();
-  let h = cAlerts() + cHeader(p) + cPhaseCard(p) + cSeasonCard(p) + (p.retiredYear == null ? cOrgCard(p) + cDepthCard(p, false) : '') + cMovesCard(p) + cTrainCard(p) + cLegacyCard(p);
+  let h = cAlerts() + cHeader(p) + cPhaseCard(p) + cSeasonCard(p) + (p.retiredYear == null ? cOrgCard(p) + cSchemeCard(p) + cDepthCard(p, false) : '') + cMovesCard(p) + cTrainCard(p) + cLegacyCard(p);
   h += `<section class="card"><h3>Your story</h3><ul class="news">${L.career.log.slice(0, 30).map(n => `<li><span class="nw">${n.y}</span>${esc(n.txt)}</li>`).join('')}</ul></section>`;
   h += `<section class="card"><h3>Wire</h3><ul class="news">${L.news.slice(0, 12).map(n => `<li><span class="nw">${n.y}${n.w ? ' W' + n.w : ''}</span>${esc(n.s)}</li>`).join('')}</ul></section>`;
   return h;
