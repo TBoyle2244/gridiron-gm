@@ -12,6 +12,7 @@ const HELP = [
 <li><b>The season.</b> Play one game at a time or sim to the playoffs. Your line from every game is on the <b>Games</b> tab. Your team is on the <b>Team</b> tab.</li>
 </ol>
 <p><b>Contracts.</b> When your deal is up, your agent brings offers: your team's (if it still wants you) and others with the money, years, the role you'd have and last season's record. Before 1993 only your own team can bid unless it lets you go. Ask for more (works about half the time; a team may walk away) or take a hometown discount (less money, one more year, more trust). Go to camp without choosing and your agent takes the biggest deal.</p>
+<p><b>Contract structure.</b> Pick a structure on each multi-year offer: flat, standard, front-loaded, back-loaded (a little more total) or max bonus (half up front, a little less total). The signing bonus is paid when you sign, counts toward your career earnings right away, and stays yours if you're cut or traded.</p>
 <p><b>Raises and holdouts.</b> Clearly underpaid and past your rookie deal? Ask for a raise once a year. Turned down, you can hold out: you miss games until the team gives in or you report. Holding out costs trust.</p>
 <p><b>Coach and front office.</b> Two scores show where you stand. The <b>front office</b> (0-100) is the general manager: it rises when you produce for your pay, win honors and meet your goals, and falls when you hold out, ask out or get turned down for a raise. It decides whether your team re-signs you and gives you a raise; below 20 they start shopping you. <b>Accept any role</b> builds both, but you can't ask to start again that season.</p>
 <p><b>The coach's trust</b> (0-100) rises when you win, play well and meet your goals, and falls when you ask out, hold out or get turned down. With enough trust you can <b>ask to start</b>; it works best when you're close to the man ahead of you. A new team starts at 50.</p>
@@ -211,6 +212,14 @@ const HELP = [
 <li><b>Fourth down:</b> go for it, punt or try a field goal (the odds are shown). After a touchdown from 1994 on you can go for two.</li>
 </ul>` },
 
+{ id: 'bonus', title: 'Signing bonuses, dead money and restructures', body: `
+<p>Contracts work like the real NFL's. Each deal has a yearly salary and often a <b>signing bonus</b>. The bonus is paid up front but counts against the cap spread evenly over the contract, up to five years. Teams also <b>front-load</b> (more salary early) or <b>back-load</b> (more late) deals. A player's page shows his contract year by year: salary, bonus share and cap hit.</p>
+<ul><li><b>Dead money.</b> Cut or trade a player and the bonus not yet counted lands on your cap right away. The release button shows the amount.</li>
+<li><b>June 1 cuts</b> (1994 on, up to two each offseason): only this year's bonus share counts now; the rest moves to next year.</li>
+<li><b>Restructure</b> (1994 on): turn most of a player's salary this year into a bonus spread over the years he has left. You save cap room now and pay for it later. Once per player per year, players with two or more years left.</li>
+<li>Players you trade for arrive with their salary only; their old team keeps the bonus.</li>
+<li>Before the 1994 cap, bonuses don't matter for the cap, only your owner's budget.</li>
+<li>Contracts signed before this update stay flat until they're re-signed.</li></ul>` },
 { id: 'weather', title: 'Stadiums and weather', body: `
 <p>Every team plays in its real stadium for the era: Lambeau Field, the Astrodome, the Metrodome, Candlestick Park and so on, with its roof (open air, dome or retractable) and its city's climate.</p>
 <ul><li>The next game card shows the stadium and the forecast; what you see is what you get.</li>

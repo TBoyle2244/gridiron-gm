@@ -251,10 +251,10 @@ button.crest{cursor:pointer;font:inherit;color:inherit;background:transparent}
 .tbar i { display: block; height: 100%; background: var(--gold); border-radius: 6px; }
 .dcgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px 16px; }
 .dcgrp.mine { grid-column: 1 / -1; }
-.dcrow { display: grid; grid-template-columns: 22px 1fr auto 32px; gap: 8px; align-items: center; padding: 5px 6px; border-top: 1px solid var(--line); font-size: 14px; }
+.dcrow { display: grid; grid-template-columns: 22px 1fr auto auto 32px; gap: 8px; align-items: center; padding: 5px 6px; border-top: 1px solid var(--line); font-size: 14px; }
 .dcrow.st { background: color-mix(in srgb, var(--field) 12%, transparent); }
 .dcrow.me { outline: 2px solid var(--gold); outline-offset: -2px; border-radius: 6px; }
-.dcn, .dcpos { color: var(--muted); font-size: 12px; } .dco { text-align: right; font-weight: 600; }
+.dcn, .dcpos, .dcsal { color: var(--muted); font-size: 12px; } .dcsal { min-width: 52px; text-align: right; } .dco { text-align: right; font-weight: 600; }
 .orgrow { display: grid; grid-template-columns: 110px 1fr 36px; gap: 10px; align-items: center; margin-top: 8px; }
 .orglab { font-family: var(--cond); font-weight: 600; letter-spacing: .03em; } .orgrow .tbar { margin: 0; } .orgrow b { text-align: right; }
 details.trq summary { cursor: pointer; color: var(--gold); font-family: var(--cond); font-weight: 600; font-size: 16px; margin-top: 6px; }
@@ -919,7 +919,7 @@ function fitPayrolls(L) {
   for (const t of L.teams) {
     const pay = payroll(L, t.id, y); if (pay <= c * 0.95) continue;
     const f = c * 0.94 / pay;
-    roster(L, t.id).forEach(p => { if (p.con) p.con.sal = Math.round(p.con.sal * f); });
+    roster(L, t.id).forEach(p => { if (!p.con) return; p.con.sal = Math.round(p.con.sal * f); if (p.con.base) p.con.base = p.con.base.map(v => Math.round(v * f)); (p.con.bon || []).forEach(b => b.a = Math.round(b.a * f)); });
   }
 }
 
@@ -1024,19 +1024,55 @@ function clearIR(L) { for (const id in L.players) delete L.players[id].ir; }
 
 // Releasing a player under contract leaves dead money: a quarter of what is left on his deal
 // (at most 60% of one year's salary) stays on this year's payroll. Minimum-salary players cost nothing.
-function deadCharge(L, p) {
-  const y = capYear(L), sal = p && p.con ? salFor(p, y) : null;
+function deadCharge(L, p, june1) {
+  const y = capYear(L);
+  if (p && p.con && p.con.base) { const all = proLeft(p.con, y); if (!june1) return all; const now = Math.round(proYear(p.con, y)); return { now, later: all - now }; }
+  const sal = p && p.con ? salFor(p, y) : null;
+  if (june1) return { now: deadCharge(L, p), later: 0 };
   if (!sal || sal < avgSalary(y) * 0.6) return 0;
   const left = (p.con.ext ? p.con.ext.exp : p.con.exp) - y + 1;
   return Math.round(sal * Math.min(0.6, 0.25 * Math.max(1, left)));
 }
 function deadFor(L, tid, y) { return (L.dead && L.dead[tid] && L.dead[tid][y]) || 0; }
-function release(L, pid) {
+// Restructure: turn this year's base salary (above the minimum) into a bonus spread over the years left (up to 5).
+function restructureInfo(L, p) {
+  const y = capYear(L); if (!p || !p.con || capFor(y) == null || y < 1994 || p.team !== L.user) return null;
+  const exp = p.con.exp, left = exp - y + 1; if (left < 2) return null;
+  if (!p.con.base) return null;
+  const minS = Math.round(avgSalary(y) * 0.3), b = baseFor(p, y); if (b == null || b < minS * 1.5) return null;
+  if (p.con.rsY === y) return null;
+  const conv = b - minS, n = Math.min(5, left);
+  return { conv, n, saves: Math.round(conv - conv / n) };
+}
+function restructure(L, pid) {
+  const p = L.players[pid], R0 = restructureInfo(L, p); if (!R0) return 'He can\'t be restructured right now.';
+  const y = capYear(L); p.con.base[y - p.con.signed] -= R0.conv; p.con.bon = (p.con.bon || []).concat([{ a: R0.conv, f: y, n: R0.n, cur: 1 }]); p.con.rsY = y;
+  plog(L, p, `Restructured: ${money(R0.conv)} of salary turned into a bonus (saves ${money(R0.saves)} on the ${y} cap).`);
+  addNews(L, `${L.teams[L.user].abbr} restructured ${p.pos} ${p.name}'s deal, clearing ${money(R0.saves)} of ${y} cap space.`);
+  return null;
+}
+// Year by year: base, prorated bonus, cap hit, plus dead money if cut now
+function contractTable(L, p) {
+  if (!p || !p.con) return null;
+  const y = capYear(L), c = p.con, rows = [];
+  const end = c.ext ? c.ext.exp : c.exp;
+  for (let yy = Math.max(y, c.signed); yy <= end; yy++) {
+    const base = yy <= c.exp ? baseFor(p, yy) : c.ext.sal, pro = yy <= c.exp ? Math.round(proYear(c, yy)) : 0;
+    rows.push({ y: yy, base: Math.round(base), pro, hit: Math.round(base + pro), cash: cashFor(p, yy) });
+  }
+  const bonus = (c.bon || []).filter(b => b.cur).reduce((s, b) => s + b.a, 0);
+  return { rows, shape: c.shape ? SHAPES[c.shape].name : 'Flat', bonus, dead: c.base ? proLeft(c, y) : deadCharge(L, p), total: Math.round(c.sal * (c.exp - c.signed + 1)) };
+}
+function addDead(L, tid, y, amt) { if (!amt) return; L.dead = L.dead || {}; const D = L.dead[tid] || (L.dead[tid] = {}); D[y] = (D[y] || 0) + Math.round(amt); }
+// June 1 cuts: from 1994, up to two a year in the offseason; this year's share of the bonus now, the rest next year
+function june1Left(L) { const y = capYear(L); if (capFor(y) == null || y < 1994 || !(L.phase === 'offseason' || L.phase === 'preseason')) return 0; return 2 - ((L.june1 && L.june1[y]) || 0); }
+function release(L, pid, june1) {
   const p = L.players[pid]; if (!p) return; const t = L.teams[p.team];
   let dead = 0;
   if (t && t.id === L.user) {
-    dead = deadCharge(L, p);
-    if (dead) { const y = capYear(L); L.dead = L.dead || {}; const D = L.dead[t.id] || (L.dead[t.id] = {}); D[y] = (D[y] || 0) + dead; }
+    const y = capYear(L);
+    if (june1 && june1Left(L) > 0 && p.con && p.con.base) { const d = deadCharge(L, p, true); addDead(L, t.id, y, d.now); addDead(L, t.id, y + 1, d.later); dead = d.now; L.june1 = L.june1 || {}; L.june1[y] = (L.june1[y] || 0) + 1; }
+    else { dead = deadCharge(L, p); addDead(L, t.id, y, dead); }
   }
   p.team = -1; delete p.con; if (t) plog(L, p, `Released by ${t.abbr}.`);
   if (t) addNews(L, `${t.abbr} released ${p.pos} ${p.name}.${dead ? ` Dead money: ${money(dead)} stays on the ${capYear(L)} payroll.` : ''}`);
@@ -1169,6 +1205,8 @@ function validPkg(L, tid, pkg) {
   return (pkg.players || []).every(id => L.players[id] && L.players[id].team === tid) && (pkg.picks || []).every(id => { const k = pickById(L, id); return k && k.own === tid && tradeablePick(k); });
 }
 function execTrade(L, a, b, aGive, bGive) {
+  const y0 = capYear(L);
+  [[a, aGive], [b, bGive]].forEach(([from, g]) => (g.players || []).forEach(id => { const p = L.players[id]; if (!p || !p.con || !p.con.bon || !p.con.bon.length) return; if (from === L.user) addDead(L, from, y0, proLeft(p.con, y0)); p.con.bon = []; }));
   (aGive.players || []).forEach(id => L.players[id].team = b); (bGive.players || []).forEach(id => L.players[id].team = a);
   (aGive.players || []).forEach(id => plog(L, L.players[id], `Traded from ${L.teams[a].abbr} to ${L.teams[b].abbr}.`)); (bGive.players || []).forEach(id => plog(L, L.players[id], `Traded from ${L.teams[b].abbr} to ${L.teams[a].abbr}.`));
   (aGive.players || []).concat(bGive.players || []).forEach(id => signRefuserIfMoved(L, L.players[id]));
@@ -1212,7 +1250,10 @@ function tradeVerdict(L, partner, give, get) {
 function tradeCapMsg(L, a, b, aGive, bGive) {
   const y = capYear(L);
   const sal = ids => (ids || []).reduce((s, id) => s + (salFor(L.players[id], y) || 0), 0);
-  const da = sal(bGive.players) - sal(aGive.players);
+  const left = (ids, from) => from === L.user ? (ids || []).reduce((s, id) => s + (L.players[id] && L.players[id].con ? proLeft(L.players[id].con, y) : 0), 0) : 0;
+  // what arrives counts base salary only (the bonus stays behind as the other team's dead money)
+  const base = ids => (ids || []).reduce((s, id) => { const p = L.players[id]; return s + (p && p.con && p.con.base ? (baseFor(p, y) || 0) : salFor(p, y) || 0); }, 0);
+  const da = base(bGive.players) - sal(aGive.players) + left(aGive.players, a) - left(bGive.players, b);
   return capMsg(L, a, da) || capMsg(L, b, -da);
 }
 const DEADLINE_WEEK = 9;
@@ -3195,10 +3236,32 @@ function leagueNorm(L) {
 }
 function marketValue(L, p, y) { return Math.max(avgSalary(y || capYear(L)) * 0.3, avgSalary(y || capYear(L)) * multFor(p) / leagueNorm(L)); }
 function contractYears(p) { return p.age <= 26 ? 4 : (p.age <= 29 ? 3 : (p.age <= 31 ? 2 : 1)); }
-function setContract(p, sal, firstYear, yrs) { p.con = { sal: Math.round(sal), exp: firstYear + yrs - 1, signed: firstYear }; p.mor = Math.max(mor(p), 70); delete p.holdout; }
+/* Contracts: an average yearly number (sal), split into base salaries by year and a signing bonus.
+   The bonus is paid up front but counts against the cap spread evenly over up to five years.
+   Cut or trade a player and the bonus not yet counted becomes dead money. Shapes:
+   flat (no bonus), std (some bonus, even base), front / back (salary early or late), bonus (max bonus). */
+const SHAPES = { flat: { name: 'Flat', share: 0, w: 0, mult: 1 }, std: { name: 'Standard', share: 0.25, w: 0, mult: 1 }, front: { name: 'Front-loaded', share: 0.2, w: -0.35, mult: 1 }, back: { name: 'Back-loaded', share: 0.25, w: 0.35, mult: 1.04 }, bonus: { name: 'Max bonus', share: 0.5, w: 0.2, mult: 0.96 } };
+function autoShape(sal, yrs, y) {
+  if (yrs < 2) return 'flat';
+  const big = sal >= avgSalary(y) * 1.4;
+  if (capFor(y) == null) return big ? 'std' : 'flat';
+  return big ? R.pick(['std', 'back', 'back', 'bonus', 'front']) : sal >= avgSalary(y) * 0.8 ? R.pick(['std', 'flat', 'back']) : 'flat';
+}
+function proYear(con, y) { let s = 0; (con.bon || []).forEach(b => { if (y >= b.f && y < b.f + b.n) s += b.a / b.n; }); return s; }
+function proLeft(con, y) { let s = 0; (con.bon || []).forEach(b => { for (let yy = Math.max(y, b.f); yy < b.f + b.n; yy++) s += b.a / b.n; }); return Math.round(s); }
+function baseFor(p, y) { const c = p.con; if (!c || y > c.exp) return null; return c.base ? c.base[y - c.signed] : c.sal; }
+function cashFor(p, y) { const c = p.con; if (!c) return 0; const b = baseFor(p, y); let s = b == null ? (c.ext && y <= c.ext.exp ? c.ext.sal : 0) : b; (c.bon || []).forEach(x => { if (x.f === y && x.cur) s += x.a; }); return Math.round(s); }
+function setContract(p, sal, firstYear, yrs, shape) {
+  const old = p.con, carry = old && old.bon ? old.bon.filter(b => b.f + b.n - 1 >= firstYear).map(b => Object.assign({}, b, { cur: 0 })) : [];
+  shape = SHAPES[shape] ? shape : autoShape(sal, yrs, firstYear);
+  const S = SHAPES[shape], total = Math.round(sal) * yrs * S.mult, bonus = Math.round(total * S.share), n = Math.min(5, yrs);
+  const ws = []; for (let i = 0; i < yrs; i++) ws.push(yrs === 1 ? 1 : 1 + S.w * (i / (yrs - 1) - 0.5) * 2);
+  const wsum = ws.reduce((a, b) => a + b, 0), base = ws.map(w => Math.round((total - bonus) * w / wsum));
+  p.con = { sal: Math.round(total / yrs), exp: firstYear + yrs - 1, signed: firstYear, base, shape, bon: carry.concat(bonus ? [{ a: bonus, f: firstYear, n, cur: 1 }] : []) };
+  p.mor = Math.max(mor(p), 70); delete p.holdout; }
 function salFor(p, y) {
   if (!p || !p.con) return null;
-  if (y <= p.con.exp) return p.con.sal;
+  if (y <= p.con.exp) return p.con.base ? Math.round(p.con.base[y - p.con.signed] + proYear(p.con, y)) : p.con.sal;
   if (p.con.ext && y <= p.con.ext.exp) return p.con.ext.sal;
   return null;
 }
@@ -3863,8 +3926,8 @@ function careerSwitch(L, i) {
 }
 function careerEarn(L) {
   const C = L.career, p = careerP(L); if (!p || p.team < 0 || !p.con) return;
-  C.earn = C.earn || {}; if (C.earn[L.year] != null) return;
-  C.earn[L.year] = salFor(p, L.year) || 0;
+  C.earn = C.earn || {}; C.earnY = C.earnY || {}; if (C.earnY[L.year]) return; C.earnY[L.year] = 1;
+  C.earn[L.year] = (C.earn[L.year] || 0) + (baseFor(p, L.year) != null ? baseFor(p, L.year) : salFor(p, L.year) || 0);
 }
 function careerEarnings(L) { const e = (L.career && L.career.earn) || {}; let s = 0; for (const y in e) s += e[y]; return s; }
 // Called from progress() for the career player: the chance his career ends for him this offseason.
@@ -4142,19 +4205,21 @@ function careerOffers(L) {
   C.offers = { key, list, keep: `${L.year}-${L.phase}` };
   return list;
 }
-function careerSign(L, i) {
+function careerSign(L, i, shape) {
   const C = L.career, p = careerP(L), o = careerOffers(L)[+i]; if (!p || !o) return 'That offer is gone.';
   const y = capYear(L), old = p.team;
   if (o.tid !== old && (L.phase === 'regular' || L.phase === 'playoffs') && active(L, o.tid).length >= rules(L.year).rosterMax) {
     const cut = roster(L, o.tid).filter(x => !x.ir && x.id !== p.id).sort((a, b) => value(a) - value(b))[0]; if (cut) retireIfUnsigned(L, cut);
   }
   if (old >= 0 && old !== o.tid) p.prevTeam = old;
-  p.team = o.tid; setContract(p, o.sal, y, o.yrs); delete p.holdout; delete p.askMult;
+  p.team = o.tid; setContract(p, o.sal, y, o.yrs, o.yrs > 1 && SHAPES[shape] ? shape : 'flat'); delete p.holdout; delete p.askMult;
+  const bon = (p.con.bon || []).filter(b => b.cur).reduce((s, b) => s + b.a, 0);
+  if (bon) { C.earn = C.earn || {}; C.earn[y] = (C.earn[y] || 0) + bon; }
   if (old !== o.tid) { noteFASign(L, p, o.tid); C.trust = 50; C.fo = 50 + (o.camp ? -5 : 0); ensureNumbers(L); } else addFO(L, o.disc ? 10 : 4);
   const t = L.teams[o.tid], verb = old === o.tid ? 'Re-signed with' : 'Signed with';
-  plog(L, p, `${verb} ${t.abbr}: ${o.yrs} yr${o.yrs > 1 ? 's' : ''}, ${money(o.sal)} a year.`);
+  plog(L, p, `${verb} ${t.abbr}: ${o.yrs} yr${o.yrs > 1 ? 's' : ''}, ${money(p.con.sal)} a year${bon ? `, ${money(bon)} signing bonus` : ''}.`);
   addNews(L, `${t.abbr} ${old === o.tid ? 're-signed' : 'signed'} ${p.pos} ${p.name}: ${o.yrs} yr${o.yrs > 1 ? 's' : ''} at ${money(o.sal)}.`);
-  careerLog(L, `${verb} the ${t.city} ${t.name}: ${o.yrs} year${o.yrs > 1 ? 's' : ''} at ${money(o.sal)} a year (${o.role.toLowerCase()}).`);
+  careerLog(L, `${verb} the ${t.city} ${t.name}: ${o.yrs} year${o.yrs > 1 ? 's' : ''} at ${money(p.con.sal)} a year${bon ? ` (${SHAPES[p.con.shape].name.toLowerCase()}, ${money(bon)} signing bonus)` : ''}, ${o.role.toLowerCase()}.`);
   if (o.disc) addTrust(L, 10);
   C.offers = null; C.mkt = 0;
   if (L.phase === 'regular' || L.phase === 'playoffs') careerEarn(L);
@@ -4555,7 +4620,7 @@ function careerLegacy(L) {
   return { score: Math.round(s), line: line && Math.round(line), pct: line ? Math.round(s / line * 100) : null, rings, jerseys, hof: p.hof || 0, verdict: C.verdict || null };
 }
 
-const API = { careerScheme, careerStanding, careerAcceptRole, PB_SLOTS, proBowl, stadium, forecast, wxText, wxEffect, recordBook, REC_KEYS, careerSwitchOpts, careerSwitch, careerEarnings, careerCoachOpts, careerBecomeCoach, careerCoachNow, careerFrontOfficeOpts, careerToGM, NO_TEAM, CAREER_TIERS, CAREER_Q, CAREER_GRPS, CAREER_POS, CAREER_FOCUS, CAREER_PLANS, careerPreview, careerClass, startCareer, careerCreate, careerChooseReal, careerP, isCareer, careerRole, careerOffers, careerSign, careerHaggle, careerDiscount, careerRaiseInfo, careerAskRaise, careerHoldout, careerAskStart, careerRequestTrade, careerCancelTrade, careerTakeDeal, careerDeclineDeals, canTradeNow, setCareerFocus, setCareerPlan, careerGoalStatus, careerAwardRace, careerNext, careerSimYear, careerCanRetire, careerRetire, careerRanks, careerLegacy, careerTotal, hofLine, dismissAlert, STAT_NAME, COLLEGES, plog, practiceSquad, unsignedRights, psSize, psEligible, toPracticeSquad, promoteFromPS, signFromPS, signRefuserIfMoved, optionInfo, exerciseOption, declineOption, transitionTag, tagPrice, tradeablePick, rookieYears, playerFit, moraleReasons, holdoutInfo, marketFor, marketView, footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
+const API = { execTrade, setContract, SHAPES, contractTable, restructure, restructureInfo, june1Left, cashFor, baseFor, proLeft, careerScheme, careerStanding, careerAcceptRole, PB_SLOTS, proBowl, stadium, forecast, wxText, wxEffect, recordBook, REC_KEYS, careerSwitchOpts, careerSwitch, careerEarnings, careerCoachOpts, careerBecomeCoach, careerCoachNow, careerFrontOfficeOpts, careerToGM, NO_TEAM, CAREER_TIERS, CAREER_Q, CAREER_GRPS, CAREER_POS, CAREER_FOCUS, CAREER_PLANS, careerPreview, careerClass, startCareer, careerCreate, careerChooseReal, careerP, isCareer, careerRole, careerOffers, careerSign, careerHaggle, careerDiscount, careerRaiseInfo, careerAskRaise, careerHoldout, careerAskStart, careerRequestTrade, careerCancelTrade, careerTakeDeal, careerDeclineDeals, canTradeNow, setCareerFocus, setCareerPlan, careerGoalStatus, careerAwardRace, careerNext, careerSimYear, careerCanRetire, careerRetire, careerRanks, careerLegacy, careerTotal, hofLine, dismissAlert, STAT_NAME, COLLEGES, plog, practiceSquad, unsignedRights, psSize, psEligible, toPracticeSquad, promoteFromPS, signFromPS, signRefuserIfMoved, optionInfo, exerciseOption, declineOption, transitionTag, tagPrice, tradeablePick, rookieYears, playerFit, moraleReasons, holdoutInfo, marketFor, marketView, footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
   value, release, sign, proposeTrade, tradeVerdict, teamPicks, pickById, pickLabel, projectedOverall, pickWeight, playerWeight, ensurePicks, myDraftSlots, aiTrades, acceptOffer, rejectOffer, offerValid, cutTo, ratings, teamOverall, startRegular, canStartSeason, simWeek, simPlayoffRound, roundName,
   sortTeams, divisions, pct, startDraft, onClock, makePick, aiPick, draftUntilUser, draftAll, scoutPlayer, beginDraft, SCOUT_VISITS, endDraft, startNextSeason, leaders, potKnown, shownPot, roman, addNews };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.GG = API;
@@ -4577,6 +4642,7 @@ const HELP = [
 <li><b>The season.</b> Play one game at a time or sim to the playoffs. Your line from every game is on the <b>Games</b> tab. Your team is on the <b>Team</b> tab.</li>
 </ol>
 <p><b>Contracts.</b> When your deal is up, your agent brings offers: your team's (if it still wants you) and others with the money, years, the role you'd have and last season's record. Before 1993 only your own team can bid unless it lets you go. Ask for more (works about half the time; a team may walk away) or take a hometown discount (less money, one more year, more trust). Go to camp without choosing and your agent takes the biggest deal.</p>
+<p><b>Contract structure.</b> Pick a structure on each multi-year offer: flat, standard, front-loaded, back-loaded (a little more total) or max bonus (half up front, a little less total). The signing bonus is paid when you sign, counts toward your career earnings right away, and stays yours if you're cut or traded.</p>
 <p><b>Raises and holdouts.</b> Clearly underpaid and past your rookie deal? Ask for a raise once a year. Turned down, you can hold out: you miss games until the team gives in or you report. Holding out costs trust.</p>
 <p><b>Coach and front office.</b> Two scores show where you stand. The <b>front office</b> (0-100) is the general manager: it rises when you produce for your pay, win honors and meet your goals, and falls when you hold out, ask out or get turned down for a raise. It decides whether your team re-signs you and gives you a raise; below 20 they start shopping you. <b>Accept any role</b> builds both, but you can't ask to start again that season.</p>
 <p><b>The coach's trust</b> (0-100) rises when you win, play well and meet your goals, and falls when you ask out, hold out or get turned down. With enough trust you can <b>ask to start</b>; it works best when you're close to the man ahead of you. A new team starts at 50.</p>
@@ -4776,6 +4842,14 @@ const HELP = [
 <li><b>Fourth down:</b> go for it, punt or try a field goal (the odds are shown). After a touchdown from 1994 on you can go for two.</li>
 </ul>` },
 
+{ id: 'bonus', title: 'Signing bonuses, dead money and restructures', body: `
+<p>Contracts work like the real NFL's. Each deal has a yearly salary and often a <b>signing bonus</b>. The bonus is paid up front but counts against the cap spread evenly over the contract, up to five years. Teams also <b>front-load</b> (more salary early) or <b>back-load</b> (more late) deals. A player's page shows his contract year by year: salary, bonus share and cap hit.</p>
+<ul><li><b>Dead money.</b> Cut or trade a player and the bonus not yet counted lands on your cap right away. The release button shows the amount.</li>
+<li><b>June 1 cuts</b> (1994 on, up to two each offseason): only this year's bonus share counts now; the rest moves to next year.</li>
+<li><b>Restructure</b> (1994 on): turn most of a player's salary this year into a bonus spread over the years he has left. You save cap room now and pay for it later. Once per player per year, players with two or more years left.</li>
+<li>Players you trade for arrive with their salary only; their old team keeps the bonus.</li>
+<li>Before the 1994 cap, bonuses don't matter for the cap, only your owner's budget.</li>
+<li>Contracts signed before this update stay flat until they're re-signed.</li></ul>` },
 { id: 'weather', title: 'Stadiums and weather', body: `
 <p>Every team plays in its real stadium for the era: Lambeau Field, the Astrodome, the Metrodome, Candlestick Park and so on, with its roof (open air, dome or retractable) and its city's climate.</p>
 <ul><li>The next game card shows the stadium and the forecast; what you see is what you get.</li>
@@ -4852,7 +4926,7 @@ const HELP_FOR_TAB = { home: 'office', roster: 'roster', stats: 'stats', league:
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-15i';
+const APP_VERSION = '2026-11-15j';
 let SLOT = (() => { try { return localStorage.getItem('gg-slot') === 'career' ? 'career' : 'league'; } catch (e) { return 'league'; } })();
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
@@ -5047,6 +5121,11 @@ function seasonCols(p) {
   else cols = cols.concat([{ h: 'Sacks', f: r => n0(r.s.sk) }, { h: 'INT', f: r => n0(r.s.dint) }]);
   return cols;
 }
+function contractCard(p) {
+  const T = G.contractTable(L, p); if (!T || !T.rows.length) return '';
+  return `<section class="card"><h3>Contract</h3><p class="small">${esc(T.shape)}${T.bonus ? ` · ${G.money(T.bonus)} signing bonus, counted on the cap over up to 5 years` : ''}. Dead money if cut now: <b>${G.money(T.dead)}</b>.</p>
+    <div class="tscroll"><table class="tbl"><thead><tr><th class="l">Year</th><th>Salary</th><th>Bonus share</th><th>Cap hit</th></tr></thead><tbody>${T.rows.map(r => `<tr><td class="l">${r.y}</td><td>${G.money(r.base)}</td><td>${r.pro ? G.money(r.pro) : '–'}</td><td><b>${G.money(r.hit)}</b></td></tr>`).join('')}</tbody></table></div></section>`;
+}
 function playerPage(p) {
   const ys = Object.keys(p.hist).map(Number).sort((a, b) => a - b);
   const rows = ys.map(y => ({ y, s: p.hist[y], me: p.hist[y].tm === L.user }));
@@ -5075,6 +5154,7 @@ function playerPage(p) {
     ${fit && !p.retiredYear ? `<p class="small"><b>Fit with your ${mine ? 'team' : 'team if you got him'}:</b>${reasonsText(fit.why)}</p>` : ''}
     ${aw ? `<div class="awards">${aw}</div>` : ''}
     ${acts ? `<div class="row">${acts}</div>` : ''}</section>
+    ${!p.retiredYear && p.team >= 0 ? contractCard(p) : ''}
     ${stints.length ? `<section class="card"><h3>Teams</h3><div class="list">${stints.map(s => `<div class="pl"><div class="pl-main"><span class="pos">${s.tm != null && L.teams[s.tm] ? esc(L.teams[s.tm].abbr) : '–'}</span><div class="pl-name">${s.tm != null && L.teams[s.tm] ? tLink(s.tm) : 'Unknown'}<div class="pl-sub">${s.from === s.to ? s.from : s.from + '–' + s.to} · ${s.to - s.from + 1} season${s.to > s.from ? 's' : ''}</div></div></div></div>`).join('')}</div></section>` : ''}
     <section class="card"><h3>Season by season</h3>${ys.length ? table(seasonCols(p), rows.concat([totRow])) : '<p class="small">No seasons played in this league yet.</p>'}</section>
     ${log.length ? `<section class="card"><h3>Transactions</h3><ul class="news">${log.map(x => `<li><span class="nw">${x.y}</span>${esc(x.s)}</li>`).join('')}</ul></section>` : ''}`;
@@ -5642,7 +5722,7 @@ function vRoster() {
       <button class="pl-main" data-act="open" data-id="${p.id}"><span class="pos ${starterIds.has(p.id) ? 'st' : ''}">${esc(p.pos)}</span>
       <div class="pl-name">${esc(p.name)}${p.inj ? `<span class="inj">INJ ${p.inj >= 20 ? 'season' : p.inj + 'w'}</span>` : ''}<div class="pl-sub">${p.num ? '#' + p.num + ' · ' : ''}${(() => { const C = L.camp; if (!C || C.year !== L.year || (L.phase !== 'preseason' && L.phase !== 'regular')) return ''; const r = C.mine.find(x => x.id === p.id); if (!r || r.a === r.b) return ''; const d = r.a - r.b; return `<span class="${d > 0 ? 'good' : 'bad'}">${d > 0 ? '▲' + d : '▼' + (-d)} camp</span> · `; })()}${p.ir ? '<b class="bad">INJURED RESERVE</b> · ' : ''}${p.holdout ? '<b class="bad">HOLDOUT</b> · ' : ''}${p.striking ? '<b class="bad">ON STRIKE</b> · ' : ''}${p.repl ? '<b class="warn">Replacement player</b> · ' : ''}${(() => { const rt = G.roleTag(L, p), f = G.playerFit(L, p, L.user); return rt ? `<span class="${rt.c}">${rt.t}</span>, fit <b>${f.grade}</b> · ` : ''; })()}Age ${p.age} · ${p.yrs ? p.yrs + ' yr' + (p.yrs > 1 ? 's' : '') : 'Rookie'} · <span class="${G.mor(p) < 50 ? 'bad' : (G.mor(p) >= 75 ? 'good' : '')}">${G.moraleWord(p)}</span> · ${conText(p)}${statLine(p) ? ' · ' + statLine(p) : ''}</div></div>
       <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></button>
-      ${ui.open === p.id ? `<div class="pl-act"><button class="btn sm" data-act="pl" data-id="${p.id}">Player page</button><div class="small whybox"><b>Scheme fit ${G.playerFit(L, p, L.user).grade}:</b> ${reasonsText(G.playerFit(L, p, L.user).why)}<br><b>Morale ${G.moraleWord(p)} (${G.mor(p)}):</b> ${reasonsText(G.moraleReasons(L, p)) || 'nothing notable'}${p.holdout ? `<br><b class="bad">Holding out</b> until he gets a new deal (${G.money(G.renegotiatePrice(L, p))}).` : ''}</div>${p.college ? `<span class="small">${esc(p.college)}${p.draft ? ` · drafted ${p.draft.year} R${p.draft.rnd}` : ''}</span>` : ''}${G.canIR(L, p) ? `<button class="btn sm" data-act="ir" data-id="${p.id}">Place on injured reserve</button>` : ''}${p.ir ? (() => { const i = G.irReturnInfo(L, p); return i.ok ? `<button class="btn sm primary" data-act="irOff" data-id="${p.id}">Activate from IR</button>` : `<span class="small">${esc(i.why)}</span>`; })() : ''}${(p.holdout || (G.mor(p) < 50 && G.underpaid(L, p))) && p.con ? `<button class="btn sm primary" data-act="reneg" data-id="${p.id}">New deal ${G.money(G.renegotiatePrice(L, p))}</button>` : ''}${G.extInfo(L, p) ? `<button class="btn sm primary" data-act="extend" data-id="${p.id}">Extend ${G.money(G.extInfo(L, p).sal)}</button>` : ''}${G.canPlayHurt(p) ? `<button class="btn sm" data-act="hurt" data-id="${p.id}">${p.playHurt ? 'Rest him' : 'Play through injury'}</button>` : ''}${G.psSize(L.year) && G.psEligible(L, p) && L.phase !== 'playoffs' ? `<button class="btn sm" data-act="psDown" data-id="${p.id}">Move to practice squad</button>` : ''}${G.optionInfo(L, p) ? `<button class="btn sm primary" data-act="opt5" data-id="${p.id}">Pick up 5th-year option ${G.money(G.optionInfo(L, p).sal)}</button><button class="btn sm" data-act="opt5no" data-id="${p.id}">Decline option</button>` : ''}${confirmBtn('rel' + p.id, G.deadCharge(L, p) ? `Release (${G.money(G.deadCharge(L, p))} dead money)` : 'Release')}<button class="btn sm" data-act="shop" data-id="${p.id}">Offer in trade</button></div>` : ''}
+      ${ui.open === p.id ? `<div class="pl-act"><button class="btn sm" data-act="pl" data-id="${p.id}">Player page</button><div class="small whybox"><b>Scheme fit ${G.playerFit(L, p, L.user).grade}:</b> ${reasonsText(G.playerFit(L, p, L.user).why)}<br><b>Morale ${G.moraleWord(p)} (${G.mor(p)}):</b> ${reasonsText(G.moraleReasons(L, p)) || 'nothing notable'}${p.holdout ? `<br><b class="bad">Holding out</b> until he gets a new deal (${G.money(G.renegotiatePrice(L, p))}).` : ''}</div>${p.college ? `<span class="small">${esc(p.college)}${p.draft ? ` · drafted ${p.draft.year} R${p.draft.rnd}` : ''}</span>` : ''}${G.canIR(L, p) ? `<button class="btn sm" data-act="ir" data-id="${p.id}">Place on injured reserve</button>` : ''}${p.ir ? (() => { const i = G.irReturnInfo(L, p); return i.ok ? `<button class="btn sm primary" data-act="irOff" data-id="${p.id}">Activate from IR</button>` : `<span class="small">${esc(i.why)}</span>`; })() : ''}${(p.holdout || (G.mor(p) < 50 && G.underpaid(L, p))) && p.con ? `<button class="btn sm primary" data-act="reneg" data-id="${p.id}">New deal ${G.money(G.renegotiatePrice(L, p))}</button>` : ''}${G.extInfo(L, p) ? `<button class="btn sm primary" data-act="extend" data-id="${p.id}">Extend ${G.money(G.extInfo(L, p).sal)}</button>` : ''}${G.canPlayHurt(p) ? `<button class="btn sm" data-act="hurt" data-id="${p.id}">${p.playHurt ? 'Rest him' : 'Play through injury'}</button>` : ''}${G.psSize(L.year) && G.psEligible(L, p) && L.phase !== 'playoffs' ? `<button class="btn sm" data-act="psDown" data-id="${p.id}">Move to practice squad</button>` : ''}${G.optionInfo(L, p) ? `<button class="btn sm primary" data-act="opt5" data-id="${p.id}">Pick up 5th-year option ${G.money(G.optionInfo(L, p).sal)}</button><button class="btn sm" data-act="opt5no" data-id="${p.id}">Decline option</button>` : ''}${G.restructureInfo(L, p) ? confirmBtn('rst' + p.id, `Restructure (saves ${G.money(G.restructureInfo(L, p).saves)} now)`) : ''}${confirmBtn('rel' + p.id, G.deadCharge(L, p) ? `Release (${G.money(G.deadCharge(L, p))} dead money)` : 'Release')}${G.june1Left(L) > 0 && p.con && p.con.base && G.deadCharge(L, p) ? confirmBtn('rlj' + p.id, `June 1 cut (${G.money(G.deadCharge(L, p, true).now)} now, ${G.money(G.deadCharge(L, p, true).later)} next year)`) : ''}<button class="btn sm" data-act="shop" data-id="${p.id}">Offer in trade</button></div>` : ''}
     </div>`).join('')}</div></section>` + psCard();
 }
 
@@ -6203,10 +6283,10 @@ function cPhaseCard(p) {
 }
 function cOffersCard(list) {
   if (!list || !list.length) return '';
-  return `<section class="card"><h3>Contract offers</h3><div class="tscroll"><table class="tbl"><thead><tr><th class="l">Team</th><th>Per year</th><th>Yrs</th><th class="l">Role</th><th>Fit</th><th class="l">Last year</th><th></th></tr></thead><tbody>
-    ${list.map((o, i) => `<tr><td class="l">${tLink(o.tid, esc(L.teams[o.tid].abbr))}${o.own ? ' <span class="small">(yours)</span>' : ''}</td><td><b>${G.money(o.sal)}</b></td><td>${o.yrs}</td><td class="l">${esc(o.role)}</td><td>${esc(o.fit || '')}</td><td class="l small">${esc(o.wins)}${o.res ? ' · ' + esc(o.res) : ''}</td>
+  return `<section class="card"><h3>Contract offers</h3><div class="tscroll"><table class="tbl"><thead><tr><th class="l">Team</th><th>Per year</th><th>Yrs</th><th class="l">Structure</th><th class="l">Role</th><th>Fit</th><th class="l">Last year</th><th></th></tr></thead><tbody>
+    ${list.map((o, i) => `<tr><td class="l">${tLink(o.tid, esc(L.teams[o.tid].abbr))}${o.own ? ' <span class="small">(yours)</span>' : ''}</td><td><b>${G.money(o.sal)}</b></td><td>${o.yrs}</td><td class="l">${o.yrs > 1 ? `<select class="shp" data-i="${i}">${Object.keys(G.SHAPES).map(k => { const S = G.SHAPES[k], tot = o.sal * o.yrs * S.mult, b = Math.round(tot * S.share); return `<option value="${k}"${(ui.shp && ui.shp[i] || 'std') === k ? ' selected' : ''}>${esc(S.name)}${b ? ' · ' + G.money(b) + ' bonus' : ''}${S.mult !== 1 ? ` (${S.mult > 1 ? '+' : ''}${Math.round((S.mult - 1) * 100)}% total)` : ''}</option>`; }).join('')}</select>` : '<span class="small">1 year</span>'}</td><td class="l">${esc(o.role)}</td><td>${esc(o.fit || '')}</td><td class="l small">${esc(o.wins)}${o.res ? ' · ' + esc(o.res) : ''}</td>
       <td class="l"><button class="btn sm primary" data-act="cSign" data-id="${i}">Sign</button>${o.h ? '' : ` <button class="btn sm" data-act="cHaggle" data-id="${i}">Ask for more</button>`}${o.own && !o.disc ? ` <button class="btn sm" data-act="cDisc" data-id="${i}">Hometown discount</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
-    <p class="small">Asking for more works about half the time; a team that says no may pull its offer. A hometown discount (12% less, one more year) builds your coach's trust.</p></section>`;
+    <p class="small"><b>Structure:</b> a signing bonus is cash in your pocket now and stays yours if you're cut or traded; teams take a little off the total for a big bonus and add a little for back-loading (the late money may never come if you're cut). Asking for more works about half the time; a team that says no may pull its offer. A hometown discount (12% less, one more year) builds your coach's trust.</p></section>`;
 }
 function cSchemeCard(p) {
   const S = G.careerScheme(L); if (!S) return '';
@@ -6350,9 +6430,9 @@ function cDepthCard(p, all) {
   const r = G.careerRole(L, p);
   const grp = g => {
     const list = (D[g] || []).slice(0, Math.max(N[g] + 3, 4)), n = N[g] || 0;
-    return `<div class="dcgrp${g === p.grp ? ' mine' : ''}"><div class="eyebrow">${g} · ${n} starter${n === 1 ? '' : 's'}</div>${list.map((x, i) => `<div class="dcrow${x.id === p.id ? ' me' : ''}${i < n ? ' st' : ''}"><span class="dcn">${i + 1}</span><span class="dcnm">${x.id === p.id ? '<b>You</b>' : pLink(x)}${x.inj ? ' <span class="bad small">inj</span>' : ''}</span><span class="dcpos">${esc(x.pos)}</span><span class="dco">${x.ovr}</span></div>`).join('')}${(D[g] || []).length > list.length ? `<div class="small muted">+${D[g].length - list.length} more</div>` : ''}</div>`;
+    return `<div class="dcgrp${g === p.grp ? ' mine' : ''}"><div class="eyebrow">${g} · ${n} starter${n === 1 ? '' : 's'}</div>${list.map((x, i) => `<div class="dcrow${x.id === p.id ? ' me' : ''}${i < n ? ' st' : ''}"><span class="dcn">${i + 1}</span><span class="dcnm">${x.id === p.id ? '<b>You</b>' : pLink(x)}${x.inj ? ' <span class="bad small">inj</span>' : ''}</span><span class="dcpos">${esc(x.pos)} · ${x.age}</span><span class="dcsal">${G.salFor(x, G.capYear(L)) != null ? G.money(G.salFor(x, G.capYear(L))) : '–'}</span><span class="dco">${x.ovr}</span></div>`).join('')}${(D[g] || []).length > list.length ? `<div class="small muted">+${D[g].length - list.length} more</div>` : ''}</div>`;
   };
-  return `<section class="card"><h3>Depth chart</h3><p class="small">${r ? `You: <b>${esc(r.label)}</b>. ` : ''}Starters are highlighted. The coach sets this from ratings and health${L.career.forced && L.career.forced.y === L.year ? '; you won your job by asking' : ''}.</p>
+  return `<section class="card"><h3>Depth chart</h3><p class="small">${r ? `You: <b>${esc(r.label)}</b>. ` : ''}Each row: position · age, cap hit, overall. Starters are highlighted. The coach sets this from ratings and health${L.career.forced && L.career.forced.y === L.year ? '; you won your job by asking' : ''}.</p>
     <div class="dcgrid">${(all ? order : [p.grp]).map(grp).join('')}</div>${all ? '' : `<div class="row"><button class="btn sm" data-act="tab" data-id="team">Whole depth chart</button></div>`}</section>`;
 }
 function careerAct(a, el) {
@@ -6377,7 +6457,7 @@ function careerAct(a, el) {
     case 'cRealMore': ui.cRealShow = (ui.cRealShow || 80) + 80; break;
     case 'cNext': { const e = G.careerNext(L, IM, id); if (e) flash(e); toTop(); break; }
     case 'cYear': { for (let i = 0; i < +id; i++) G.careerSimYear(L, IM); break; }
-    case 'cSign': { const e = G.careerSign(L, +id); flash(e || 'Signed.'); break; }
+    case 'cSign': { const e = G.careerSign(L, +id, (ui.shp && ui.shp[+id]) || 'std'); ui.shp = null; flash(e || 'Signed.'); break; }
     case 'cHaggle': flash(G.careerHaggle(L, +id)); break;
     case 'cDisc': flash(G.careerDiscount(L, +id)); break;
     case 'cRaise': flash(G.careerAskRaise(L)); break;
@@ -6399,6 +6479,8 @@ function careerAct(a, el) {
   save(); render(); return true;
 }
 function careerChange(t) {
+  if (false) return;
+  if (t.classList && t.classList.contains('shp')) { ui.shp = ui.shp || {}; ui.shp[+t.dataset.i] = t.value; return true; }
   const c = ui.cNew; if (!c) return false;
   if (t.id === 'cGrp') { c.grp = t.value; c.pos = G.CAREER_POS[c.grp][0]; c.ht = null; c.wt = null; render(); return true; }
   if (t.id === 'cPos') { c.pos = t.value; return true; }
@@ -6454,6 +6536,8 @@ function act(a, el) {
       else if (id === 'cCamp') { const e = G.careerNext(L, IM); if (e) flash(e); toTop(); }
       else if (id === 'cRetire') { const e = G.careerRetire(L); flash(e || 'You have retired.'); toTop(); }
       else if (id.startsWith('fire')) { const e = G.fireCoach(L, id.slice(4)); flash(e || 'Coach fired. Hire a replacement before kickoff.'); }
+      else if (id.startsWith('rst')) { const e = G.restructure(L, +id.slice(3)); flash(e || 'Restructured.'); }
+      else if (id.startsWith('rlj')) { const d = G.deadCharge(L, L.players[+id.slice(3)], true); G.release(L, +id.slice(3), true); ui.open = null; flash(`June 1 cut: ${G.money(d.now)} dead money this year, ${G.money(d.later)} next year.`); }
       else if (id.startsWith('rel')) { const dc = G.deadCharge(L, L.players[+id.slice(3)]); G.release(L, +id.slice(3)); ui.open = null; flash('Player released to the waiver pool.' + (dc ? ` ${G.money(dc)} in dead money stays on your ${G.capYear(L)} payroll.` : '')); }
       break;
     case 'newDiff': ui.newDiff = id; break;

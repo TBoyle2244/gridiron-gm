@@ -238,10 +238,10 @@ button.crest{cursor:pointer;font:inherit;color:inherit;background:transparent}
 .tbar i { display: block; height: 100%; background: var(--gold); border-radius: 6px; }
 .dcgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px 16px; }
 .dcgrp.mine { grid-column: 1 / -1; }
-.dcrow { display: grid; grid-template-columns: 22px 1fr auto 32px; gap: 8px; align-items: center; padding: 5px 6px; border-top: 1px solid var(--line); font-size: 14px; }
+.dcrow { display: grid; grid-template-columns: 22px 1fr auto auto 32px; gap: 8px; align-items: center; padding: 5px 6px; border-top: 1px solid var(--line); font-size: 14px; }
 .dcrow.st { background: color-mix(in srgb, var(--field) 12%, transparent); }
 .dcrow.me { outline: 2px solid var(--gold); outline-offset: -2px; border-radius: 6px; }
-.dcn, .dcpos { color: var(--muted); font-size: 12px; } .dco { text-align: right; font-weight: 600; }
+.dcn, .dcpos, .dcsal { color: var(--muted); font-size: 12px; } .dcsal { min-width: 52px; text-align: right; } .dco { text-align: right; font-weight: 600; }
 .orgrow { display: grid; grid-template-columns: 110px 1fr 36px; gap: 10px; align-items: center; margin-top: 8px; }
 .orglab { font-family: var(--cond); font-weight: 600; letter-spacing: .03em; } .orgrow .tbar { margin: 0; } .orgrow b { text-align: right; }
 details.trq summary { cursor: pointer; color: var(--gold); font-family: var(--cond); font-weight: 600; font-size: 16px; margin-top: 6px; }

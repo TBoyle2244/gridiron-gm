@@ -721,7 +721,7 @@ function fitPayrolls(L) {
   for (const t of L.teams) {
     const pay = payroll(L, t.id, y); if (pay <= c * 0.95) continue;
     const f = c * 0.94 / pay;
-    roster(L, t.id).forEach(p => { if (p.con) p.con.sal = Math.round(p.con.sal * f); });
+    roster(L, t.id).forEach(p => { if (!p.con) return; p.con.sal = Math.round(p.con.sal * f); if (p.con.base) p.con.base = p.con.base.map(v => Math.round(v * f)); (p.con.bon || []).forEach(b => b.a = Math.round(b.a * f)); });
   }
 }
 
@@ -826,19 +826,55 @@ function clearIR(L) { for (const id in L.players) delete L.players[id].ir; }
 
 // Releasing a player under contract leaves dead money: a quarter of what is left on his deal
 // (at most 60% of one year's salary) stays on this year's payroll. Minimum-salary players cost nothing.
-function deadCharge(L, p) {
-  const y = capYear(L), sal = p && p.con ? salFor(p, y) : null;
+function deadCharge(L, p, june1) {
+  const y = capYear(L);
+  if (p && p.con && p.con.base) { const all = proLeft(p.con, y); if (!june1) return all; const now = Math.round(proYear(p.con, y)); return { now, later: all - now }; }
+  const sal = p && p.con ? salFor(p, y) : null;
+  if (june1) return { now: deadCharge(L, p), later: 0 };
   if (!sal || sal < avgSalary(y) * 0.6) return 0;
   const left = (p.con.ext ? p.con.ext.exp : p.con.exp) - y + 1;
   return Math.round(sal * Math.min(0.6, 0.25 * Math.max(1, left)));
 }
 function deadFor(L, tid, y) { return (L.dead && L.dead[tid] && L.dead[tid][y]) || 0; }
-function release(L, pid) {
+// Restructure: turn this year's base salary (above the minimum) into a bonus spread over the years left (up to 5).
+function restructureInfo(L, p) {
+  const y = capYear(L); if (!p || !p.con || capFor(y) == null || y < 1994 || p.team !== L.user) return null;
+  const exp = p.con.exp, left = exp - y + 1; if (left < 2) return null;
+  if (!p.con.base) return null;
+  const minS = Math.round(avgSalary(y) * 0.3), b = baseFor(p, y); if (b == null || b < minS * 1.5) return null;
+  if (p.con.rsY === y) return null;
+  const conv = b - minS, n = Math.min(5, left);
+  return { conv, n, saves: Math.round(conv - conv / n) };
+}
+function restructure(L, pid) {
+  const p = L.players[pid], R0 = restructureInfo(L, p); if (!R0) return 'He can\'t be restructured right now.';
+  const y = capYear(L); p.con.base[y - p.con.signed] -= R0.conv; p.con.bon = (p.con.bon || []).concat([{ a: R0.conv, f: y, n: R0.n, cur: 1 }]); p.con.rsY = y;
+  plog(L, p, `Restructured: ${money(R0.conv)} of salary turned into a bonus (saves ${money(R0.saves)} on the ${y} cap).`);
+  addNews(L, `${L.teams[L.user].abbr} restructured ${p.pos} ${p.name}'s deal, clearing ${money(R0.saves)} of ${y} cap space.`);
+  return null;
+}
+// Year by year: base, prorated bonus, cap hit, plus dead money if cut now
+function contractTable(L, p) {
+  if (!p || !p.con) return null;
+  const y = capYear(L), c = p.con, rows = [];
+  const end = c.ext ? c.ext.exp : c.exp;
+  for (let yy = Math.max(y, c.signed); yy <= end; yy++) {
+    const base = yy <= c.exp ? baseFor(p, yy) : c.ext.sal, pro = yy <= c.exp ? Math.round(proYear(c, yy)) : 0;
+    rows.push({ y: yy, base: Math.round(base), pro, hit: Math.round(base + pro), cash: cashFor(p, yy) });
+  }
+  const bonus = (c.bon || []).filter(b => b.cur).reduce((s, b) => s + b.a, 0);
+  return { rows, shape: c.shape ? SHAPES[c.shape].name : 'Flat', bonus, dead: c.base ? proLeft(c, y) : deadCharge(L, p), total: Math.round(c.sal * (c.exp - c.signed + 1)) };
+}
+function addDead(L, tid, y, amt) { if (!amt) return; L.dead = L.dead || {}; const D = L.dead[tid] || (L.dead[tid] = {}); D[y] = (D[y] || 0) + Math.round(amt); }
+// June 1 cuts: from 1994, up to two a year in the offseason; this year's share of the bonus now, the rest next year
+function june1Left(L) { const y = capYear(L); if (capFor(y) == null || y < 1994 || !(L.phase === 'offseason' || L.phase === 'preseason')) return 0; return 2 - ((L.june1 && L.june1[y]) || 0); }
+function release(L, pid, june1) {
   const p = L.players[pid]; if (!p) return; const t = L.teams[p.team];
   let dead = 0;
   if (t && t.id === L.user) {
-    dead = deadCharge(L, p);
-    if (dead) { const y = capYear(L); L.dead = L.dead || {}; const D = L.dead[t.id] || (L.dead[t.id] = {}); D[y] = (D[y] || 0) + dead; }
+    const y = capYear(L);
+    if (june1 && june1Left(L) > 0 && p.con && p.con.base) { const d = deadCharge(L, p, true); addDead(L, t.id, y, d.now); addDead(L, t.id, y + 1, d.later); dead = d.now; L.june1 = L.june1 || {}; L.june1[y] = (L.june1[y] || 0) + 1; }
+    else { dead = deadCharge(L, p); addDead(L, t.id, y, dead); }
   }
   p.team = -1; delete p.con; if (t) plog(L, p, `Released by ${t.abbr}.`);
   if (t) addNews(L, `${t.abbr} released ${p.pos} ${p.name}.${dead ? ` Dead money: ${money(dead)} stays on the ${capYear(L)} payroll.` : ''}`);
@@ -971,6 +1007,8 @@ function validPkg(L, tid, pkg) {
   return (pkg.players || []).every(id => L.players[id] && L.players[id].team === tid) && (pkg.picks || []).every(id => { const k = pickById(L, id); return k && k.own === tid && tradeablePick(k); });
 }
 function execTrade(L, a, b, aGive, bGive) {
+  const y0 = capYear(L);
+  [[a, aGive], [b, bGive]].forEach(([from, g]) => (g.players || []).forEach(id => { const p = L.players[id]; if (!p || !p.con || !p.con.bon || !p.con.bon.length) return; if (from === L.user) addDead(L, from, y0, proLeft(p.con, y0)); p.con.bon = []; }));
   (aGive.players || []).forEach(id => L.players[id].team = b); (bGive.players || []).forEach(id => L.players[id].team = a);
   (aGive.players || []).forEach(id => plog(L, L.players[id], `Traded from ${L.teams[a].abbr} to ${L.teams[b].abbr}.`)); (bGive.players || []).forEach(id => plog(L, L.players[id], `Traded from ${L.teams[b].abbr} to ${L.teams[a].abbr}.`));
   (aGive.players || []).concat(bGive.players || []).forEach(id => signRefuserIfMoved(L, L.players[id]));
@@ -1014,7 +1052,10 @@ function tradeVerdict(L, partner, give, get) {
 function tradeCapMsg(L, a, b, aGive, bGive) {
   const y = capYear(L);
   const sal = ids => (ids || []).reduce((s, id) => s + (salFor(L.players[id], y) || 0), 0);
-  const da = sal(bGive.players) - sal(aGive.players);
+  const left = (ids, from) => from === L.user ? (ids || []).reduce((s, id) => s + (L.players[id] && L.players[id].con ? proLeft(L.players[id].con, y) : 0), 0) : 0;
+  // what arrives counts base salary only (the bonus stays behind as the other team's dead money)
+  const base = ids => (ids || []).reduce((s, id) => { const p = L.players[id]; return s + (p && p.con && p.con.base ? (baseFor(p, y) || 0) : salFor(p, y) || 0); }, 0);
+  const da = base(bGive.players) - sal(aGive.players) + left(aGive.players, a) - left(bGive.players, b);
   return capMsg(L, a, da) || capMsg(L, b, -da);
 }
 const DEADLINE_WEEK = 9;
@@ -2997,10 +3038,32 @@ function leagueNorm(L) {
 }
 function marketValue(L, p, y) { return Math.max(avgSalary(y || capYear(L)) * 0.3, avgSalary(y || capYear(L)) * multFor(p) / leagueNorm(L)); }
 function contractYears(p) { return p.age <= 26 ? 4 : (p.age <= 29 ? 3 : (p.age <= 31 ? 2 : 1)); }
-function setContract(p, sal, firstYear, yrs) { p.con = { sal: Math.round(sal), exp: firstYear + yrs - 1, signed: firstYear }; p.mor = Math.max(mor(p), 70); delete p.holdout; }
+/* Contracts: an average yearly number (sal), split into base salaries by year and a signing bonus.
+   The bonus is paid up front but counts against the cap spread evenly over up to five years.
+   Cut or trade a player and the bonus not yet counted becomes dead money. Shapes:
+   flat (no bonus), std (some bonus, even base), front / back (salary early or late), bonus (max bonus). */
+const SHAPES = { flat: { name: 'Flat', share: 0, w: 0, mult: 1 }, std: { name: 'Standard', share: 0.25, w: 0, mult: 1 }, front: { name: 'Front-loaded', share: 0.2, w: -0.35, mult: 1 }, back: { name: 'Back-loaded', share: 0.25, w: 0.35, mult: 1.04 }, bonus: { name: 'Max bonus', share: 0.5, w: 0.2, mult: 0.96 } };
+function autoShape(sal, yrs, y) {
+  if (yrs < 2) return 'flat';
+  const big = sal >= avgSalary(y) * 1.4;
+  if (capFor(y) == null) return big ? 'std' : 'flat';
+  return big ? R.pick(['std', 'back', 'back', 'bonus', 'front']) : sal >= avgSalary(y) * 0.8 ? R.pick(['std', 'flat', 'back']) : 'flat';
+}
+function proYear(con, y) { let s = 0; (con.bon || []).forEach(b => { if (y >= b.f && y < b.f + b.n) s += b.a / b.n; }); return s; }
+function proLeft(con, y) { let s = 0; (con.bon || []).forEach(b => { for (let yy = Math.max(y, b.f); yy < b.f + b.n; yy++) s += b.a / b.n; }); return Math.round(s); }
+function baseFor(p, y) { const c = p.con; if (!c || y > c.exp) return null; return c.base ? c.base[y - c.signed] : c.sal; }
+function cashFor(p, y) { const c = p.con; if (!c) return 0; const b = baseFor(p, y); let s = b == null ? (c.ext && y <= c.ext.exp ? c.ext.sal : 0) : b; (c.bon || []).forEach(x => { if (x.f === y && x.cur) s += x.a; }); return Math.round(s); }
+function setContract(p, sal, firstYear, yrs, shape) {
+  const old = p.con, carry = old && old.bon ? old.bon.filter(b => b.f + b.n - 1 >= firstYear).map(b => Object.assign({}, b, { cur: 0 })) : [];
+  shape = SHAPES[shape] ? shape : autoShape(sal, yrs, firstYear);
+  const S = SHAPES[shape], total = Math.round(sal) * yrs * S.mult, bonus = Math.round(total * S.share), n = Math.min(5, yrs);
+  const ws = []; for (let i = 0; i < yrs; i++) ws.push(yrs === 1 ? 1 : 1 + S.w * (i / (yrs - 1) - 0.5) * 2);
+  const wsum = ws.reduce((a, b) => a + b, 0), base = ws.map(w => Math.round((total - bonus) * w / wsum));
+  p.con = { sal: Math.round(total / yrs), exp: firstYear + yrs - 1, signed: firstYear, base, shape, bon: carry.concat(bonus ? [{ a: bonus, f: firstYear, n, cur: 1 }] : []) };
+  p.mor = Math.max(mor(p), 70); delete p.holdout; }
 function salFor(p, y) {
   if (!p || !p.con) return null;
-  if (y <= p.con.exp) return p.con.sal;
+  if (y <= p.con.exp) return p.con.base ? Math.round(p.con.base[y - p.con.signed] + proYear(p.con, y)) : p.con.sal;
   if (p.con.ext && y <= p.con.ext.exp) return p.con.ext.sal;
   return null;
 }
@@ -3665,8 +3728,8 @@ function careerSwitch(L, i) {
 }
 function careerEarn(L) {
   const C = L.career, p = careerP(L); if (!p || p.team < 0 || !p.con) return;
-  C.earn = C.earn || {}; if (C.earn[L.year] != null) return;
-  C.earn[L.year] = salFor(p, L.year) || 0;
+  C.earn = C.earn || {}; C.earnY = C.earnY || {}; if (C.earnY[L.year]) return; C.earnY[L.year] = 1;
+  C.earn[L.year] = (C.earn[L.year] || 0) + (baseFor(p, L.year) != null ? baseFor(p, L.year) : salFor(p, L.year) || 0);
 }
 function careerEarnings(L) { const e = (L.career && L.career.earn) || {}; let s = 0; for (const y in e) s += e[y]; return s; }
 // Called from progress() for the career player: the chance his career ends for him this offseason.
@@ -3944,19 +4007,21 @@ function careerOffers(L) {
   C.offers = { key, list, keep: `${L.year}-${L.phase}` };
   return list;
 }
-function careerSign(L, i) {
+function careerSign(L, i, shape) {
   const C = L.career, p = careerP(L), o = careerOffers(L)[+i]; if (!p || !o) return 'That offer is gone.';
   const y = capYear(L), old = p.team;
   if (o.tid !== old && (L.phase === 'regular' || L.phase === 'playoffs') && active(L, o.tid).length >= rules(L.year).rosterMax) {
     const cut = roster(L, o.tid).filter(x => !x.ir && x.id !== p.id).sort((a, b) => value(a) - value(b))[0]; if (cut) retireIfUnsigned(L, cut);
   }
   if (old >= 0 && old !== o.tid) p.prevTeam = old;
-  p.team = o.tid; setContract(p, o.sal, y, o.yrs); delete p.holdout; delete p.askMult;
+  p.team = o.tid; setContract(p, o.sal, y, o.yrs, o.yrs > 1 && SHAPES[shape] ? shape : 'flat'); delete p.holdout; delete p.askMult;
+  const bon = (p.con.bon || []).filter(b => b.cur).reduce((s, b) => s + b.a, 0);
+  if (bon) { C.earn = C.earn || {}; C.earn[y] = (C.earn[y] || 0) + bon; }
   if (old !== o.tid) { noteFASign(L, p, o.tid); C.trust = 50; C.fo = 50 + (o.camp ? -5 : 0); ensureNumbers(L); } else addFO(L, o.disc ? 10 : 4);
   const t = L.teams[o.tid], verb = old === o.tid ? 'Re-signed with' : 'Signed with';
-  plog(L, p, `${verb} ${t.abbr}: ${o.yrs} yr${o.yrs > 1 ? 's' : ''}, ${money(o.sal)} a year.`);
+  plog(L, p, `${verb} ${t.abbr}: ${o.yrs} yr${o.yrs > 1 ? 's' : ''}, ${money(p.con.sal)} a year${bon ? `, ${money(bon)} signing bonus` : ''}.`);
   addNews(L, `${t.abbr} ${old === o.tid ? 're-signed' : 'signed'} ${p.pos} ${p.name}: ${o.yrs} yr${o.yrs > 1 ? 's' : ''} at ${money(o.sal)}.`);
-  careerLog(L, `${verb} the ${t.city} ${t.name}: ${o.yrs} year${o.yrs > 1 ? 's' : ''} at ${money(o.sal)} a year (${o.role.toLowerCase()}).`);
+  careerLog(L, `${verb} the ${t.city} ${t.name}: ${o.yrs} year${o.yrs > 1 ? 's' : ''} at ${money(p.con.sal)} a year${bon ? ` (${SHAPES[p.con.shape].name.toLowerCase()}, ${money(bon)} signing bonus)` : ''}, ${o.role.toLowerCase()}.`);
   if (o.disc) addTrust(L, 10);
   C.offers = null; C.mkt = 0;
   if (L.phase === 'regular' || L.phase === 'playoffs') careerEarn(L);
@@ -4357,7 +4422,7 @@ function careerLegacy(L) {
   return { score: Math.round(s), line: line && Math.round(line), pct: line ? Math.round(s / line * 100) : null, rings, jerseys, hof: p.hof || 0, verdict: C.verdict || null };
 }
 
-const API = { careerScheme, careerStanding, careerAcceptRole, PB_SLOTS, proBowl, stadium, forecast, wxText, wxEffect, recordBook, REC_KEYS, careerSwitchOpts, careerSwitch, careerEarnings, careerCoachOpts, careerBecomeCoach, careerCoachNow, careerFrontOfficeOpts, careerToGM, NO_TEAM, CAREER_TIERS, CAREER_Q, CAREER_GRPS, CAREER_POS, CAREER_FOCUS, CAREER_PLANS, careerPreview, careerClass, startCareer, careerCreate, careerChooseReal, careerP, isCareer, careerRole, careerOffers, careerSign, careerHaggle, careerDiscount, careerRaiseInfo, careerAskRaise, careerHoldout, careerAskStart, careerRequestTrade, careerCancelTrade, careerTakeDeal, careerDeclineDeals, canTradeNow, setCareerFocus, setCareerPlan, careerGoalStatus, careerAwardRace, careerNext, careerSimYear, careerCanRetire, careerRetire, careerRanks, careerLegacy, careerTotal, hofLine, dismissAlert, STAT_NAME, COLLEGES, plog, practiceSquad, unsignedRights, psSize, psEligible, toPracticeSquad, promoteFromPS, signFromPS, signRefuserIfMoved, optionInfo, exerciseOption, declineOption, transitionTag, tagPrice, tradeablePick, rookieYears, playerFit, moraleReasons, holdoutInfo, marketFor, marketView, footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
+const API = { execTrade, setContract, SHAPES, contractTable, restructure, restructureInfo, june1Left, cashFor, baseFor, proLeft, careerScheme, careerStanding, careerAcceptRole, PB_SLOTS, proBowl, stadium, forecast, wxText, wxEffect, recordBook, REC_KEYS, careerSwitchOpts, careerSwitch, careerEarnings, careerCoachOpts, careerBecomeCoach, careerCoachNow, careerFrontOfficeOpts, careerToGM, NO_TEAM, CAREER_TIERS, CAREER_Q, CAREER_GRPS, CAREER_POS, CAREER_FOCUS, CAREER_PLANS, careerPreview, careerClass, startCareer, careerCreate, careerChooseReal, careerP, isCareer, careerRole, careerOffers, careerSign, careerHaggle, careerDiscount, careerRaiseInfo, careerAskRaise, careerHoldout, careerAskStart, careerRequestTrade, careerCancelTrade, careerTakeDeal, careerDeclineDeals, canTradeNow, setCareerFocus, setCareerPlan, careerGoalStatus, careerAwardRace, careerNext, careerSimYear, careerCanRetire, careerRetire, careerRanks, careerLegacy, careerTotal, hofLine, dismissAlert, STAT_NAME, COLLEGES, plog, practiceSquad, unsignedRights, psSize, psEligible, toPracticeSquad, promoteFromPS, signFromPS, signRefuserIfMoved, optionInfo, exerciseOption, declineOption, transitionTag, tagPrice, tradeablePick, rookieYears, playerFit, moraleReasons, holdoutInfo, marketFor, marketView, footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
   value, release, sign, proposeTrade, tradeVerdict, teamPicks, pickById, pickLabel, projectedOverall, pickWeight, playerWeight, ensurePicks, myDraftSlots, aiTrades, acceptOffer, rejectOffer, offerValid, cutTo, ratings, teamOverall, startRegular, canStartSeason, simWeek, simPlayoffRound, roundName,
   sortTeams, divisions, pct, startDraft, onClock, makePick, aiPick, draftUntilUser, draftAll, scoutPlayer, beginDraft, SCOUT_VISITS, endDraft, startNextSeason, leaders, potKnown, shownPot, roman, addNews };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.GG = API;
