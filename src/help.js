@@ -205,6 +205,9 @@ const HELP = [
 <p>A first look at playing games yourself, Retro Bowl style. Open it from the game plan card on the Office tab (Play this game yourself). It uses your saved league: your team and this week's opponent, with their real players and ratings. The result doesn't count in your league yet.</p>
 <ul>
 <li><b>You play offense.</b> The other team's drives are simulated against your defense between yours.</li>
+<li><b>Kickoffs and punts.</b> You return them: your returner settles under the ball, then you run it like any carry. While the ball is in the air you can call a fair catch on a punt, or take a knee on a kickoff deep in the end zone (touchback).</li>
+<li><b>Kicking.</b> Field goals and extra points use a kick meter: tap Kick when the ball marker is between the uprights. The uprights are wider for a better kicker and a shorter kick, and the marker moves faster on long ones. Your punts show the distance and the return.</li>
+<li><b>Quick calls.</b> "Again" repeats your last play.</li>
 <li><b>Calling plays:</b> pick from six plays: quick slants, curl/flat, four verticals, a play-action shot, an inside run and an outside run. Your offensive scheme decides your personnel (how many backs, tight ends and receivers line up).</li>
 <li><b>Landscape:</b> the game plays sideways, with your offense driving left to right. Turn your phone sideways (and turn off rotation lock).</li>
 <li><b>Passing:</b> after the snap, touch anywhere and pull back to the left like a slingshot, then let go. The ball flies the opposite way; pull farther to throw farther, and pull up or down to aim across the field. Hold the ball too long and you get sacked. Tap Run to scramble.</li>
