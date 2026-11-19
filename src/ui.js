@@ -2,7 +2,7 @@
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-15k';
+const APP_VERSION = '2026-11-19a';
 let SLOT = (() => { try { return localStorage.getItem('gg-slot') === 'career' ? 'career' : 'league'; } catch (e) { return 'league'; } })();
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
@@ -1359,9 +1359,23 @@ function cPhaseCard(p) {
 }
 function cOffersCard(list) {
   if (!list || !list.length) return '';
-  return `<section class="card"><h3>Contract offers</h3><div class="tscroll"><table class="tbl"><thead><tr><th class="l">Team</th><th>Per year</th><th>Yrs</th><th class="l">Structure</th><th class="l">Role</th><th>Fit</th><th class="l">Last year</th><th></th></tr></thead><tbody>
-    ${list.map((o, i) => `<tr><td class="l">${tLink(o.tid, esc(L.teams[o.tid].abbr))}${o.own ? ' <span class="small">(yours)</span>' : ''}</td><td><b>${G.money(o.sal)}</b></td><td>${o.yrs}</td><td class="l">${o.yrs > 1 ? `<select class="shp" data-i="${i}">${Object.keys(G.SHAPES).map(k => { const S = G.SHAPES[k], tot = o.sal * o.yrs * S.mult, b = Math.round(tot * S.share); return `<option value="${k}"${(ui.shp && ui.shp[i] || 'std') === k ? ' selected' : ''}>${esc(S.name)}${b ? ' · ' + G.money(b) + ' bonus' : ''}${S.mult !== 1 ? ` (${S.mult > 1 ? '+' : ''}${Math.round((S.mult - 1) * 100)}% total)` : ''}</option>`; }).join('')}</select>` : '<span class="small">1 year</span>'}</td><td class="l">${esc(o.role)}</td><td>${esc(o.fit || '')}</td><td class="l small">${esc(o.wins)}${o.res ? ' · ' + esc(o.res) : ''}</td>
-      <td class="l"><button class="btn sm primary" data-act="cSign" data-id="${i}">Sign</button>${o.h ? '' : ` <button class="btn sm" data-act="cHaggle" data-id="${i}">Ask for more</button>`}${o.own && !o.disc ? ` <button class="btn sm" data-act="cDisc" data-id="${i}">Hometown discount</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
+  const p = CP();
+  const card = (o, i) => {
+    const t = L.teams[o.tid], S = G.careerScheme(L, o.tid), side = S && S.mine === 'off' ? 'Offense' : 'Defense';
+    const other = S ? (S.mine === 'off' ? `Defense: ${esc(S.dsName)}` : `Offense: ${esc(S.osName)}`) : '';
+    const roleTxt = o.camp ? 'Camp invite: compete for a roster spot' : o.role === 'Starter' ? `Starter (${esc(p.grp)} ${o.slot} of ${o.nStart} starters)` : o.role === 'Rotation' ? `First off the bench (${esc(p.grp)} ${o.slot})` : `Backup (#${o.slot} at ${esc(p.grp)})`;
+    const shp = o.yrs > 1 ? `<select class="shp" data-i="${i}">${Object.keys(G.SHAPES).map(k => { const SH = G.SHAPES[k], tot = o.sal * o.yrs * SH.mult, b = Math.round(tot * SH.share); return `<option value="${k}"${(ui.shp && ui.shp[i] || 'std') === k ? ' selected' : ''}>${esc(SH.name)}${b ? ' · ' + G.money(b) + ' bonus' : ''}${SH.mult !== 1 ? ` (${SH.mult > 1 ? '+' : ''}${Math.round((SH.mult - 1) * 100)}% total)` : ''}</option>`; }).join('')}</select>` : '';
+    return `<div class="offer${o.own ? ' own' : ''}">
+      <div class="offer-hd"><span class="offer-tm">${tLink(o.tid)}</span>${o.own ? '<span class="tag">Your team</span>' : ''}<span class="offer-pay">${G.money(o.sal)}<small>/yr · ${o.yrs} yr${o.yrs > 1 ? 's' : ''}</small></span></div>
+      <div class="offer-grid">
+        <div><span class="lbl">Last season</span>${esc(o.wins)}${o.res ? ` · ${esc(o.res)}` : ''}</div>
+        <div><span class="lbl">Your role</span><b class="${o.role === 'Starter' ? 'good' : ''}">${roleTxt}</b></div>
+        ${S ? `<div><span class="lbl">${side} (your side)</span>${esc(S.mine === 'off' ? S.osName : S.dsName)} · your grade <b class="fitg">${esc(S.fit.grade)}</b></div><div><span class="lbl">Other side</span>${other}</div>` : ''}
+      </div>
+      <div class="row">${shp}<button class="btn sm primary" data-act="cSign" data-id="${i}">Sign</button>${o.h ? '' : `<button class="btn sm" data-act="cHaggle" data-id="${i}">Ask for more</button>`}${o.own && !o.disc ? `<button class="btn sm" data-act="cDisc" data-id="${i}">Hometown discount</button>` : ''}</div>
+    </div>`;
+  };
+  return `<section class="card"><h3>Contract offers</h3><p class="small">Role is where you'd land on that team's depth chart today. Grade is your fit in their scheme on your side of the ball.</p>${list.map(card).join('')}
     <p class="small"><b>Structure:</b> a signing bonus is cash in your pocket now and stays yours if you're cut or traded; teams take a little off the total for a big bonus and add a little for back-loading (the late money may never come if you're cut). Asking for more works about half the time; a team that says no may pull its offer. A hometown discount (12% less, one more year) builds your coach's trust.</p></section>`;
 }
 function cSchemeCard(p) {

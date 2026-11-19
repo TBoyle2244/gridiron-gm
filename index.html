@@ -260,6 +260,14 @@ button.crest{cursor:pointer;font:inherit;color:inherit;background:transparent}
 details.trq summary { cursor: pointer; color: var(--gold); font-family: var(--cond); font-weight: 600; font-size: 16px; margin-top: 6px; }
 .whylist { list-style: none; padding: 0; margin: 6px 0; } .whylist li { padding: 2px 0; }
 tr.nextwk td { background: color-mix(in srgb, var(--gold) 16%, transparent); }
+.offer { border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin: 10px 0; background: var(--bg); }
+.offer.own { border-color: var(--gold); }
+.offer-hd { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.offer-tm { font-family: var(--display); font-size: 18px; flex: 1; } .offer-pay { font-weight: 700; font-size: 18px; } .offer-pay small { font-weight: 400; font-size: 13px; color: var(--muted); }
+.offer .tag { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; border: 1px solid var(--gold); color: var(--gold); border-radius: 6px; padding: 1px 6px; }
+.offer-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px 14px; margin: 8px 0; font-size: 14px; }
+.offer-grid .lbl { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.offer .row { flex-wrap: wrap; gap: 6px; } .offer select.shp { max-width: 100%; }
 </style>
 <style>html{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
 </head>
@@ -4201,11 +4209,11 @@ function careerOffers(L) {
       const t = L.teams[tid], last = t.hist[t.hist.length - 1];
       const others = (cache[tid].g[p.grp] || []).slice(), n = startersFor(L, tid)[p.grp] || 1;
       const better = others.filter(o => o > p.ovr).length - (own ? 0 : 0);
-      const role = better < n ? 'Starter' : better === n ? 'Rotation' : 'Backup';
+      const role = better < n ? 'Starter' : better === n ? 'Rotation' : 'Backup', slot = better + 1, nStart = n;
       let sal = Math.round(priceFor(L, p, tid, y) * mult * ego * mkt * (inSeason ? 0.6 : 1));
       const minSal = Math.round(avgSalary(y) * 0.3); if (sal < minSal) sal = minSal;
       const fit = playerFit(L, p, tid);
-      return { fit: fit.grade, fitS: fit.score, tid, sal, yrs: inSeason ? 1 : free && value(p) < 55 ? R.int(1, 2) : contractYears(p), own: !!own, role, wins: last ? `${last.w}-${last.l}${last.t ? '-' + last.t : ''}` : '–', res: last ? last.res : '' };
+      return { slot, nStart, fit: fit.grade, fitS: fit.score, tid, sal, yrs: inSeason ? 1 : free && value(p) < 55 ? R.int(1, 2) : contractYears(p), own: !!own, role, wins: last ? `${last.w}-${last.l}${last.t ? '-' + last.t : ''}` : '–', res: last ? last.res : '' };
     };
     if (exp) {
       const ranked = roster(L, p.team).slice().sort((a, b) => value(b) - value(a));
@@ -4948,7 +4956,7 @@ const HELP_FOR_TAB = { home: 'office', roster: 'roster', stats: 'stats', league:
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-15k';
+const APP_VERSION = '2026-11-19a';
 let SLOT = (() => { try { return localStorage.getItem('gg-slot') === 'career' ? 'career' : 'league'; } catch (e) { return 'league'; } })();
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
@@ -6305,9 +6313,23 @@ function cPhaseCard(p) {
 }
 function cOffersCard(list) {
   if (!list || !list.length) return '';
-  return `<section class="card"><h3>Contract offers</h3><div class="tscroll"><table class="tbl"><thead><tr><th class="l">Team</th><th>Per year</th><th>Yrs</th><th class="l">Structure</th><th class="l">Role</th><th>Fit</th><th class="l">Last year</th><th></th></tr></thead><tbody>
-    ${list.map((o, i) => `<tr><td class="l">${tLink(o.tid, esc(L.teams[o.tid].abbr))}${o.own ? ' <span class="small">(yours)</span>' : ''}</td><td><b>${G.money(o.sal)}</b></td><td>${o.yrs}</td><td class="l">${o.yrs > 1 ? `<select class="shp" data-i="${i}">${Object.keys(G.SHAPES).map(k => { const S = G.SHAPES[k], tot = o.sal * o.yrs * S.mult, b = Math.round(tot * S.share); return `<option value="${k}"${(ui.shp && ui.shp[i] || 'std') === k ? ' selected' : ''}>${esc(S.name)}${b ? ' · ' + G.money(b) + ' bonus' : ''}${S.mult !== 1 ? ` (${S.mult > 1 ? '+' : ''}${Math.round((S.mult - 1) * 100)}% total)` : ''}</option>`; }).join('')}</select>` : '<span class="small">1 year</span>'}</td><td class="l">${esc(o.role)}</td><td>${esc(o.fit || '')}</td><td class="l small">${esc(o.wins)}${o.res ? ' · ' + esc(o.res) : ''}</td>
-      <td class="l"><button class="btn sm primary" data-act="cSign" data-id="${i}">Sign</button>${o.h ? '' : ` <button class="btn sm" data-act="cHaggle" data-id="${i}">Ask for more</button>`}${o.own && !o.disc ? ` <button class="btn sm" data-act="cDisc" data-id="${i}">Hometown discount</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
+  const p = CP();
+  const card = (o, i) => {
+    const t = L.teams[o.tid], S = G.careerScheme(L, o.tid), side = S && S.mine === 'off' ? 'Offense' : 'Defense';
+    const other = S ? (S.mine === 'off' ? `Defense: ${esc(S.dsName)}` : `Offense: ${esc(S.osName)}`) : '';
+    const roleTxt = o.camp ? 'Camp invite: compete for a roster spot' : o.role === 'Starter' ? `Starter (${esc(p.grp)} ${o.slot} of ${o.nStart} starters)` : o.role === 'Rotation' ? `First off the bench (${esc(p.grp)} ${o.slot})` : `Backup (#${o.slot} at ${esc(p.grp)})`;
+    const shp = o.yrs > 1 ? `<select class="shp" data-i="${i}">${Object.keys(G.SHAPES).map(k => { const SH = G.SHAPES[k], tot = o.sal * o.yrs * SH.mult, b = Math.round(tot * SH.share); return `<option value="${k}"${(ui.shp && ui.shp[i] || 'std') === k ? ' selected' : ''}>${esc(SH.name)}${b ? ' · ' + G.money(b) + ' bonus' : ''}${SH.mult !== 1 ? ` (${SH.mult > 1 ? '+' : ''}${Math.round((SH.mult - 1) * 100)}% total)` : ''}</option>`; }).join('')}</select>` : '';
+    return `<div class="offer${o.own ? ' own' : ''}">
+      <div class="offer-hd"><span class="offer-tm">${tLink(o.tid)}</span>${o.own ? '<span class="tag">Your team</span>' : ''}<span class="offer-pay">${G.money(o.sal)}<small>/yr · ${o.yrs} yr${o.yrs > 1 ? 's' : ''}</small></span></div>
+      <div class="offer-grid">
+        <div><span class="lbl">Last season</span>${esc(o.wins)}${o.res ? ` · ${esc(o.res)}` : ''}</div>
+        <div><span class="lbl">Your role</span><b class="${o.role === 'Starter' ? 'good' : ''}">${roleTxt}</b></div>
+        ${S ? `<div><span class="lbl">${side} (your side)</span>${esc(S.mine === 'off' ? S.osName : S.dsName)} · your grade <b class="fitg">${esc(S.fit.grade)}</b></div><div><span class="lbl">Other side</span>${other}</div>` : ''}
+      </div>
+      <div class="row">${shp}<button class="btn sm primary" data-act="cSign" data-id="${i}">Sign</button>${o.h ? '' : `<button class="btn sm" data-act="cHaggle" data-id="${i}">Ask for more</button>`}${o.own && !o.disc ? `<button class="btn sm" data-act="cDisc" data-id="${i}">Hometown discount</button>` : ''}</div>
+    </div>`;
+  };
+  return `<section class="card"><h3>Contract offers</h3><p class="small">Role is where you'd land on that team's depth chart today. Grade is your fit in their scheme on your side of the ball.</p>${list.map(card).join('')}
     <p class="small"><b>Structure:</b> a signing bonus is cash in your pocket now and stays yours if you're cut or traded; teams take a little off the total for a big bonus and add a little for back-loading (the late money may never come if you're cut). Asking for more works about half the time; a team that says no may pull its offer. A hometown discount (12% less, one more year) builds your coach's trust.</p></section>`;
 }
 function cSchemeCard(p) {

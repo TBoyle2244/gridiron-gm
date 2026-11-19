@@ -247,6 +247,14 @@ button.crest{cursor:pointer;font:inherit;color:inherit;background:transparent}
 details.trq summary { cursor: pointer; color: var(--gold); font-family: var(--cond); font-weight: 600; font-size: 16px; margin-top: 6px; }
 .whylist { list-style: none; padding: 0; margin: 6px 0; } .whylist li { padding: 2px 0; }
 tr.nextwk td { background: color-mix(in srgb, var(--gold) 16%, transparent); }
+.offer { border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin: 10px 0; background: var(--bg); }
+.offer.own { border-color: var(--gold); }
+.offer-hd { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.offer-tm { font-family: var(--display); font-size: 18px; flex: 1; } .offer-pay { font-weight: 700; font-size: 18px; } .offer-pay small { font-weight: 400; font-size: 13px; color: var(--muted); }
+.offer .tag { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; border: 1px solid var(--gold); color: var(--gold); border-radius: 6px; padding: 1px 6px; }
+.offer-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px 14px; margin: 8px 0; font-size: 14px; }
+.offer-grid .lbl { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.offer .row { flex-wrap: wrap; gap: 6px; } .offer select.shp { max-width: 100%; }
 </style>
 <header id="top"></header>
 <main id="main"></main>

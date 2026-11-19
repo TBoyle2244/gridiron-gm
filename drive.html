@@ -4003,11 +4003,11 @@ function careerOffers(L) {
       const t = L.teams[tid], last = t.hist[t.hist.length - 1];
       const others = (cache[tid].g[p.grp] || []).slice(), n = startersFor(L, tid)[p.grp] || 1;
       const better = others.filter(o => o > p.ovr).length - (own ? 0 : 0);
-      const role = better < n ? 'Starter' : better === n ? 'Rotation' : 'Backup';
+      const role = better < n ? 'Starter' : better === n ? 'Rotation' : 'Backup', slot = better + 1, nStart = n;
       let sal = Math.round(priceFor(L, p, tid, y) * mult * ego * mkt * (inSeason ? 0.6 : 1));
       const minSal = Math.round(avgSalary(y) * 0.3); if (sal < minSal) sal = minSal;
       const fit = playerFit(L, p, tid);
-      return { fit: fit.grade, fitS: fit.score, tid, sal, yrs: inSeason ? 1 : free && value(p) < 55 ? R.int(1, 2) : contractYears(p), own: !!own, role, wins: last ? `${last.w}-${last.l}${last.t ? '-' + last.t : ''}` : '–', res: last ? last.res : '' };
+      return { slot, nStart, fit: fit.grade, fitS: fit.score, tid, sal, yrs: inSeason ? 1 : free && value(p) < 55 ? R.int(1, 2) : contractYears(p), own: !!own, role, wins: last ? `${last.w}-${last.l}${last.t ? '-' + last.t : ''}` : '–', res: last ? last.res : '' };
     };
     if (exp) {
       const ranked = roster(L, p.team).slice().sort((a, b) => value(b) - value(a));
