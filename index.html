@@ -4956,7 +4956,7 @@ const HELP_FOR_TAB = { home: 'office', roster: 'roster', stats: 'stats', league:
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-19a';
+const APP_VERSION = '2026-11-19b';
 let SLOT = (() => { try { return localStorage.getItem('gg-slot') === 'career' ? 'career' : 'league'; } catch (e) { return 'league'; } })();
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
@@ -5189,6 +5189,17 @@ function playerPage(p) {
     <section class="card"><h3>Season by season</h3>${ys.length ? table(seasonCols(p), rows.concat([totRow])) : '<p class="small">No seasons played in this league yet.</p>'}</section>
     ${log.length ? `<section class="card"><h3>Transactions</h3><ul class="news">${log.map(x => `<li><span class="nw">${x.y}</span>${esc(x.s)}</li>`).join('')}</ul></section>` : ''}`;
 }
+// Any team's depth chart, as its coach has it today (your player is outlined in a career)
+function teamDepthCard(tid) {
+  const D = G.depth(L, tid), N = G.startersFor(L, tid), cp = isC() ? CP() : null, all = ui.dcAll === tid;
+  const first = cp && cp.team === tid ? cp.grp : null, order = first ? [first].concat(G.GRPS.filter(g => g !== first)) : G.GRPS;
+  const grp = g => {
+    const full = D[g] || [], n = N[g] || 0, list = all ? full : full.slice(0, Math.max(n + 2, 3));
+    return `<div class="dcgrp${g === first ? ' mine' : ''}"><div class="eyebrow">${g} · ${n} starter${n === 1 ? '' : 's'}</div>${list.map((x, i) => `<div class="dcrow${cp && x.id === cp.id ? ' me' : ''}${i < n ? ' st' : ''}"><span class="dcn">${i + 1}</span><span class="dcnm">${cp && x.id === cp.id ? '<b>You</b>' : pLink(x)}${x.inj ? ' <span class="bad small">inj</span>' : ''}</span><span class="dcpos">${esc(x.pos)} · ${x.age}</span><span class="dcsal">${G.salFor(x, G.capYear(L)) != null ? G.money(G.salFor(x, G.capYear(L))) : '–'}</span><span class="dco">${x.ovr}</span></div>`).join('')}${!all && full.length > list.length ? `<div class="small muted">+${full.length - list.length} more</div>` : ''}</div>`;
+  };
+  return `<section class="card"><h3>Depth chart</h3><p class="small">How the coach lines them up today. Each row: position · age, cap hit, overall. Starters are highlighted.</p>
+    <div class="dcgrid">${order.map(grp).join('')}</div><div class="row"><button class="btn sm" data-act="dcAll" data-id="${tid}">${all ? 'Show starters and backups only' : 'Show everyone'}</button></div></section>`;
+}
 function recordBookCard(tid) {
   const B = G.recordBook(L, tid), rows = G.REC_KEYS.filter(([k]) => B.season[k]);
   if (!rows.length) return '';
@@ -5228,6 +5239,7 @@ function teamPage(t) {
     <section class="card"><h3>Now</h3><p class="small">Home: ${(() => { const S = G.stadium(L, tid); return `${esc(S.name)} (${S.roof === 'dome' ? 'dome' : S.roof === 'retr' ? 'retractable roof' : 'open air'})`; })()} · Head coach ${st.hc ? esc(st.hc.name) : 'vacant'} · OC ${st.oc ? esc(st.oc.name) : 'vacant'} · DC ${st.dc ? esc(st.dc.name) : 'vacant'}${c.os && G.SCHEME[c.os] ? ` · ${esc(G.SCHEME[c.os].name)} offense, ${esc(G.SCHEME[c.ds].name)} defense` : ''} · payroll ${G.money(G.payroll(L, tid))}</p>
       <div class="list">${ros.map(p => `<div class="pl"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${pLink(p)}<div class="pl-sub">Age ${p.age}${p.num ? ' · #' + p.num : ''}</div></div><div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div></div></div>`).join('')}</div></section>
     <section class="card"><h3>Season by season</h3>${H.length ? `<div class="tscroll"><table class="tbl stat"><thead><tr><th class="l">Year</th><th>Record</th><th>PF</th><th>PA</th><th class="l">Result</th><th class="l">Head coach</th></tr></thead><tbody>${H.slice().reverse().map(h => `<tr class="${h.gm ? 'me' : ''}"><td class="l">${h.y}</td><td>${h.w}-${h.l}${h.t ? '-' + h.t : ''}</td><td>${h.pf}</td><td>${h.pa}</td><td class="l">${res(h)}</td><td class="l small">${esc(h.hc || '–')}${h.gm ? ' · you were GM' : ''}</td></tr>`).join('')}</tbody></table></div>` : '<p class="small">No completed seasons yet.</p>'}</section>
+    ${teamDepthCard(tid)}
     ${recordBookCard(tid)}
     ${leadCard ? `<section class="card"><h3>Franchise leaders</h3><p class="small">Totals with this team in this league.</p><div class="leadgrid">${leadCard}</div></section>` : ''}
     ${awards.length ? `<section class="card"><h3>Award winners</h3><ul class="news">${awards.map(x => `<li><span class="nw">${x.y}</span>${esc(G.AWARD_NAMES[x.k])}: ${pLink(G.getP(L, x.a.pid), esc(x.a.pos + ' ' + x.a.name))}</li>`).join('')}</ul></section>` : ''}
@@ -6329,7 +6341,7 @@ function cOffersCard(list) {
       <div class="row">${shp}<button class="btn sm primary" data-act="cSign" data-id="${i}">Sign</button>${o.h ? '' : `<button class="btn sm" data-act="cHaggle" data-id="${i}">Ask for more</button>`}${o.own && !o.disc ? `<button class="btn sm" data-act="cDisc" data-id="${i}">Hometown discount</button>` : ''}</div>
     </div>`;
   };
-  return `<section class="card"><h3>Contract offers</h3><p class="small">Role is where you'd land on that team's depth chart today. Grade is your fit in their scheme on your side of the ball.</p>${list.map(card).join('')}
+  return `<section class="card"><h3>Contract offers</h3><p class="small">Role is where you'd land on that team's depth chart today (tap a team to see its whole depth chart). Grade is your fit in their scheme on your side of the ball.</p>${list.map(card).join('')}
     <p class="small"><b>Structure:</b> a signing bonus is cash in your pocket now and stays yours if you're cut or traded; teams take a little off the total for a big bonus and add a little for back-loading (the late money may never come if you're cut). Asking for more works about half the time; a team that says no may pull its offer. A hometown discount (12% less, one more year) builds your coach's trust.</p></section>`;
 }
 function cSchemeCard(p) {
@@ -6467,7 +6479,7 @@ function vGames() {
 function vTeamC() {
   const p = CP();
   if (!p || p.team < 0) return `<section class="card"><h3>Team</h3><p>You're not on a team right now.</p></section>`;
-  return cDepthCard(p, true) + teamPage(L.teams[p.team]);
+  return teamPage(L.teams[p.team]);
 }
 // The depth chart as the coach has it: your group first, then every other position
 function cDepthCard(p, all) {
@@ -6518,6 +6530,7 @@ function careerAct(a, el) {
     case 'cPlan': G.setCareerPlan(L, id); break;
     case 'cDismiss': G.dismissAlert(L, id); break;
     case 'gYear': ui.gYear = +id; break;
+    case 'dcAll': ui.dcAll = ui.dcAll === +id ? null : +id; break;
     case 'cSwitch': { const e = G.careerSwitch(L, +id); flash(e || 'Position changed.'); break; }
     case 'cCoach': { const e = G.careerBecomeCoach(L, +id); flash(e || 'You\'re a coach now.'); break; }
     default: return false;
