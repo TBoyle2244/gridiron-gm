@@ -2144,6 +2144,25 @@ function creditDefense(L, tid, rat, oppRat, ints, coach, oppCoach) {
 }
 
 // Weeks missed per season, used by retirement.
+// What the injury is, by how long it keeps him out
+const INJ_TYPES = {
+  1: ['Ankle sprain', 'Hamstring strain', 'Concussion', 'Knee bruise', 'Shoulder sprain', 'Hip pointer', 'Back spasms', 'Groin strain', 'Quad strain', 'Bruised ribs', 'Neck stinger', 'Thigh bruise'],
+  2: ['High ankle sprain', 'Concussion', 'Hamstring strain', 'MCL sprain', 'Turf toe', 'Calf strain', 'Shoulder separation', 'Sprained wrist', 'Rib fracture', 'Groin strain'],
+  4: ['MCL sprain', 'Broken hand', 'Fractured wrist', 'High ankle sprain', 'Torn meniscus', 'Broken thumb', 'Shoulder separation', 'Fractured ribs', 'Sports hernia', 'Pectoral strain'],
+  9: ['Torn ACL', 'Torn Achilles', 'Broken leg', 'Torn pectoral', 'Lisfranc injury', 'Torn labrum', 'Broken collarbone', 'Fractured ankle', 'Torn ACL', 'Neck injury', 'Torn biceps', 'Dislocated hip']
+};
+function injName(p, wks) {
+  const k = wks >= 9 ? 9 : wks >= 4 ? 4 : wks >= 2 ? 2 : 1;
+  let list = INJ_TYPES[k];
+  if (p.grp === 'QB') list = list.concat(k === 9 ? ['Torn ACL'] : k >= 2 ? ['Throwing shoulder', 'Broken finger'] : ['Bruised throwing hand']);
+  if ((p.grp === 'OL' || p.grp === 'DL') && k >= 4) list = list.concat(['Torn triceps', 'Knee sprain']);
+  p.injT = R.pick(list);
+  return p.injT;
+}
+function injText(p) {
+  if (!p || !p.inj) return '';
+  return `${p.injT || 'Injury'}, out ${p.inj >= 20 ? 'for the season' : p.inj + ' week' + (p.inj > 1 ? 's' : '')}`;
+}
 function noteInjury(L, p, wks) { p.injY = p.injY || {}; p.injY[L.year] = (p.injY[L.year] || 0) + wks; }
 function recentInjuryWeeks(p, y) { let s = 0; for (let k = y - 2; k <= y; k++) s += (p.injY && p.injY[k]) || 0; return s; }
 function injuries(L, rat) {
@@ -2151,17 +2170,17 @@ function injuries(L, rat) {
   GRPS.forEach(g => rat.d[g].slice(0, F[g]).forEach(p => {
     if (p.inj && p.playHurt && Math.random() < 0.3) {
       const extra = R.int(1, 2); p.inj += extra; noteInjury(L, p, extra);
-      if (p.team === L.user) addNews(L, `${p.pos} ${p.name} aggravated his injury playing hurt. Now out ${p.inj} weeks.`);
+      if (p.team === L.user) addNews(L, `${p.pos} ${p.name} aggravated his ${(p.injT || 'injury').toLowerCase()} playing hurt. Now out ${p.inj} weeks.`);
     }
   }));
-  if (L.career) { const c = L.players[L.career.pid]; if (c && !c.inj && careerDurMult(L, c) > 1 && GRPS.some(g => rat.d[g].slice(0, F[g]).includes(c)) && Math.random() < 0.38 / 22 * (careerDurMult(L, c) - 1) * 3) { c.inj = 1 + R.poisson(1.4); noteInjury(L, c, c.inj); } }
+  if (L.career) { const c = L.players[L.career.pid]; if (c && !c.inj && careerDurMult(L, c) > 1 && GRPS.some(g => rat.d[g].slice(0, F[g]).includes(c)) && Math.random() < 0.38 / 22 * (careerDurMult(L, c) - 1) * 3) { c.inj = 1 + R.poisson(1.4); injName(c, c.inj); noteInjury(L, c, c.inj); } }
   if (Math.random() < 0.38) {
     const pool = []; ['QB','RB','WR','TE','OL','DL','LB','DB'].forEach(g => rat.d[g].slice(0, F[g]).forEach(p => pool.push(p)));
     let p = R.pick(pool); if (!p) return;
     if (isCareer(L, p) && Math.random() > careerDurMult(L, p)) return;
-    p.inj = Math.random() < 0.04 ? 20 : 1 + R.poisson(1.4);
+    p.inj = Math.random() < 0.04 ? 20 : 1 + R.poisson(1.4); injName(p, p.inj);
     noteInjury(L, p, Math.min(p.inj, rules(L.year).games));
-    if (p.team === L.user || p.ovr >= 80) addNews(L, `${L.teams[p.team].abbr} ${p.pos} ${p.name} injured, out ${p.inj >= 20 ? 'for the season' : p.inj + ' week' + (p.inj > 1 ? 's' : '')}.`);
+    if (p.team === L.user || p.ovr >= 80 || isCareer(L, p)) addNews(L, `${L.teams[p.team].abbr} ${p.pos} ${p.name}: ${injText(p).replace(', out', '. Out')}.`);
   }
 }
 
@@ -2270,7 +2289,7 @@ function archiveBoxes(L) {
   if (L.playoffs) L.playoffs.rounds.forEach(r => r.games.forEach(g => { if (g.h === L.user || g.a === L.user) out.push(Object.assign({ wk: r.name }, g, { box: slimBox(g.box) })); }));
   if (out.length) L.myGames[L.year] = out;
 }
-function healWeek(L) { for (const id in L.players) { const p = L.players[id]; if (p.inj > 0) p.inj--; if (!p.inj && p.playHurt) delete p.playHurt; } }
+function healWeek(L) { for (const id in L.players) { const p = L.players[id]; if (p.inj > 0) { p.inj--; if (!p.inj) delete p.injT; } if (!p.inj && p.playHurt) delete p.playHurt; } }
 
 /* ---------- season flow ---------- */
 function canStartSeason(L) {
@@ -2807,7 +2826,7 @@ function progress(L) {
     if (isCareer(L, p)) p.ovr = Math.min(99, p.ovr);
     p.peak = Math.max(p.peak || 0, p.ovr);
     if (p.ovr >= p.pot && !(RC && isCareer(L, p))) p.pot = p.ovr;
-    p.inj = 0;
+    p.inj = 0; delete p.injT;
     let rp = 0;
     if (p.age >= 33) {
       rp = 0.25 + (p.age - 33) * 0.15;
@@ -4281,14 +4300,14 @@ function careerWeek(L) {
   for (const k in h) if (typeof h[k] === 'number' && k !== 'tm') { const d = h[k] - (before[k] || 0); if (d) line[k] = d; }
   if (g && g.done) {
     const home = g.h === tid, my = home ? g.hs : g.as, op = home ? g.as : g.hs;
-    C.games.unshift({ y, wk: wk + 1, tid, opp: home ? g.a : g.h, home, my, op, res: my > op ? 'W' : my < op ? 'L' : 'T', line, why: line.g ? null : p.holdout ? 'Holdout' : p.inj ? 'Injured' : 'Did not play', wx: g.wx, gm: Object.assign({ wk: 'Week ' + (wk + 1) }, g, { box: slimBox(g.box) }) });
+    C.games.unshift({ y, wk: wk + 1, tid, opp: home ? g.a : g.h, home, my, op, res: my > op ? 'W' : my < op ? 'L' : 'T', line, why: line.g ? null : p.holdout ? 'Holdout' : p.inj ? (p.injT ? 'Out: ' + p.injT.toLowerCase() : 'Injured') : 'Did not play', wx: g.wx, gm: Object.assign({ wk: 'Week ' + (wk + 1) }, g, { box: slimBox(g.box) }) });
     C.games = C.games.slice(0, 120);
     const sc = OFFG.includes(p.grp) ? offScore(line) : DEFG.includes(p.grp) ? (line.sk || 0) * 4 + (line.dint || 0) * 5 : 0;
     addTrust(L, (my > op ? 0.8 : my < op ? -0.5 : 0) + (sc >= 18 ? 1.5 : sc >= 9 ? 0.6 : 0));
     if (sc >= 18) addFO(L, 0.6);
   } else if (tid >= 0) C.games.unshift({ y, wk: wk + 1, tid, bye: 1, line: {} });
   if (p.inj >= 4 && !(before.injNoted === p.inj)) { /* injury alert below */ }
-  if (p.inj && !C.injAlert) { careerAlert(L, `You're hurt: out ${p.inj >= 20 ? 'for the season' : p.inj + ' week' + (p.inj > 1 ? 's' : '')}.`, 'inj'); C.injAlert = 1; }
+  if (p.inj && !C.injAlert) { careerAlert(L, `You're hurt: ${injText(p).replace(/^./, c => c.toLowerCase())}.`, 'inj'); C.injAlert = 1; }
   if (!p.inj) C.injAlert = 0;
   if (startTeam >= 0 && p.team !== startTeam && p.team >= 0 && !C.deals) { C.trust = 50; C.fo = 50; }
   if (startTeam >= 0 && p.team !== startTeam && p.team >= 0 && !C.deals) careerAlert(L, `You've been traded to the ${L.teams[p.team].city} ${L.teams[p.team].name}.`, 'warn');
@@ -4443,7 +4462,7 @@ function careerLegacy(L) {
   return { score: Math.round(s), line: line && Math.round(line), pct: line ? Math.round(s / line * 100) : null, rings, jerseys, hof: p.hof || 0, verdict: C.verdict || null };
 }
 
-const API = { careerAgain, execTrade, setContract, SHAPES, contractTable, restructure, restructureInfo, june1Left, cashFor, baseFor, proLeft, careerScheme, careerStanding, careerAcceptRole, PB_SLOTS, proBowl, stadium, forecast, wxText, wxEffect, recordBook, REC_KEYS, careerSwitchOpts, careerSwitch, careerEarnings, careerCoachOpts, careerBecomeCoach, careerCoachNow, careerFrontOfficeOpts, careerToGM, NO_TEAM, CAREER_TIERS, CAREER_Q, CAREER_GRPS, CAREER_POS, CAREER_FOCUS, CAREER_PLANS, careerPreview, careerClass, startCareer, careerCreate, careerChooseReal, careerP, isCareer, careerRole, careerOffers, careerSign, careerHaggle, careerDiscount, careerRaiseInfo, careerAskRaise, careerHoldout, careerAskStart, careerRequestTrade, careerCancelTrade, careerTakeDeal, careerDeclineDeals, canTradeNow, setCareerFocus, setCareerPlan, careerGoalStatus, careerAwardRace, careerNext, careerSimYear, careerCanRetire, careerRetire, careerRanks, careerLegacy, careerTotal, hofLine, dismissAlert, STAT_NAME, COLLEGES, plog, practiceSquad, unsignedRights, psSize, psEligible, toPracticeSquad, promoteFromPS, signFromPS, signRefuserIfMoved, optionInfo, exerciseOption, declineOption, transitionTag, tagPrice, tradeablePick, rookieYears, playerFit, moraleReasons, holdoutInfo, marketFor, marketView, footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
+const API = { injText, injName, careerAgain, execTrade, setContract, SHAPES, contractTable, restructure, restructureInfo, june1Left, cashFor, baseFor, proLeft, careerScheme, careerStanding, careerAcceptRole, PB_SLOTS, proBowl, stadium, forecast, wxText, wxEffect, recordBook, REC_KEYS, careerSwitchOpts, careerSwitch, careerEarnings, careerCoachOpts, careerBecomeCoach, careerCoachNow, careerFrontOfficeOpts, careerToGM, NO_TEAM, CAREER_TIERS, CAREER_Q, CAREER_GRPS, CAREER_POS, CAREER_FOCUS, CAREER_PLANS, careerPreview, careerClass, startCareer, careerCreate, careerChooseReal, careerP, isCareer, careerRole, careerOffers, careerSign, careerHaggle, careerDiscount, careerRaiseInfo, careerAskRaise, careerHoldout, careerAskStart, careerRequestTrade, careerCancelTrade, careerTakeDeal, careerDeclineDeals, canTradeNow, setCareerFocus, setCareerPlan, careerGoalStatus, careerAwardRace, careerNext, careerSimYear, careerCanRetire, careerRetire, careerRanks, careerLegacy, careerTotal, hofLine, dismissAlert, STAT_NAME, COLLEGES, plog, practiceSquad, unsignedRights, psSize, psEligible, toPracticeSquad, promoteFromPS, signFromPS, signRefuserIfMoved, optionInfo, exerciseOption, declineOption, transitionTag, tagPrice, tradeablePick, rookieYears, playerFit, moraleReasons, holdoutInfo, marketFor, marketView, footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
   value, release, sign, proposeTrade, tradeVerdict, teamPicks, pickById, pickLabel, projectedOverall, pickWeight, playerWeight, ensurePicks, myDraftSlots, aiTrades, acceptOffer, rejectOffer, offerValid, cutTo, ratings, teamOverall, startRegular, canStartSeason, simWeek, simPlayoffRound, roundName,
   sortTeams, divisions, pct, startDraft, onClock, makePick, aiPick, draftUntilUser, draftAll, scoutPlayer, beginDraft, SCOUT_VISITS, endDraft, startNextSeason, leaders, potKnown, shownPot, roman, addNews };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.GG = API;

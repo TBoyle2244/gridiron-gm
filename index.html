@@ -2350,6 +2350,25 @@ function creditDefense(L, tid, rat, oppRat, ints, coach, oppCoach) {
 }
 
 // Weeks missed per season, used by retirement.
+// What the injury is, by how long it keeps him out
+const INJ_TYPES = {
+  1: ['Ankle sprain', 'Hamstring strain', 'Concussion', 'Knee bruise', 'Shoulder sprain', 'Hip pointer', 'Back spasms', 'Groin strain', 'Quad strain', 'Bruised ribs', 'Neck stinger', 'Thigh bruise'],
+  2: ['High ankle sprain', 'Concussion', 'Hamstring strain', 'MCL sprain', 'Turf toe', 'Calf strain', 'Shoulder separation', 'Sprained wrist', 'Rib fracture', 'Groin strain'],
+  4: ['MCL sprain', 'Broken hand', 'Fractured wrist', 'High ankle sprain', 'Torn meniscus', 'Broken thumb', 'Shoulder separation', 'Fractured ribs', 'Sports hernia', 'Pectoral strain'],
+  9: ['Torn ACL', 'Torn Achilles', 'Broken leg', 'Torn pectoral', 'Lisfranc injury', 'Torn labrum', 'Broken collarbone', 'Fractured ankle', 'Torn ACL', 'Neck injury', 'Torn biceps', 'Dislocated hip']
+};
+function injName(p, wks) {
+  const k = wks >= 9 ? 9 : wks >= 4 ? 4 : wks >= 2 ? 2 : 1;
+  let list = INJ_TYPES[k];
+  if (p.grp === 'QB') list = list.concat(k === 9 ? ['Torn ACL'] : k >= 2 ? ['Throwing shoulder', 'Broken finger'] : ['Bruised throwing hand']);
+  if ((p.grp === 'OL' || p.grp === 'DL') && k >= 4) list = list.concat(['Torn triceps', 'Knee sprain']);
+  p.injT = R.pick(list);
+  return p.injT;
+}
+function injText(p) {
+  if (!p || !p.inj) return '';
+  return `${p.injT || 'Injury'}, out ${p.inj >= 20 ? 'for the season' : p.inj + ' week' + (p.inj > 1 ? 's' : '')}`;
+}
 function noteInjury(L, p, wks) { p.injY = p.injY || {}; p.injY[L.year] = (p.injY[L.year] || 0) + wks; }
 function recentInjuryWeeks(p, y) { let s = 0; for (let k = y - 2; k <= y; k++) s += (p.injY && p.injY[k]) || 0; return s; }
 function injuries(L, rat) {
@@ -2357,17 +2376,17 @@ function injuries(L, rat) {
   GRPS.forEach(g => rat.d[g].slice(0, F[g]).forEach(p => {
     if (p.inj && p.playHurt && Math.random() < 0.3) {
       const extra = R.int(1, 2); p.inj += extra; noteInjury(L, p, extra);
-      if (p.team === L.user) addNews(L, `${p.pos} ${p.name} aggravated his injury playing hurt. Now out ${p.inj} weeks.`);
+      if (p.team === L.user) addNews(L, `${p.pos} ${p.name} aggravated his ${(p.injT || 'injury').toLowerCase()} playing hurt. Now out ${p.inj} weeks.`);
     }
   }));
-  if (L.career) { const c = L.players[L.career.pid]; if (c && !c.inj && careerDurMult(L, c) > 1 && GRPS.some(g => rat.d[g].slice(0, F[g]).includes(c)) && Math.random() < 0.38 / 22 * (careerDurMult(L, c) - 1) * 3) { c.inj = 1 + R.poisson(1.4); noteInjury(L, c, c.inj); } }
+  if (L.career) { const c = L.players[L.career.pid]; if (c && !c.inj && careerDurMult(L, c) > 1 && GRPS.some(g => rat.d[g].slice(0, F[g]).includes(c)) && Math.random() < 0.38 / 22 * (careerDurMult(L, c) - 1) * 3) { c.inj = 1 + R.poisson(1.4); injName(c, c.inj); noteInjury(L, c, c.inj); } }
   if (Math.random() < 0.38) {
     const pool = []; ['QB','RB','WR','TE','OL','DL','LB','DB'].forEach(g => rat.d[g].slice(0, F[g]).forEach(p => pool.push(p)));
     let p = R.pick(pool); if (!p) return;
     if (isCareer(L, p) && Math.random() > careerDurMult(L, p)) return;
-    p.inj = Math.random() < 0.04 ? 20 : 1 + R.poisson(1.4);
+    p.inj = Math.random() < 0.04 ? 20 : 1 + R.poisson(1.4); injName(p, p.inj);
     noteInjury(L, p, Math.min(p.inj, rules(L.year).games));
-    if (p.team === L.user || p.ovr >= 80) addNews(L, `${L.teams[p.team].abbr} ${p.pos} ${p.name} injured, out ${p.inj >= 20 ? 'for the season' : p.inj + ' week' + (p.inj > 1 ? 's' : '')}.`);
+    if (p.team === L.user || p.ovr >= 80 || isCareer(L, p)) addNews(L, `${L.teams[p.team].abbr} ${p.pos} ${p.name}: ${injText(p).replace(', out', '. Out')}.`);
   }
 }
 
@@ -2476,7 +2495,7 @@ function archiveBoxes(L) {
   if (L.playoffs) L.playoffs.rounds.forEach(r => r.games.forEach(g => { if (g.h === L.user || g.a === L.user) out.push(Object.assign({ wk: r.name }, g, { box: slimBox(g.box) })); }));
   if (out.length) L.myGames[L.year] = out;
 }
-function healWeek(L) { for (const id in L.players) { const p = L.players[id]; if (p.inj > 0) p.inj--; if (!p.inj && p.playHurt) delete p.playHurt; } }
+function healWeek(L) { for (const id in L.players) { const p = L.players[id]; if (p.inj > 0) { p.inj--; if (!p.inj) delete p.injT; } if (!p.inj && p.playHurt) delete p.playHurt; } }
 
 /* ---------- season flow ---------- */
 function canStartSeason(L) {
@@ -3013,7 +3032,7 @@ function progress(L) {
     if (isCareer(L, p)) p.ovr = Math.min(99, p.ovr);
     p.peak = Math.max(p.peak || 0, p.ovr);
     if (p.ovr >= p.pot && !(RC && isCareer(L, p))) p.pot = p.ovr;
-    p.inj = 0;
+    p.inj = 0; delete p.injT;
     let rp = 0;
     if (p.age >= 33) {
       rp = 0.25 + (p.age - 33) * 0.15;
@@ -4487,14 +4506,14 @@ function careerWeek(L) {
   for (const k in h) if (typeof h[k] === 'number' && k !== 'tm') { const d = h[k] - (before[k] || 0); if (d) line[k] = d; }
   if (g && g.done) {
     const home = g.h === tid, my = home ? g.hs : g.as, op = home ? g.as : g.hs;
-    C.games.unshift({ y, wk: wk + 1, tid, opp: home ? g.a : g.h, home, my, op, res: my > op ? 'W' : my < op ? 'L' : 'T', line, why: line.g ? null : p.holdout ? 'Holdout' : p.inj ? 'Injured' : 'Did not play', wx: g.wx, gm: Object.assign({ wk: 'Week ' + (wk + 1) }, g, { box: slimBox(g.box) }) });
+    C.games.unshift({ y, wk: wk + 1, tid, opp: home ? g.a : g.h, home, my, op, res: my > op ? 'W' : my < op ? 'L' : 'T', line, why: line.g ? null : p.holdout ? 'Holdout' : p.inj ? (p.injT ? 'Out: ' + p.injT.toLowerCase() : 'Injured') : 'Did not play', wx: g.wx, gm: Object.assign({ wk: 'Week ' + (wk + 1) }, g, { box: slimBox(g.box) }) });
     C.games = C.games.slice(0, 120);
     const sc = OFFG.includes(p.grp) ? offScore(line) : DEFG.includes(p.grp) ? (line.sk || 0) * 4 + (line.dint || 0) * 5 : 0;
     addTrust(L, (my > op ? 0.8 : my < op ? -0.5 : 0) + (sc >= 18 ? 1.5 : sc >= 9 ? 0.6 : 0));
     if (sc >= 18) addFO(L, 0.6);
   } else if (tid >= 0) C.games.unshift({ y, wk: wk + 1, tid, bye: 1, line: {} });
   if (p.inj >= 4 && !(before.injNoted === p.inj)) { /* injury alert below */ }
-  if (p.inj && !C.injAlert) { careerAlert(L, `You're hurt: out ${p.inj >= 20 ? 'for the season' : p.inj + ' week' + (p.inj > 1 ? 's' : '')}.`, 'inj'); C.injAlert = 1; }
+  if (p.inj && !C.injAlert) { careerAlert(L, `You're hurt: ${injText(p).replace(/^./, c => c.toLowerCase())}.`, 'inj'); C.injAlert = 1; }
   if (!p.inj) C.injAlert = 0;
   if (startTeam >= 0 && p.team !== startTeam && p.team >= 0 && !C.deals) { C.trust = 50; C.fo = 50; }
   if (startTeam >= 0 && p.team !== startTeam && p.team >= 0 && !C.deals) careerAlert(L, `You've been traded to the ${L.teams[p.team].city} ${L.teams[p.team].name}.`, 'warn');
@@ -4649,7 +4668,7 @@ function careerLegacy(L) {
   return { score: Math.round(s), line: line && Math.round(line), pct: line ? Math.round(s / line * 100) : null, rings, jerseys, hof: p.hof || 0, verdict: C.verdict || null };
 }
 
-const API = { careerAgain, execTrade, setContract, SHAPES, contractTable, restructure, restructureInfo, june1Left, cashFor, baseFor, proLeft, careerScheme, careerStanding, careerAcceptRole, PB_SLOTS, proBowl, stadium, forecast, wxText, wxEffect, recordBook, REC_KEYS, careerSwitchOpts, careerSwitch, careerEarnings, careerCoachOpts, careerBecomeCoach, careerCoachNow, careerFrontOfficeOpts, careerToGM, NO_TEAM, CAREER_TIERS, CAREER_Q, CAREER_GRPS, CAREER_POS, CAREER_FOCUS, CAREER_PLANS, careerPreview, careerClass, startCareer, careerCreate, careerChooseReal, careerP, isCareer, careerRole, careerOffers, careerSign, careerHaggle, careerDiscount, careerRaiseInfo, careerAskRaise, careerHoldout, careerAskStart, careerRequestTrade, careerCancelTrade, careerTakeDeal, careerDeclineDeals, canTradeNow, setCareerFocus, setCareerPlan, careerGoalStatus, careerAwardRace, careerNext, careerSimYear, careerCanRetire, careerRetire, careerRanks, careerLegacy, careerTotal, hofLine, dismissAlert, STAT_NAME, COLLEGES, plog, practiceSquad, unsignedRights, psSize, psEligible, toPracticeSquad, promoteFromPS, signFromPS, signRefuserIfMoved, optionInfo, exerciseOption, declineOption, transitionTag, tagPrice, tradeablePick, rookieYears, playerFit, moraleReasons, holdoutInfo, marketFor, marketView, footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
+const API = { injText, injName, careerAgain, execTrade, setContract, SHAPES, contractTable, restructure, restructureInfo, june1Left, cashFor, baseFor, proLeft, careerScheme, careerStanding, careerAcceptRole, PB_SLOTS, proBowl, stadium, forecast, wxText, wxEffect, recordBook, REC_KEYS, careerSwitchOpts, careerSwitch, careerEarnings, careerCoachOpts, careerBecomeCoach, careerCoachNow, careerFrontOfficeOpts, careerToGM, NO_TEAM, CAREER_TIERS, CAREER_Q, CAREER_GRPS, CAREER_POS, CAREER_FOCUS, CAREER_PLANS, careerPreview, careerClass, startCareer, careerCreate, careerChooseReal, careerP, isCareer, careerRole, careerOffers, careerSign, careerHaggle, careerDiscount, careerRaiseInfo, careerAskRaise, careerHoldout, careerAskStart, careerRequestTrade, careerCancelTrade, careerTakeDeal, careerDeclineDeals, canTradeNow, setCareerFocus, setCareerPlan, careerGoalStatus, careerAwardRace, careerNext, careerSimYear, careerCanRetire, careerRetire, careerRanks, careerLegacy, careerTotal, hofLine, dismissAlert, STAT_NAME, COLLEGES, plog, practiceSquad, unsignedRights, psSize, psEligible, toPracticeSquad, promoteFromPS, signFromPS, signRefuserIfMoved, optionInfo, exerciseOption, declineOption, transitionTag, tagPrice, tradeablePick, rookieYears, playerFit, moraleReasons, holdoutInfo, marketFor, marketView, footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
   value, release, sign, proposeTrade, tradeVerdict, teamPicks, pickById, pickLabel, projectedOverall, pickWeight, playerWeight, ensurePicks, myDraftSlots, aiTrades, acceptOffer, rejectOffer, offerValid, cutTo, ratings, teamOverall, startRegular, canStartSeason, simWeek, simPlayoffRound, roundName,
   sortTeams, divisions, pct, startDraft, onClock, makePick, aiPick, draftUntilUser, draftAll, scoutPlayer, beginDraft, SCOUT_VISITS, endDraft, startNextSeason, leaders, potKnown, shownPot, roman, addNews };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.GG = API;
@@ -4956,7 +4975,7 @@ const HELP_FOR_TAB = { home: 'office', roster: 'roster', stats: 'stats', league:
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-19b';
+const APP_VERSION = '2026-11-19c';
 let SLOT = (() => { try { return localStorage.getItem('gg-slot') === 'career' ? 'career' : 'league'; } catch (e) { return 'league'; } })();
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
@@ -5180,7 +5199,7 @@ function playerPage(p) {
     ${p.retiredYear ? `<div class="row"><div class="pl-r"><span class="lbl">PEAK</span>${rating(p.peak || p.ovr)}</div></div>` : `<div class="row">
       <div class="pl-r"><span class="lbl">OVR</span>${rating(G.eff(p))}</div><div class="pl-r"><span class="lbl">${known ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div><div class="pl-r"><span class="lbl">PEAK</span>${rating(Math.max(p.peak || 0, p.ovr))}</div>
       ${fit ? `<div class="pl-r"><span class="lbl">FIT</span><span class="fitg">${fit.grade}</span></div>` : ''}</div>`}
-    ${!p.retiredYear && p.team >= 0 ? `<p class="small">${p.con ? 'Contract: ' + conText(p) : 'No contract'} · Morale ${G.moraleWord(p)}${p.inj ? ` · <b class="bad">Injured, ${p.inj >= 20 ? 'out for the season' : p.inj + ' wk'}</b>` : ''}${p.holdout ? ' · <b class="bad">Holding out</b>' : ''}</p>` : ''}
+    ${!p.retiredYear && p.team >= 0 ? `<p class="small">${p.con ? 'Contract: ' + conText(p) : 'No contract'} · Morale ${G.moraleWord(p)}${p.inj ? ` · <b class="bad">${esc(G.injText(p))}</b>` : ''}${p.holdout ? ' · <b class="bad">Holding out</b>' : ''}</p>` : ''}
     ${fit && !p.retiredYear ? `<p class="small"><b>Fit with your ${mine ? 'team' : 'team if you got him'}:</b>${reasonsText(fit.why)}</p>` : ''}
     ${aw ? `<div class="awards">${aw}</div>` : ''}
     ${acts ? `<div class="row">${acts}</div>` : ''}</section>
@@ -5195,7 +5214,7 @@ function teamDepthCard(tid) {
   const first = cp && cp.team === tid ? cp.grp : null, order = first ? [first].concat(G.GRPS.filter(g => g !== first)) : G.GRPS;
   const grp = g => {
     const full = D[g] || [], n = N[g] || 0, list = all ? full : full.slice(0, Math.max(n + 2, 3));
-    return `<div class="dcgrp${g === first ? ' mine' : ''}"><div class="eyebrow">${g} · ${n} starter${n === 1 ? '' : 's'}</div>${list.map((x, i) => `<div class="dcrow${cp && x.id === cp.id ? ' me' : ''}${i < n ? ' st' : ''}"><span class="dcn">${i + 1}</span><span class="dcnm">${cp && x.id === cp.id ? '<b>You</b>' : pLink(x)}${x.inj ? ' <span class="bad small">inj</span>' : ''}</span><span class="dcpos">${esc(x.pos)} · ${x.age}</span><span class="dcsal">${G.salFor(x, G.capYear(L)) != null ? G.money(G.salFor(x, G.capYear(L))) : '–'}</span><span class="dco">${x.ovr}</span></div>`).join('')}${!all && full.length > list.length ? `<div class="small muted">+${full.length - list.length} more</div>` : ''}</div>`;
+    return `<div class="dcgrp${g === first ? ' mine' : ''}"><div class="eyebrow">${g} · ${n} starter${n === 1 ? '' : 's'}</div>${list.map((x, i) => `<div class="dcrow${cp && x.id === cp.id ? ' me' : ''}${i < n ? ' st' : ''}"><span class="dcn">${i + 1}</span><span class="dcnm">${cp && x.id === cp.id ? '<b>You</b>' : pLink(x)}${x.inj ? ` <span class="bad small">${esc(x.injT || 'inj')}${x.inj >= 20 ? ' (season)' : ' (' + x.inj + 'w)'}</span>` : ''}</span><span class="dcpos">${esc(x.pos)} · ${x.age}</span><span class="dcsal">${G.salFor(x, G.capYear(L)) != null ? G.money(G.salFor(x, G.capYear(L))) : '–'}</span><span class="dco">${x.ovr}</span></div>`).join('')}${!all && full.length > list.length ? `<div class="small muted">+${full.length - list.length} more</div>` : ''}</div>`;
   };
   return `<section class="card"><h3>Depth chart</h3><p class="small">How the coach lines them up today. Each row: position · age, cap hit, overall. Starters are highlighted.</p>
     <div class="dcgrid">${order.map(grp).join('')}</div><div class="row"><button class="btn sm" data-act="dcAll" data-id="${tid}">${all ? 'Show starters and backups only' : 'Show everyone'}</button></div></section>`;
@@ -5762,7 +5781,7 @@ function vRoster() {
     <p class="small">Green positions are starters, set on the Coach tab's depth chart. Tap a player for options.</p>${chips('grp', ui.grp)}${sortSeg('rSort', false, 'ovr', true)}
     <div class="list">${list.map(p => `<div class="pl ${ui.open === p.id ? 'open' : ''}">
       <button class="pl-main" data-act="open" data-id="${p.id}"><span class="pos ${starterIds.has(p.id) ? 'st' : ''}">${esc(p.pos)}</span>
-      <div class="pl-name">${esc(p.name)}${p.inj ? `<span class="inj">INJ ${p.inj >= 20 ? 'season' : p.inj + 'w'}</span>` : ''}<div class="pl-sub">${p.num ? '#' + p.num + ' · ' : ''}${(() => { const C = L.camp; if (!C || C.year !== L.year || (L.phase !== 'preseason' && L.phase !== 'regular')) return ''; const r = C.mine.find(x => x.id === p.id); if (!r || r.a === r.b) return ''; const d = r.a - r.b; return `<span class="${d > 0 ? 'good' : 'bad'}">${d > 0 ? '▲' + d : '▼' + (-d)} camp</span> · `; })()}${p.ir ? '<b class="bad">INJURED RESERVE</b> · ' : ''}${p.holdout ? '<b class="bad">HOLDOUT</b> · ' : ''}${p.striking ? '<b class="bad">ON STRIKE</b> · ' : ''}${p.repl ? '<b class="warn">Replacement player</b> · ' : ''}${(() => { const rt = G.roleTag(L, p), f = G.playerFit(L, p, L.user); return rt ? `<span class="${rt.c}">${rt.t}</span>, fit <b>${f.grade}</b> · ` : ''; })()}Age ${p.age} · ${p.yrs ? p.yrs + ' yr' + (p.yrs > 1 ? 's' : '') : 'Rookie'} · <span class="${G.mor(p) < 50 ? 'bad' : (G.mor(p) >= 75 ? 'good' : '')}">${G.moraleWord(p)}</span> · ${conText(p)}${statLine(p) ? ' · ' + statLine(p) : ''}</div></div>
+      <div class="pl-name">${esc(p.name)}${p.inj ? `<span class="inj">${p.injT ? esc(p.injT) + ' · ' : 'INJ '}${p.inj >= 20 ? 'season' : p.inj + 'w'}</span>` : ''}<div class="pl-sub">${p.num ? '#' + p.num + ' · ' : ''}${(() => { const C = L.camp; if (!C || C.year !== L.year || (L.phase !== 'preseason' && L.phase !== 'regular')) return ''; const r = C.mine.find(x => x.id === p.id); if (!r || r.a === r.b) return ''; const d = r.a - r.b; return `<span class="${d > 0 ? 'good' : 'bad'}">${d > 0 ? '▲' + d : '▼' + (-d)} camp</span> · `; })()}${p.ir ? '<b class="bad">INJURED RESERVE</b> · ' : ''}${p.holdout ? '<b class="bad">HOLDOUT</b> · ' : ''}${p.striking ? '<b class="bad">ON STRIKE</b> · ' : ''}${p.repl ? '<b class="warn">Replacement player</b> · ' : ''}${(() => { const rt = G.roleTag(L, p), f = G.playerFit(L, p, L.user); return rt ? `<span class="${rt.c}">${rt.t}</span>, fit <b>${f.grade}</b> · ` : ''; })()}Age ${p.age} · ${p.yrs ? p.yrs + ' yr' + (p.yrs > 1 ? 's' : '') : 'Rookie'} · <span class="${G.mor(p) < 50 ? 'bad' : (G.mor(p) >= 75 ? 'good' : '')}">${G.moraleWord(p)}</span> · ${conText(p)}${statLine(p) ? ' · ' + statLine(p) : ''}</div></div>
       <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></button>
       ${ui.open === p.id ? `<div class="pl-act"><button class="btn sm" data-act="pl" data-id="${p.id}">Player page</button><div class="small whybox"><b>Scheme fit ${G.playerFit(L, p, L.user).grade}:</b> ${reasonsText(G.playerFit(L, p, L.user).why)}<br><b>Morale ${G.moraleWord(p)} (${G.mor(p)}):</b> ${reasonsText(G.moraleReasons(L, p)) || 'nothing notable'}${p.holdout ? `<br><b class="bad">Holding out</b> until he gets a new deal (${G.money(G.renegotiatePrice(L, p))}).` : ''}</div>${p.college ? `<span class="small">${esc(p.college)}${p.draft ? ` · drafted ${p.draft.year} R${p.draft.rnd}` : ''}</span>` : ''}${G.canIR(L, p) ? `<button class="btn sm" data-act="ir" data-id="${p.id}">Place on injured reserve</button>` : ''}${p.ir ? (() => { const i = G.irReturnInfo(L, p); return i.ok ? `<button class="btn sm primary" data-act="irOff" data-id="${p.id}">Activate from IR</button>` : `<span class="small">${esc(i.why)}</span>`; })() : ''}${(p.holdout || (G.mor(p) < 50 && G.underpaid(L, p))) && p.con ? `<button class="btn sm primary" data-act="reneg" data-id="${p.id}">New deal ${G.money(G.renegotiatePrice(L, p))}</button>` : ''}${G.extInfo(L, p) ? `<button class="btn sm primary" data-act="extend" data-id="${p.id}">Extend ${G.money(G.extInfo(L, p).sal)}</button>` : ''}${G.canPlayHurt(p) ? `<button class="btn sm" data-act="hurt" data-id="${p.id}">${p.playHurt ? 'Rest him' : 'Play through injury'}</button>` : ''}${G.psSize(L.year) && G.psEligible(L, p) && L.phase !== 'playoffs' ? `<button class="btn sm" data-act="psDown" data-id="${p.id}">Move to practice squad</button>` : ''}${G.optionInfo(L, p) ? `<button class="btn sm primary" data-act="opt5" data-id="${p.id}">Pick up 5th-year option ${G.money(G.optionInfo(L, p).sal)}</button><button class="btn sm" data-act="opt5no" data-id="${p.id}">Decline option</button>` : ''}${G.restructureInfo(L, p) ? confirmBtn('rst' + p.id, `Restructure (saves ${G.money(G.restructureInfo(L, p).saves)} now)`) : ''}${confirmBtn('rel' + p.id, G.deadCharge(L, p) ? `Release (${G.money(G.deadCharge(L, p))} dead money)` : 'Release')}${G.june1Left(L) > 0 && p.con && p.con.base && G.deadCharge(L, p) ? confirmBtn('rlj' + p.id, `June 1 cut (${G.money(G.deadCharge(L, p, true).now)} now, ${G.money(G.deadCharge(L, p, true).later)} next year)`) : ''}<button class="btn sm" data-act="shop" data-id="${p.id}">Offer in trade</button></div>` : ''}
     </div>`).join('')}</div></section>` + psCard();
@@ -6121,7 +6140,7 @@ function vCoach() {
   const dcRows = chart.map((p, i) => {
     const out = p.striking || p.holdout || (p.inj && !(p.playHurt && G.canPlayHurt(p))), st = dep.includes(p.id);
     return `<div class="dc ${out ? 'out' : ''}"><span class="dc-n">${i + 1}</span><span class="pos ${st ? 'st' : ''}">${esc(p.pos)}</span>
-      <div class="pl-name">${pLink(p)}${p.striking ? '<span class="inj">ON STRIKE</span>' : ''}${p.holdout ? '<span class="inj">HOLDOUT</span>' : ''}${p.repl ? '<span class="inj">REPLACEMENT</span>' : ''}${p.inj ? `<span class="inj">${p.inj >= 20 ? 'OUT season' : (p.playHurt ? 'HURT ' : 'OUT ') + p.inj + 'w'}</span>` : ''}<div class="pl-sub">Age ${p.age}${p.playHurt && p.inj ? ` · plays at ${G.eff(p)}` : ''}</div></div>
+      <div class="pl-name">${pLink(p)}${p.striking ? '<span class="inj">ON STRIKE</span>' : ''}${p.holdout ? '<span class="inj">HOLDOUT</span>' : ''}${p.repl ? '<span class="inj">REPLACEMENT</span>' : ''}${p.inj ? `<span class="inj">${p.injT ? esc(p.injT) + ' · ' : ''}${p.inj >= 20 ? 'OUT season' : (p.playHurt ? 'HURT ' : 'OUT ') + p.inj + 'w'}</span>` : ''}<div class="pl-sub">Age ${p.age}${p.playHurt && p.inj ? ` · plays at ${G.eff(p)}` : ''}</div></div>
       <div class="pl-r"><span class="lbl">OVR</span>${rating(G.eff(p))}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div>
       ${G.canPlayHurt(p) ? `<button class="btn sm" data-act="hurt" data-id="${p.id}">${p.playHurt ? 'Rest' : 'Play hurt'}</button>` : ''}
       <button class="btn sm ar" data-act="dcMove" data-id="${p.id}" data-key="-1"${i === 0 ? ' disabled' : ''} aria-label="Move up">▲</button><button class="btn sm ar" data-act="dcMove" data-id="${p.id}" data-key="1"${i === chart.length - 1 ? ' disabled' : ''} aria-label="Move down">▼</button></div>`;
@@ -6262,7 +6281,7 @@ function cHeader(p) {
     <h2>${pLink(p)}</h2><p>${p.team >= 0 ? tLink(p.team) : esc(cStatus(p))}${r ? ' · ' + esc(r.label) : ''}</p>
     <div class="stats4"><div>${rating(p.ovr)}<span>Overall</span></div><div>${rating(pot)}<span>Ceiling</span></div><div><b>${sal != null ? G.money(sal) + '/yr' : p.con ? 'Expired' : '–'}</b><span>${cConLine(p, y)}</span></div><div><b>${C.fo == null ? 50 : C.fo}</b><span>Front office</span></div></div>
     <p class="small">Career earnings: <b>${G.money(G.careerEarnings(L))}</b></p>
-    ${p.inj ? `<p class="small bad">Injured: out ${p.inj >= 20 ? 'for the season' : p.inj + ' week' + (p.inj > 1 ? 's' : '')}.</p>` : ''}${p.holdout ? '<p class="small warn">You are holding out.</p>' : ''}</section>`;
+    ${p.inj ? `<p class="small bad">${esc(G.injText(p))}.</p>` : ''}${p.holdout ? '<p class="small warn">You are holding out.</p>' : ''}</section>`;
 }
 function cGameLine(l) {
   const s = [];
@@ -6488,7 +6507,7 @@ function cDepthCard(p, all) {
   const r = G.careerRole(L, p);
   const grp = g => {
     const list = (D[g] || []).slice(0, Math.max(N[g] + 3, 4)), n = N[g] || 0;
-    return `<div class="dcgrp${g === p.grp ? ' mine' : ''}"><div class="eyebrow">${g} · ${n} starter${n === 1 ? '' : 's'}</div>${list.map((x, i) => `<div class="dcrow${x.id === p.id ? ' me' : ''}${i < n ? ' st' : ''}"><span class="dcn">${i + 1}</span><span class="dcnm">${x.id === p.id ? '<b>You</b>' : pLink(x)}${x.inj ? ' <span class="bad small">inj</span>' : ''}</span><span class="dcpos">${esc(x.pos)} · ${x.age}</span><span class="dcsal">${G.salFor(x, G.capYear(L)) != null ? G.money(G.salFor(x, G.capYear(L))) : '–'}</span><span class="dco">${x.ovr}</span></div>`).join('')}${(D[g] || []).length > list.length ? `<div class="small muted">+${D[g].length - list.length} more</div>` : ''}</div>`;
+    return `<div class="dcgrp${g === p.grp ? ' mine' : ''}"><div class="eyebrow">${g} · ${n} starter${n === 1 ? '' : 's'}</div>${list.map((x, i) => `<div class="dcrow${x.id === p.id ? ' me' : ''}${i < n ? ' st' : ''}"><span class="dcn">${i + 1}</span><span class="dcnm">${x.id === p.id ? '<b>You</b>' : pLink(x)}${x.inj ? ` <span class="bad small">${esc(x.injT || 'inj')}${x.inj >= 20 ? ' (season)' : ' (' + x.inj + 'w)'}</span>` : ''}</span><span class="dcpos">${esc(x.pos)} · ${x.age}</span><span class="dcsal">${G.salFor(x, G.capYear(L)) != null ? G.money(G.salFor(x, G.capYear(L))) : '–'}</span><span class="dco">${x.ovr}</span></div>`).join('')}${(D[g] || []).length > list.length ? `<div class="small muted">+${D[g].length - list.length} more</div>` : ''}</div>`;
   };
   return `<section class="card"><h3>Depth chart</h3><p class="small">${r ? `You: <b>${esc(r.label)}</b>. ` : ''}Each row: position · age, cap hit, overall. Starters are highlighted. The coach sets this from ratings and health${L.career.forced && L.career.forced.y === L.year ? '; you won your job by asking' : ''}.</p>
     <div class="dcgrid">${(all ? order : [p.grp]).map(grp).join('')}</div>${all ? '' : `<div class="row"><button class="btn sm" data-act="tab" data-id="team">Whole depth chart</button></div>`}</section>`;
