@@ -143,6 +143,7 @@ const HELP = [
 <li>Practice-squad players develop like everyone else but don't count against your roster limit, don't play and don't count against the cap.</li>
 <li>Only players with two seasons or fewer qualify; from 2020, up to six veterans can too.</li>
 <li>Add players from the Roster tab (tap a player, Move to practice squad) or from the free agent list. Promote them to the roster any time you have a spot.</li>
+<li><b>Pay and the cap.</b> From 1994, practice-squad pay counts against your cap during the season, as in the real NFL: about a quarter of the league minimum per player. A promoted player moves up to the minimum salary, so a promotion only adds the difference. If you're over the cap at camp, the Office tab shows a <b>Get under the cap</b> card with your options: cuts (with dead money worked out), June 1 cuts, restructures, moving young backups to the practice squad, and trades that send out more salary than they bring back.</li>
 <li>During the season, other teams sign promising players off practice squads, including yours. You can do the same from the Moves tab (Other teams' practice squads).</li>
 <li>A player who outgrows the practice squad moves to your roster at the start of the next season.</li>
 </ul>` },

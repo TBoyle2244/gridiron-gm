@@ -1505,6 +1505,7 @@ function toPracticeSquad(L, pid) {
   if (!p || (p.team !== tid && p.team !== -1) || p.ps) return 'He can\'t be placed on your practice squad.';
   if (!psEligible(L, p)) return `${p.name} has too many seasons for the practice squad.`;
   if (practiceSquad(L, tid).length >= psSize(y)) return `Your practice squad is full (${psSize(y)}).`;
+  if (p.team === -1 && L.phase !== 'offseason') { const e = capMsg(L, tid, psPay(capYear(L))); if (e) return e; }
   if (p.team === tid) { const dead = deadCharge(L, p); if (dead) { L.dead = L.dead || {}; const D = L.dead[tid] || (L.dead[tid] = {}); D[capYear(L)] = (D[capYear(L)] || 0) + dead; } }
   p.team = tid; p.ps = true; delete p.con; delete p.ir; plog(L, p, `Placed on the ${L.teams[tid].abbr} practice squad.`);
   addNews(L, `${L.teams[tid].abbr} put ${p.pos} ${p.name} on the practice squad.`);
@@ -1514,9 +1515,10 @@ function promoteFromPS(L, pid) {
   const p = L.players[pid]; if (!p || !p.ps) return 'He is not on a practice squad.';
   const tid = p.team;
   if (tid === L.user && L.phase === 'regular' && roster(L, tid).length >= rules(L.year).rosterMax) return 'Your roster is full. Release someone first.';
-  const sal = Math.round(avgSalary(capYear(L)) * 0.3);
-  if (tid === L.user) { const e = capMsg(L, tid, sal); if (e) return e; }
-  delete p.ps; setContract(p, sal, capYear(L), 1); plog(L, p, `Promoted from the ${L.teams[tid].abbr} practice squad.`);
+  // He moves up to the league minimum. His practice-squad pay was already on the cap, so only the difference is new.
+  const y = capYear(L), sal = minSalary(y), extra = sal - (psCounts(L, y) ? psPay(y) : 0);
+  if (tid === L.user) { const e = capMsg(L, tid, extra); if (e) return e + ` Promoting him adds ${money(extra)} (the minimum salary minus the practice-squad pay already on your cap).`; }
+  delete p.ps; setContract(p, sal, y, 1); plog(L, p, `Promoted from the ${L.teams[tid].abbr} practice squad.`);
   addNews(L, `${L.teams[tid].abbr} promoted ${p.pos} ${p.name} from the practice squad.`);
   return null;
 }
@@ -2432,11 +2434,27 @@ function archiveBoxes(L) {
 function healWeek(L) { for (const id in L.players) { const p = L.players[id]; if (p.inj > 0) { p.inj--; if (!p.inj) delete p.injT; } if (!p.inj && p.playHurt) delete p.playHurt; } }
 
 /* ---------- season flow ---------- */
+// Every way to get under the cap right now, with what each saves this season.
+function capPlan(L) {
+  const y = capYear(L), cap = capFor(y); if (cap == null) return null;
+  const pay = payroll(L, L.user, y), over = pay - cap, ps = psCounts(L, y) ? psPay(y) : 0;
+  const mine = roster(L, L.user).filter(p => onBooks(p, y));
+  const d = depth(L, L.user), SF = startersFor(L, L.user), st = new Set(); GRPS.forEach(g => (d[g] || []).slice(0, SF[g]).forEach(p => st.add(p.id)));
+  const row = (p, saves, extra) => Object.assign({ id: p.id, name: p.name, pos: p.pos, ovr: p.ovr, age: p.age, sal: salFor(p, y), saves, starter: st.has(p.id) }, extra || {});
+  const cut = mine.map(p => { const dead = deadCharge(L, p); return row(p, salFor(p, y) - dead, { dead }); }).filter(r => r.saves > 0)
+    .sort((a, b) => b.saves - a.saves).slice(0, 8);
+  const june1 = june1Left(L) > 0 ? mine.filter(p => p.con && p.con.base && deadCharge(L, p)).map(p => { const D = deadCharge(L, p, true); return row(p, salFor(p, y) - D.now, { now: D.now, later: D.later }); })
+    .filter(r => r.saves > 0).sort((a, b) => b.saves - a.saves).slice(0, 4) : [];
+  const rest = mine.map(p => ({ p, R0: restructureInfo(L, p) })).filter(x => x.R0).map(x => row(x.p, x.R0.saves)).sort((a, b) => b.saves - a.saves).slice(0, 4);
+  const toPS = psSize(L.year) && practiceSquad(L, L.user).length < psSize(L.year) ? mine.filter(p => psEligible(L, p) && !st.has(p.id)).map(p => row(p, salFor(p, y) - deadCharge(L, p) - psPay(y))).filter(r => r.saves > 0).sort((a, b) => b.saves - a.saves).slice(0, 4) : [];
+  const promote = minSalary(y) - ps;
+  return { y, cap, pay, over, cut, june1, rest, toPS, promote, minSal: minSalary(y), psPay: psPay(y), psCount: practiceSquad(L, L.user).length, roster: roster(L, L.user).length, max: rules(L.year).rosterMax };
+}
 function canStartSeason(L) {
   const n = active(L, L.user).length, max = rules(L.year).rosterMax;
   if (n > max) return `Your roster has ${n} players. Cut down to ${max} before kickoff.`;
   const c = capFor(L.year);
-  if (c != null && payroll(L, L.user, L.year) > c) return `Your payroll is ${money(payroll(L, L.user, L.year))}, over the ${L.year} cap of ${money(c)}. Release or trade players first.`;
+  if (c != null && payroll(L, L.user, L.year) > c) return `Your payroll is ${money(payroll(L, L.user, L.year))}, over the ${L.year} cap of ${money(c)}. The "Get under the cap" card on the Office tab lists your options: cuts, restructures, trades and practice-squad moves.`;
   return null;
 }
 
@@ -3227,7 +3245,13 @@ function salFor(p, y) {
   return null;
 }
 function onBooks(p, y) { return salFor(p, y) != null; }
-function payroll(L, tid, y) { y = y || capYear(L); return roster(L, tid).reduce((s, p) => s + (salFor(p, y) || 0), 0) + deadFor(L, tid, y); }
+function payroll(L, tid, y) { y = y || capYear(L); return roster(L, tid).reduce((s, p) => s + (salFor(p, y) || 0), 0) + deadFor(L, tid, y) + psPayroll(L, tid, y); }
+// Practice-squad pay counts against the cap (it has since the cap began). It's about a quarter of the
+// league minimum (2025: $13,000 a week for 18 weeks vs. an $840,000 minimum), and only for the current season.
+function minSalary(y) { return Math.round(avgSalary(y) * 0.3); }
+function psPay(y) { return capFor(y) != null ? Math.round(minSalary(y) * 0.28) : 0; }
+function psCounts(L, y) { return y === capYear(L) && psPay(y) > 0 && !(L.phase === 'offseason' || L.phase === 'draft' || L.phase === 'season-over'); }
+function psPayroll(L, tid, y) { if (!psCounts(L, y)) return 0; let n = 0; for (const id in L.players) { const p = L.players[id]; if (p.team === tid && p.ps) n++; } return n * psPay(y); }
 // Before the salary cap (and in uncapped 2010) the owner sets your spending limit:
 // 15% above the league's average payroll, a little more in the biggest markets.
 const BIG_MARKETS = /^(nyg|nyj|ram|rai|chi|sfo|dal|phi|was)$/;
@@ -4643,7 +4667,7 @@ function careerLegacy(L) {
   return { score: Math.round(s), line: line && Math.round(line), pct: line ? Math.round(s / line * 100) : null, rings, jerseys, hof: p.hof || 0, verdict: C.verdict || null };
 }
 
-const API = { ensureAllAttrs, refreshAttrs, bodyText, careerAttrPreview, setCareerDrill, ATTR_SHORT, ATTR_KEYS, ATTR_NAME, attrs, attrOf, attrDelta, topAttr, attrSource, htText, ensureAttrs, attrFit, CAREER_STYLES, injText, injName, careerAgain, execTrade, setContract, SHAPES, contractTable, restructure, restructureInfo, june1Left, cashFor, baseFor, proLeft, careerScheme, careerStanding, careerAcceptRole, PB_SLOTS, proBowl, stadium, forecast, wxText, wxEffect, recordBook, REC_KEYS, careerSwitchOpts, careerSwitch, careerEarnings, careerCoachOpts, careerBecomeCoach, careerCoachNow, careerFrontOfficeOpts, careerToGM, NO_TEAM, CAREER_TIERS, CAREER_Q, CAREER_GRPS, CAREER_POS, CAREER_FOCUS, CAREER_PLANS, careerPreview, careerClass, startCareer, careerCreate, careerChooseReal, careerP, isCareer, careerRole, careerOffers, careerSign, careerHaggle, careerDiscount, careerRaiseInfo, careerAskRaise, careerHoldout, careerAskStart, careerRequestTrade, careerCancelTrade, careerTakeDeal, careerDeclineDeals, canTradeNow, setCareerFocus, setCareerPlan, careerGoalStatus, careerAwardRace, careerNext, careerSimYear, careerCanRetire, careerRetire, careerRanks, careerLegacy, careerTotal, hofLine, dismissAlert, STAT_NAME, COLLEGES, plog, practiceSquad, unsignedRights, psSize, psEligible, toPracticeSquad, promoteFromPS, signFromPS, signRefuserIfMoved, optionInfo, exerciseOption, declineOption, transitionTag, tagPrice, tradeablePick, rookieYears, playerFit, moraleReasons, holdoutInfo, marketFor, marketView, footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
+const API = { capPlan, minSalary, psPay, ensureAllAttrs, refreshAttrs, bodyText, careerAttrPreview, setCareerDrill, ATTR_SHORT, ATTR_KEYS, ATTR_NAME, attrs, attrOf, attrDelta, topAttr, attrSource, htText, ensureAttrs, attrFit, CAREER_STYLES, injText, injName, careerAgain, execTrade, setContract, SHAPES, contractTable, restructure, restructureInfo, june1Left, cashFor, baseFor, proLeft, careerScheme, careerStanding, careerAcceptRole, PB_SLOTS, proBowl, stadium, forecast, wxText, wxEffect, recordBook, REC_KEYS, careerSwitchOpts, careerSwitch, careerEarnings, careerCoachOpts, careerBecomeCoach, careerCoachNow, careerFrontOfficeOpts, careerToGM, NO_TEAM, CAREER_TIERS, CAREER_Q, CAREER_GRPS, CAREER_POS, CAREER_FOCUS, CAREER_PLANS, careerPreview, careerClass, startCareer, careerCreate, careerChooseReal, careerP, isCareer, careerRole, careerOffers, careerSign, careerHaggle, careerDiscount, careerRaiseInfo, careerAskRaise, careerHoldout, careerAskStart, careerRequestTrade, careerCancelTrade, careerTakeDeal, careerDeclineDeals, canTradeNow, setCareerFocus, setCareerPlan, careerGoalStatus, careerAwardRace, careerNext, careerSimYear, careerCanRetire, careerRetire, careerRanks, careerLegacy, careerTotal, hofLine, dismissAlert, STAT_NAME, COLLEGES, plog, practiceSquad, unsignedRights, psSize, psEligible, toPracticeSquad, promoteFromPS, signFromPS, signRefuserIfMoved, optionInfo, exerciseOption, declineOption, transitionTag, tagPrice, tradeablePick, rookieYears, playerFit, moraleReasons, holdoutInfo, marketFor, marketView, footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
   value, release, sign, proposeTrade, tradeVerdict, teamPicks, pickById, pickLabel, projectedOverall, pickWeight, playerWeight, ensurePicks, myDraftSlots, aiTrades, acceptOffer, rejectOffer, offerValid, cutTo, ratings, teamOverall, startRegular, canStartSeason, simWeek, simPlayoffRound, roundName,
   sortTeams, divisions, pct, startDraft, onClock, makePick, aiPick, draftUntilUser, draftAll, scoutPlayer, beginDraft, SCOUT_VISITS, endDraft, startNextSeason, leaders, potKnown, shownPot, roman, addNews };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.GG = API;

@@ -2,7 +2,7 @@
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-19f';
+const APP_VERSION = '2026-11-20a';
 let SLOT = (() => { try { return localStorage.getItem('gg-slot') === 'career' ? 'career' : 'league'; } catch (e) { return 'league'; } })();
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
@@ -370,10 +370,11 @@ function vHome() {
   let h = ui.box ? boxCard(ui.box) : '';
   const max = G.rules(L.year).rosterMax, n = G.roster(L, L.user).length;
   if (L.phase === 'preseason') {
-    const over = n > max;
+    const over = n > max, cp = G.capPlan(L), capOver = cp && cp.over > 0;
     h += `<section class="card hero"><div class="eyebrow">Training camp</div><h2>${L.year} roster cutdown</h2>
-      <p>You carry <b class="${over ? 'bad' : 'good'}">${n}</b> players. The ${L.year} limit is <b>${max}</b>. ${over ? 'Release players on the Roster tab, or let your staff make the cuts.' : 'You are ready for the season.'}</p>
-      <div class="row">${over ? `<button class="btn" data-act="autocut">Auto-cut to ${max}</button>` : ''}<button class="btn primary" data-act="startSeason"${over ? ' disabled' : ''}>Kick off the ${L.year} season</button></div></section>`;
+      <p>You carry <b class="${over ? 'bad' : 'good'}">${n}</b> players. The ${L.year} limit is <b>${max}</b>. ${over ? 'Release players on the Roster tab, or let your staff make the cuts.' : capOver ? '' : 'You are ready for the season.'}${capOver ? ` <b class="bad">You're ${G.money(cp.over)} over the ${cp.y} cap.</b> You can't kick off until you get under; see below.` : ''}</p>
+      <div class="row">${over ? `<button class="btn" data-act="autocut">Auto-cut to ${max}</button>` : ''}<button class="btn primary" data-act="startSeason"${over || capOver ? ' disabled' : ''}>Kick off the ${L.year} season</button></div></section>`;
+    if (capOver) h += capPlanCard(cp);
     h += campCard();
   }
   if (L.phase === 'regular') {
@@ -744,6 +745,22 @@ function foundCard() {
 }
 
 /* ---------- camp report, expansion draft, ring of honor ---------- */
+// Over the cap at camp: every way out, with what each one saves this season
+function capPlanCard(cp) {
+  const line = (r, sub, btn) => `<div class="pl wide"><div class="pl-main"><span class="pos">${esc(r.pos)}</span><div class="pl-name"><button class="lnk" data-act="pl" data-id="${r.id}">${esc(r.name)}</button><div class="pl-sub">Age ${r.age} · ${G.money(r.sal)} this year${r.starter ? ' · <b>starter</b>' : ''}${sub ? ' · ' + sub : ''}</div></div>
+    <div class="pl-r"><span class="lbl">OVR</span>${rating(r.ovr)}</div><div class="pl-r"><span class="lbl">SAVES</span><b class="good">${G.money(r.saves)}</b></div></div><div class="pl-btns">${btn}</div></div>`;
+  const sec = (title, why, rows) => rows.length ? `<h4>${title}</h4><p class="small">${why}</p><div class="list">${rows.join('')}</div>` : '';
+  const ps = cp.psCount ? ` Your ${cp.psCount} practice-squad player${cp.psCount > 1 ? 's' : ''} already count${cp.psCount > 1 ? '' : 's'} ${G.money(cp.psPay)} each.` : '';
+  return `<section class="card offers"><div class="eyebrow">Salary cap</div><h3>Get under the cap: ${G.money(cp.over)} to clear</h3>
+    <p class="small">Payroll ${G.money(cp.pay)} vs. a ${cp.y} cap of ${G.money(cp.cap)}. Any move that lowers your payroll is always allowed, even while you're over. Savings below are for this season, after dead money.</p>
+    ${sec('Cut players', 'You save his salary minus any dead money (bonus money not yet counted). Biggest savings first; starters are marked.', cp.cut.map(r => line(r, r.dead ? `${G.money(r.dead)} dead money` : 'no dead money', confirmBtn('rel' + r.id, `Cut (saves ${G.money(r.saves)})`))))}
+    ${sec('June 1 cuts', 'Two per year. Only this year\'s share of his bonus hits now; the rest moves to next year\'s cap.', cp.june1.map(r => line(r, `${G.money(r.now)} now, ${G.money(r.later)} next year`, confirmBtn('rlj' + r.id, `June 1 cut (saves ${G.money(r.saves)})`))))}
+    ${sec('Restructure', 'He keeps all his money: part of his salary becomes a signing bonus spread over the rest of his deal. Saves cap now, costs more later.', cp.rest.map(r => line(r, '', confirmBtn('rst' + r.id, `Restructure (saves ${G.money(r.saves)})`))))}
+    ${sec('Move young backups to the practice squad', `He comes off the roster and earns practice-squad pay (${G.money(cp.psPay)}) instead.${ps}`, cp.toPS.map(r => line(r, '', `<button class="btn sm" data-act="psDown" data-id="${r.id}">To practice squad (saves ${G.money(r.saves)})</button>`)))}
+    <h4>Trade players</h4><p class="small">A trade that sends out more salary than it brings back is always allowed while you're over. Offer an expensive veteran for a pick or a cheaper player.</p>
+    <div class="row"><button class="btn sm" data-act="tab" data-id="moves">Go to trades</button></div>
+    <h4>Filling the roster afterwards</h4><p class="small">Promoting a practice-squad player raises him to the minimum salary (${G.money(cp.minSal)}). His practice-squad pay is already on your cap, so a promotion adds only about <b>${G.money(cp.promote)}</b>. It's allowed whenever you have that much room. Real NFL rules work the same way: practice-squad pay counts against the cap, and a promoted player earns at least the minimum. You can also just kick off with fewer than ${cp.max} players: there's no roster minimum.</p></section>`;
+}
 function campCard() {
   const C = L.camp; if (!C || C.year !== L.year || !C.mine.length) return '';
   const rows = C.mine.slice().sort((a, b) => (b.a - b.b) - (a.a - a.b));
@@ -806,7 +823,7 @@ function psCard() {
   const n = G.psSize(L.year); if (!n) return '';
   const ps = G.practiceSquad(L, L.user).sort((a, b) => b.pot - a.pot), inS = L.phase === 'regular' || L.phase === 'playoffs';
   return `<section class="card"><div class="split"><h3>Practice squad</h3><span class="count">${ps.length} / ${n}</span></div>
-    <p class="small">Players here practice and develop but don't count on your roster or play. ${L.year >= 2020 ? 'Players with up to two seasons qualify, plus up to six veterans.' : 'Players with up to two seasons qualify.'} Other teams can sign them away during the season. Add players from the roster (tap a player) or from free agents.</p>
+    <p class="small">Players here practice and develop but don't count on your roster or play.${G.psPay(L.year) ? ` Each one's pay (${G.money(G.psPay(L.year))} a season) counts against your cap during the season, so promoting one adds only the difference up to the ${G.money(G.minSalary(L.year))} minimum.` : ''} ${L.year >= 2020 ? 'Players with up to two seasons qualify, plus up to six veterans.' : 'Players with up to two seasons qualify.'} Other teams can sign them away during the season. Add players from the roster (tap a player) or from free agents.</p>
     <div class="list">${ps.length ? ps.map(p => `<div class="pl wide"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">Age ${p.age} · ${p.yrs ? p.yrs + ' yr' + (p.yrs > 1 ? 's' : '') : 'Rookie'}</div></div>
       <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></div>
       <div class="pl-btns"><button class="btn sm primary" data-act="psUp" data-id="${p.id}"${inS && G.roster(L, L.user).length >= G.rules(L.year).rosterMax ? ' disabled' : ''}>Promote to roster</button><button class="btn sm" data-act="psCut" data-id="${p.id}">Release</button></div></div>`).join('') : '<p class="small">Empty.</p>'}</div></section>`;
