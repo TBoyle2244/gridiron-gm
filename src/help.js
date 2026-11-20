@@ -29,7 +29,7 @@ const HELP = [
 <ol>
 <li><b>Pick a season and a team.</b> Any year from 1970 to 2026. After 1970, every team starts with its real roster for that year.</li>
 <li><b>Choose a difficulty.</b> Rookie, Pro or All-Pro (see <a data-help="difficulty">Difficulty</a>).</li>
-<li><b>Training camp.</b> Check the camp report on the Office tab, set your depth chart and schemes on the Coach tab, and cut down to the roster limit on the Roster tab (or tap Auto-cut).</li>
+<li><b>Training camp.</b> Check the camp report on the Office tab, set your schemes on the Coach tab and your depth chart on the Roster tab, and cut down to the roster limit on the Roster tab (or tap Auto-cut).</li>
 <li><b>Kick off.</b> On the Office tab, play one week at a time or sim to the playoffs. Before each game you can set a game plan.</li>
 <li><b>During the season:</b> trade before the deadline (after week 9), handle injuries, place players on injured reserve, and answer trade offers.</li>
 <li><b>Playoffs.</b> Play each round on the Office tab.</li>
@@ -66,6 +66,8 @@ const HELP = [
 { id: 'roster', title: 'Roster tab', tab: 'roster', body: `
 <p>Every player on your team, by position. Sort by overall, potential or yearly salary, and filter by position with the chips.</p>
 <ul>
+<li><b>Depth chart.</b> Tap a position (QB, RB, ...) and the list shows that position in depth-chart order. The green ones start. Use ▲▼ to move players, or order the whole position by overall or potential.</li>
+<li><b>Each player shows</b> his age, years in the league, his type (Gunslinger, Deep threat, Run stuffer and so on, from his position ratings), his mood (Happy, Content, Unhappy, Angry) and his contract. Tap him to see why he feels that way, his ratings and every move you can make.</li>
 <li><b>OVR</b> is how good he is today. <b>POT</b> is how good he can become. Each line also shows his jersey number, age, years in the league, morale, contract and season stats.</li>
 <li><b>Colors:</b> gold is 85 and up (elite), green 72–84 (a good starter), plain 58–71 (average), grey under 58 (a backup).</li>
 <li><b>Tap a player</b> to open his options: release, play hurt, injured reserve, extension, or shop him in trades.</li>
@@ -76,7 +78,7 @@ const HELP = [
 
 { id: 'coach', title: 'Coach tab', tab: 'coach', body: `
 <ul>
-<li><b>Depth chart.</b> The order of starters and backups at each position. How many start at each position comes from your schemes (see <a data-help="schemes">Era schemes</a>). Move players up and down, sort by overall or potential, or reset to Auto (best healthy rating). Injured players are skipped automatically.</li>
+<li><b>Depth chart.</b> Now on the Roster tab: pick a position and the list becomes that position's depth chart, with ▲▼ arrows. How many start at each position comes from your schemes (see <a data-help="schemes">Era schemes</a>).</li>
 <li><b>Offensive and defensive scheme.</b> Pick from the schemes that exist that season (see <a data-help="schemes">Era schemes</a>). Each shows how well your roster fits it.</li>
 <li><b>Aggressiveness.</b> Higher means more fourth-down tries and deep shots: bigger wins and bigger losses.</li>
 <li><b>Develop young starters.</b> Starters 26 and under who play most of the season get an extra development bump in the offseason.</li>
