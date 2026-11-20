@@ -211,7 +211,8 @@ const HELP = [
 <li><b>Calling plays:</b> pick from six plays: quick slants, curl/flat, four verticals, a play-action shot, an inside run and an outside run. Your offensive scheme decides your personnel (how many backs, tight ends and receivers line up).</li>
 <li><b>Landscape:</b> the game plays sideways, with your offense driving left to right. Turn your phone sideways (and turn off rotation lock).</li>
 <li><b>Passing:</b> after the snap, touch anywhere and pull back to the left like a slingshot, then let go. The ball flies the opposite way; pull farther to throw farther, and pull up or down to aim across the field. Hold the ball too long and you get sacked. Tap Run to scramble.</li>
-<li><b>Running:</b> your runner keeps going forward. Hold and slide your finger up or down to cut, slide back to retreat, tap to juke past a tackler, and tap Dive to fall forward.</li>
+<li><b>Running:</b> your runner always runs straight ahead, and faster players run faster. Slide your finger up or down to move him across the field (he keeps running straight). Tap to juke past a tackler. Swipe right to dive forward and be down; swipe left to slide feet first and be down (no extra yards, but no hit). On a pass play, tap <b>QB run</b> to take off with your quarterback.</li>
+<li><b>Arm strength:</b> a better quarterback throws farther and the ball gets there faster: about 37 yards for a 60-rated QB, 54 for an 80, 62 for a 90.</li>
 <li><b>Ratings matter:</b> better quarterbacks throw farther and more accurately, faster receivers get open, better cover men stay closer, and your line against their front decides how long you have to throw and how big the holes are.</li>
 <li><b>Fourth down:</b> go for it, punt or try a field goal (the odds are shown). After a touchdown from 1994 on you can go for two.</li>
 </ul>` },
