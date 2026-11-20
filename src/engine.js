@@ -130,6 +130,137 @@ function genPlayer(L, grp, team, mean, ageRange) {
   return mkPlayer(L, { grp, team, age, ovr, pot, yrs: Math.max(0, age - 22), college: R.pick(COLLEGES), real: false });
 }
 
+/* ---------- position ratings ----------
+   Every player has 2-4 ratings for his position that average out to his overall. Real players'
+   strengths come from real data (rosters.json "a": height, weight, Combine results and career
+   stats from nflverse and Pro-Football-Reference); everyone else gets a profile from his size.
+   p.at holds each rating's offset from overall; age moves speed down and know-how up. */
+const ATTR_KEYS = {
+  QB: ['arm', 'acc', 'pkt', 'mob'], RB: ['spd', 'pow', 'elu', 'hnd'], WR: ['spd', 'hnd', 'rte', 'phy'], TE: ['blk', 'hnd', 'spd', 'rte'],
+  OL: ['pbk', 'rbk', 'str', 'ftw'], DL: ['prs', 'rdf', 'str', 'qck'], LB: ['tkl', 'cov', 'prs', 'spd'], DB: ['cov', 'spd', 'bsk', 'tkl'],
+  K: ['kpw', 'kac'], P: ['kpw', 'kac']
+};
+const ATTR_NAME = { arm: 'Arm strength', acc: 'Accuracy', pkt: 'Pocket presence', mob: 'Mobility', spd: 'Speed', pow: 'Power', elu: 'Elusiveness', hnd: 'Hands',
+  rte: 'Route running', phy: 'Size and strength', blk: 'Blocking', pbk: 'Pass blocking', rbk: 'Run blocking', str: 'Strength', ftw: 'Footwork',
+  prs: 'Pass rush', rdf: 'Run defense', qck: 'Quickness', tkl: 'Tackling', cov: 'Coverage', bsk: 'Ball skills', kpw: 'Leg strength', kac: 'Accuracy' };
+const ATTR_SHORT = { arm: 'ARM', acc: 'ACC', pkt: 'PKT', mob: 'MOB', spd: 'SPD', pow: 'POW', elu: 'ELU', hnd: 'HND', rte: 'RTE', phy: 'PHY', blk: 'BLK', pbk: 'PBK', rbk: 'RBK',
+  str: 'STR', ftw: 'FTW', prs: 'RSH', rdf: 'RUN', qck: 'QCK', tkl: 'TKL', cov: 'COV', bsk: 'BALL', kpw: 'LEG', kac: 'ACC' };
+// how age moves each rating (relative to the others): athletic ones fade after 28, learned ones grow into the late 20s
+const ATTR_ATH = { spd: 1, mob: 1, qck: 1, elu: 0.8, ftw: 0.5, kpw: 0.4, pow: 0.3 };
+const ATTR_IQ = { acc: 1, pkt: 1, rte: 1, cov: 0.6, pbk: 0.6, tkl: 0.4, blk: 0.4, bsk: 0.5, kac: 0.6, hnd: 0.3, rdf: 0.3 };
+// which way a heavier-than-usual body pushes each rating
+const ATTR_SIZE = { pow: 1, str: 1, rbk: 1, rdf: 1, blk: 1, phy: 1, arm: 0.3, tkl: 0.4, spd: -1, qck: -1, mob: -0.8, elu: -0.8, ftw: -0.7, cov: -0.4, rte: -0.3, prs: -0.2, pbk: 0.2 };
+// typical height (in) and weight (lb) by position, modern era
+const SIZE = { QB: [75, 222, 2, 12], RB: [70.5, 214, 2, 14], WR: [72.5, 198, 2.3, 13], TE: [76.5, 252, 1.4, 10], OL: [76.5, 308, 1.4, 14],
+  DL: [75.5, 285, 1.8, 22], LB: [74, 240, 1.5, 10], DB: [71.5, 197, 1.8, 10], K: [72.5, 200, 2, 15], P: [74.5, 214, 2, 15] };
+function seeded(p, salt) {
+  let h = 2166136261 ^ (p.id || 0) ^ (salt || 0); const s = String(p.name || '');
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return () => { h += 0x6D2B79F5; let t = h; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+function seededNorm(rnd) { return Math.sqrt(-2 * Math.log(Math.max(1e-9, rnd()))) * Math.cos(2 * Math.PI * rnd()); }
+function centerAt(a) { const m = a.reduce((s, x) => s + x, 0) / a.length; return a.map(x => clamp(Math.round(x - m), -14, 14)); }
+// The real-data entry for this player, if rosters.json has him.
+function realFor(p) {
+  if (!REAL) return null;
+  const d = p.draft && p.draft.year ? p.draft.year + '-' + p.draft.pick : p.realPick && p.reveal ? p.reveal + '-' + p.realPick.pick : null;
+  if (d && REAL.byDraft[d] && nameKey(REAL.byDraft[d].n) === nameKey(p.name)) return REAL.byDraft[d];
+  const list = REAL.byName[nameKey(p.name)]; if (!list) return null;
+  const b = p.rc ? p.rc.y0 - p.rc.a0 : null;
+  const same = list.filter(rp => rp.g === p.grp);
+  const pool = same.length ? same : list;
+  if (b == null || pool.length === 1) return pool[0];
+  return pool.slice().sort((x, y) => Math.abs((x.b || b) - b) - Math.abs((y.b || b) - b))[0];
+}
+function decodeA(s) {
+  const [h, w, l, src] = String(s).split(',');
+  return { h: +h || 0, w: +w || 0, off: (l || '').split('').map(c => c.charCodeAt(0) - 77), src: src || '' };
+}
+// Give a player his ratings profile (once). Real players wait for rosters.json to load.
+function ensureAttrs(p, year) {
+  const keys = ATTR_KEYS[p.grp]; if (!keys) return false;
+  if (p.at && p.at.length === keys.length && p.atG === p.grp) return true;
+  const rnd = seeded(p, 7);
+  let off = null, src = '';
+  if (p.real && !p.me) {
+    if (!REAL || !REAL.hasA) return false; // wait for the ratings data
+    const rp = realFor(p);
+    if (rp && rp.a && rp.g === p.grp) { const A = decodeA(rp.a); if (A.off.length === keys.length) { off = A.off; src = A.src || 'e'; } if (A.h) p.hin = A.h; if (A.w) p.wt = A.w; }
+  }
+  if (!p.hin && p.ht) p.hin = htInches(p.ht);
+  const S = SIZE[p.grp], y = year || (p.draft && p.draft.year) || (p.rc && p.rc.y0) || 2000;
+  const old = Math.max(0, Math.min(30, 2005 - y)) / 30; // lighter linemen in the 1970s
+  if (!p.hin) p.hin = Math.round(S[0] - (p.grp === 'OL' || p.grp === 'DL' ? old : 0) + seededNorm(rnd) * S[2]);
+  if (!p.wt) p.wt = Math.round(S[1] * (1 - old * (p.grp === 'OL' ? 0.17 : p.grp === 'DL' ? 0.12 : 0.05)) + seededNorm(rnd) * S[3]);
+  if (!off) {
+    // no real data: a profile from his frame plus some individuality
+    const heavy = clamp((p.wt - S[1] * (1 - old * 0.1)) / S[3] - 0.5 * (p.hin - S[0]) / S[2], -2.5, 2.5);
+    off = keys.map(k => (ATTR_SIZE[k] || 0) * heavy * 2.2 + seededNorm(rnd) * 4);
+    src = '';
+  }
+  p.at = centerAt(off);
+  p.atG = p.grp; p.atSrc = src;
+  return true;
+}
+// [{k, name, short, v}] — his ratings today (they average to his overall)
+function attrs(p, base) {
+  const keys = ATTR_KEYS[p.grp]; if (!keys) return [];
+  const o = base == null ? p.ovr : base;
+  if (!ensureAttrs(p)) return keys.map(k => ({ k, name: ATTR_NAME[k], short: ATTR_SHORT[k], v: o, est: true }));
+  const age = p.age || 25, B = p.atB || {};
+  const raw = keys.map((k, i) => p.at[i] + (B[k] || 0) - (ATTR_ATH[k] || 0) * Math.max(0, age - 28) * 1.6 + (ATTR_IQ[k] || 0) * clamp(age - 25, -3, 5) * 0.9);
+  const m = raw.reduce((s, x) => s + x, 0) / raw.length;
+  return keys.map((k, i) => ({ k, name: ATTR_NAME[k], short: ATTR_SHORT[k], v: clamp(Math.round(o + raw[i] - m), 20, 99) }));
+}
+function attrOf(p, k, base) { const a = attrs(p, base).find(x => x.k === k); return a ? a.v : (base == null ? p.ovr : base); }
+// how far a rating sits above (+) or below (-) his overall
+function attrDelta(p, k) { const a = attrs(p).find(x => x.k === k); return a ? a.v - p.ovr : 0; }
+function topAttr(p) { const a = attrs(p); if (!a.length) return null; return a.slice().sort((x, y) => y.v - x.v)[0]; }
+function attrSource(p) {
+  ensureAttrs(p);
+  const s = p.atSrc || '';
+  if (p.me) return 'Your build and training';
+  if (!p.real) return 'Estimated from his size';
+  if (!REAL) return 'Real data still loading';
+  const parts = []; if (s.includes('c')) parts.push('Combine'); if (s.includes('s')) parts.push('career stats'); if (s.includes('z')) parts.push('height and weight');
+  return parts.length ? 'Based on ' + parts.join(', ') : 'Estimated (no measurements on record)';
+}
+function ensureAllAttrs(L) { for (const id in L.players) { const p = L.players[id]; if (p.team >= -3 && !p.retiredYear && !(p.at && p.atG === p.grp)) ensureAttrs(p); } }
+// rosters.json changed (new ratings data): real players re-read theirs; training and position changes are kept
+function refreshAttrs(L) { ensureAllAttrs(L); }
+function bodyText(p) { ensureAttrs(p); return p.hin ? `${htText(p.hin)}, ${p.wt} lb` : ''; }
+function htText(inches) { return inches ? `${Math.floor(inches / 12)}'${inches % 12}"` : ''; }
+// Training or a position change: shift a rating relative to the others.
+function bumpAttr(p, k, d) { p.atB = p.atB || {}; p.atB[k] = clamp((p.atB[k] || 0) + d, -12, 12); }
+// Keep what carries over when a player changes position (speed is speed).
+function remapAttrs(p, fromG) {
+  const oldK = ATTR_KEYS[fromG] || [], old = {}; if (p.at) oldK.forEach((k, i) => old[k] = p.at[i] + ((p.atB || {})[k] || 0));
+  const keys = ATTR_KEYS[p.grp]; if (!keys) return;
+  const rnd = seeded(p, 11);
+  const ALIAS = { spd: ['mob', 'qck'], mob: ['spd', 'qck'], qck: ['spd', 'mob'], str: ['pow', 'phy', 'blk'], pow: ['str', 'phy'], phy: ['str', 'pow'], blk: ['rbk', 'pbk', 'str'],
+    rbk: ['blk', 'str'], pbk: ['blk', 'ftw'], ftw: ['qck', 'spd'], hnd: ['bsk'], bsk: ['hnd'], rte: ['cov'], cov: ['rte'], tkl: ['rdf'], rdf: ['tkl'], prs: ['qck'], elu: ['spd', 'mob'] };
+  const carry = k => { if (old[k] != null) return old[k]; for (const a of ALIAS[k] || []) if (old[a] != null) return old[a]; return null; };
+  p.at = centerAt(keys.map(k => carry(k) != null ? carry(k) : (ATTR_SIZE[k] || 0) * clamp((p.wt - SIZE[p.grp][1]) / SIZE[p.grp][3], -2, 2) * 2 + seededNorm(rnd) * 2));
+  p.atB = {}; p.atG = p.grp;
+}
+// How a scheme uses each rating: offense keys run/deep/quick/qbRun/misd, defense rush/cover/box/disg
+const ATTR_AFF = { arm: { deep: 1 }, acc: { quick: 1 }, pkt: { quick: 0.4, misd: 0.5 }, mob: { qbRun: 1.6, misd: 0.4 }, spd: { deep: 0.8, cover: 0.6, disg: 0.3 },
+  pow: { run: 1 }, elu: { misd: 0.6, run: 0.4 }, hnd: { quick: 0.8 }, rte: { quick: 0.9 }, phy: { deep: 0.6 }, blk: { run: 0.9 }, pbk: { deep: 0.6, quick: 0.3 },
+  rbk: { run: 1 }, str: { run: 0.4, box: 0.6 }, ftw: { misd: 0.7 }, prs: { rush: 1 }, rdf: { box: 1 }, qck: { rush: 0.5, disg: 0.5 }, tkl: { box: 0.8 },
+  cov: { cover: 1 }, bsk: { cover: 0.7, disg: 0.4 } };
+// +/- points of scheme fit from his ratings, with the rating that matters most
+function attrFit(p, s) {
+  if (!s || !s.a) return { v: 0, k: null };
+  const A = attrs(p); let v = 0, best = null, bv = 0;
+  for (const a of A) {
+    const aff = ATTR_AFF[a.k]; if (!aff) continue;
+    let w = 0; for (const d in aff) w += aff[d] * ((s.a[d] != null ? s.a[d] : 0.5) - 0.5);
+    const c = (a.v - p.ovr) * w * 0.9; v += c;
+    if (Math.abs(c) > Math.abs(bv)) { bv = c; best = a; }
+  }
+  return { v: clamp(v, -8, 8), k: best, c: bv };
+}
+
 function genRoster(L, tid, size, mean) {
   const mix = Object.assign({}, MIX40);
   const extra = ['OL','DB','DL','LB','WR','RB','TE'];
@@ -447,13 +578,14 @@ function setDrafts(d) { DRAFTS = d || null; }
 function nameKey(n) { return String(n || '').toLowerCase().replace(/[.'’]/g, '').replace(/-/g, ' ').replace(/\b(jr|sr|ii|iii|iv|v)\b/g, '').replace(/\s+/g, ' ').trim(); }
 function setRealData(d) {
   if (!d || !d.players) { REAL = null; return 0; }
-  const byDraft = {}, byFirst = {}, by70 = {};
+  const byDraft = {}, byFirst = {}, by70 = {}, byName = {};
   for (const p of d.players) {
     p.l = p.f + p.t.length - 1;
+    (byName[nameKey(p.n)] = byName[nameKey(p.n)] || []).push(p);
     if (p.d) byDraft[p.d[0] + '-' + p.d[1]] = p; else (byFirst[p.f] = byFirst[p.f] || []).push(p);
     if (p.f <= 1970) by70[nameKey(p.n)] = p;
   }
-  REAL = { players: d.players, byDraft, byFirst, by70, last: d.last || 2026 };
+  REAL = { players: d.players, byDraft, byFirst, by70, byName, last: d.last || 2026, hasA: d.players.some(p => p.a) };
   return d.players.length;
 }
 function hasReal() { return !!REAL; }
@@ -1597,6 +1729,8 @@ function playerFit(L, p, tid) {
   else if (w <= 0.85) { sc -= 10; why.push(['-', `Your ${sch.name} doesn't lean on the ${g} position`]); }
   const fam = sch.fam, style = isDef ? ({ blitz: ['DL', 'LB'], soft: ['DB'] })[fam] : ({ run: ['RB', 'OL', 'TE'], pass: ['QB', 'WR'] })[fam];
   if (style && style.includes(g)) { sc += 6; why.push(['+', `Suits a ${({ run: 'run-first', pass: 'pass-first', blitz: 'pressure', soft: "bend-don't-break" })[fam]} scheme`]); }
+  const af = attrFit(p, sch);
+  if (af.k && Math.abs(af.v) >= 1.5) { sc += af.v; const k = af.k, up = k.v >= p.ovr; why.push([af.v > 0 ? '+' : '-', `${k.name} (${k.v}) is ${up ? 'a strength' : 'a weak spot'}${af.c > 0 ? (up ? ` the ${sch.name} uses` : `, but the ${sch.name} doesn't need it`) : (up ? `, but the ${sch.name} doesn't use it` : ` the ${sch.name} exposes`)}`]); }
   sc += clamp((p.ovr - 70) * 0.3, -6, 6);
   sc = clamp(Math.round(sc), 0, 100);
   return { score: sc, grade: gradeLetter(sc), why };
@@ -2028,25 +2162,27 @@ function creditStats(L, tid, sc, rat, oppRat, coach, oppCoach) {
   const qb = d.QB[0]; let ints = 0;
   if (qb) {
     const att = Math.max(8, Math.round(py / E.ypa + R.int(-3, 4)));
-    const cmp = Math.round(att * clamp(E.cmpPct + (qb.ovr - 60) * 0.004 + R.norm() * 0.05, 0.3, 0.8));
+    const cmp = Math.round(att * clamp(E.cmpPct + (qb.ovr - 60) * 0.004 + attrDelta(qb, 'acc') * 0.003 + R.norm() * 0.05, 0.3, 0.8));
     stat(qb, y, 'att', att); stat(qb, y, 'cmp', cmp); stat(qb, y, 'py', py); stat(qb, y, 'ptd', ptd);
-    ints = R.poisson(clamp(E.int * (1 - (qb.ovr - 60) * 0.017) * (so.intMul || 1) * (sd.intMul || 1), 0.2, 2.6));
+    ints = R.poisson(clamp(E.int * (1 - (qb.ovr - 60) * 0.017) * (1 - attrDelta(qb, 'pkt') * 0.012) * (so.intMul || 1) * (sd.intMul || 1), 0.2, 2.6));
     stat(qb, y, 'int', ints);
   }
   // targets follow who is on the field
   const recP = [], recW = [];
-  const addT = (arr, n, ws) => { for (let i = 0; i < n && i < ws.length; i++) if (arr[i]) { recP.push(arr[i]); recW.push(ws[i]); } };
+  // route runners and sure hands draw more targets; deep threats gain more per catch
+  const tgtMul = q => clamp(1 + (attrDelta(q, 'rte') + attrDelta(q, 'hnd')) * 0.012, 0.8, 1.25);
+  const addT = (arr, n, ws) => { for (let i = 0; i < n && i < ws.length; i++) if (arr[i]) { recP.push(arr[i]); recW.push(ws[i] * tgtMul(arr[i])); } };
   addT(d.WR, Math.max(F.WR, 2), [0.3, 0.22, 0.15, 0.1, 0.07].map((x, i) => i < F.WR ? x : x * 0.3));
   addT(d.TE, Math.max(F.TE, 1), [0.17, 0.08].map((x, i) => i < F.TE ? x : x * 0.3));
   addT(d.RB, Math.max(F.RB, 1), [0.13, 0.05].map((x, i) => i < F.RB ? x : x * 0.4));
   const rec = share(recP, recW);
   for (const [p, w] of rec) {
-    const yds = Math.round(py * w * (0.75 + Math.random() * 0.5));
-    stat(p, y, 'recy', yds); stat(p, y, 'rec', Math.max(0, Math.round(yds / E.ypc + R.norm())));
+    const yds = Math.round(py * w * (0.75 + Math.random() * 0.5)), ypc = E.ypc * clamp(1 + (attrDelta(p, 'spd') + attrDelta(p, 'phy') * 0.5) * 0.012, 0.8, 1.2);
+    stat(p, y, 'recy', yds); stat(p, y, 'rec', Math.max(0, Math.round(yds / ypc + R.norm())));
   }
   for (let i = 0; i < ptd; i++) stat(pickWeighted(rec), y, 'rectd', 1);
   const qr = so.qbRush || 0.12, rush = share([d.RB[0], d.RB[1], qb], [0.56 * (0.88 - qr) / 0.76 + 0, 0.32 * (0.88 - qr) / 0.76, qr]);
-  for (const [p, w] of rush) { const yds = Math.round(ry * w * (0.8 + Math.random() * 0.4)); stat(p, y, 'ry', yds); stat(p, y, 'ra', Math.max(1, Math.round(yds / E.ypr))); }
+  for (const [p, w] of rush) { const yds = Math.round(ry * w * (0.8 + Math.random() * 0.4)), ypr = E.ypr * clamp(1 + (attrDelta(p, 'elu') + attrDelta(p, 'spd') * 0.5) * 0.012, 0.8, 1.2); stat(p, y, 'ry', yds); stat(p, y, 'ra', Math.max(1, Math.round(yds / ypr))); }
   for (let i = 0; i < rtd; i++) stat(pickWeighted(rush), y, 'rtd', 1);
   stat(d.K[0], y, 'fgm', sc.fg);
   if (!NOHIST) { const T = tstat(L, tid); T.g++; T.yds += total; T.py += py; T.ry += ry; T.td += sc.td; T.fg += sc.fg; T.giv += ints; }
@@ -2058,13 +2194,14 @@ function creditDefense(L, tid, rat, oppRat, ints, coach, oppCoach) {
   const sm = ((SCHEME[(coach || {}).ds] || {}).sackMul || 1) * ((SCHEME[(oppCoach || {}).os] || {}).sackMul || 1);
   const sacks = R.poisson(clamp((2.2 + (rat.DL - oppRat.OL) * 0.06) * sm, 0.6, 6));
   const Fd = rat.F || STARTERS, rP = [], rW = [];
-  for (let i = 0; i < Fd.DL; i++) if (d.DL[i]) { rP.push(d.DL[i]); rW.push(i < 2 ? 0.25 : 0.15); }
-  for (let i = 0; i < Math.min(Fd.LB, 4); i++) if (d.LB[i]) { rP.push(d.LB[i]); rW.push(Fd.DL <= 3 && i < 2 ? 0.2 : 0.1); }
+  const rushMul = q => clamp(1 + attrDelta(q, 'prs') * 0.04, 0.6, 1.6), ballMul = q => clamp(1 + (attrDelta(q, 'bsk') + attrDelta(q, 'cov') * 0.5) * 0.04, 0.6, 1.6);
+  for (let i = 0; i < Fd.DL; i++) if (d.DL[i]) { rP.push(d.DL[i]); rW.push((i < 2 ? 0.25 : 0.15) * rushMul(d.DL[i])); }
+  for (let i = 0; i < Math.min(Fd.LB, 4); i++) if (d.LB[i]) { rP.push(d.LB[i]); rW.push((Fd.DL <= 3 && i < 2 ? 0.2 : 0.1) * rushMul(d.LB[i])); }
   const rushers = share(rP, rW);
   for (let i = 0; i < sacks; i++) stat(pickWeighted(rushers), y, 'sk', 1);
   const cP = [], cW = [];
-  for (let i = 0; i < Fd.DB; i++) if (d.DB[i]) { cP.push(d.DB[i]); cW.push(i < 2 ? 0.24 : i < 4 ? 0.2 : 0.12); }
-  if (d.LB[0]) { cP.push(d.LB[0]); cW.push(0.12); }
+  for (let i = 0; i < Fd.DB; i++) if (d.DB[i]) { cP.push(d.DB[i]); cW.push((i < 2 ? 0.24 : i < 4 ? 0.2 : 0.12) * ballMul(d.DB[i])); }
+  if (d.LB[0]) { cP.push(d.LB[0]); cW.push(0.12 * ballMul(d.LB[0])); }
   const cover = share(cP, cW);
   for (let i = 0; i < ints; i++) stat(pickWeighted(cover), y, 'dint', 1);
   if (!NOHIST) { const T = tstat(L, tid); T.sk += sacks; T.take += ints; }
@@ -3664,8 +3801,10 @@ function careerSwitch(L, i) {
   if (!o) return 'That move is not available.';
   if (!(L.phase === 'offseason' || L.phase === 'preseason')) return 'You can change positions in the offseason or at training camp.';
   if (C.switchY === L.year + ':' + L.phase && o.cost) return 'One position change per offseason.';
-  const from = p.pos;
+  const from = p.pos, fromG = p.grp;
+  ensureAttrs(p);
   p.grp = o.grp; p.pos = o.pos;
+  if (fromG !== o.grp) { remapAttrs(p, fromG); if (L.career.drill && !(ATTR_KEYS[p.grp] || []).includes(L.career.drill)) L.career.drill = null; }
   if (o.cost) { p.ovr = o.ovr; p.pot = Math.max(p.ovr + 1, p.pot - o.cost); p.cBoost = (p.cBoost || 0) - o.cost * 2; C.switchY = L.year + ':' + L.phase; }
   if (p.team >= 0) ensureNumbers(L);
   careerLog(L, `Moved from ${from} to ${o.pos}${o.cost ? ` (${p.ovr} overall at the new spot)` : ''}.`);
@@ -3820,6 +3959,37 @@ const CAREER_Q = [
     ['Get me on the field. The money comes later', { ego: -0.1, o: 1 }]] }
 ];
 const CAREER_GRPS = ['QB', 'RB', 'WR', 'TE', 'OL', 'DL', 'LB', 'DB', 'K', 'P'];
+// Play styles for a created player: each shifts his position ratings (they still average to his overall)
+const CAREER_STYLES = {
+  QB: [['bal', 'Balanced', {}], ['gun', 'Gunslinger: big arm, takes chances', { arm: 7, acc: -2, pkt: -3, mob: -2 }], ['mgr', 'Game manager: accurate, never rattled', { acc: 5, pkt: 5, arm: -4, mob: -6 }], ['dual', 'Dual threat: beats you with his legs', { mob: 9, arm: 0, acc: -4, pkt: -5 }]],
+  RB: [['bal', 'Balanced', {}], ['spd', 'Speed back: home-run hitter', { spd: 7, elu: 2, pow: -7, hnd: -2 }], ['pow', 'Power back: runs through people', { pow: 8, spd: -4, elu: -4 }], ['3d', 'Third-down back: hands and shake', { hnd: 7, elu: 3, pow: -6, spd: -4 }]],
+  WR: [['bal', 'Balanced', {}], ['deep', 'Deep threat: pure speed', { spd: 8, phy: -3, rte: -3, hnd: -2 }], ['poss', 'Possession receiver: routes and hands', { hnd: 5, rte: 5, spd: -6, phy: -4 }], ['big', 'Big target: wins every jump ball', { phy: 8, spd: -4, rte: -4 }]],
+  TE: [['bal', 'Balanced', {}], ['blk', 'Blocking tight end', { blk: 8, hnd: -3, rte: -4, spd: -1 }], ['move', 'Move tight end: a big receiver', { rte: 5, spd: 4, blk: -7, hnd: -2 }]],
+  OL: [['bal', 'Balanced', {}], ['pass', 'Pass protector: quick feet', { pbk: 6, ftw: 4, rbk: -4, str: -6 }], ['road', 'Road grader: moves people', { rbk: 6, str: 5, pbk: -4, ftw: -7 }]],
+  DL: [['bal', 'Balanced', {}], ['edge', 'Edge rusher: gets to the QB', { prs: 7, qck: 4, rdf: -5, str: -6 }], ['nose', 'Run stuffer: eats blocks', { rdf: 7, str: 5, prs: -5, qck: -7 }]],
+  LB: [['bal', 'Balanced', {}], ['thump', 'Thumper: downhill tackler', { tkl: 7, prs: 1, cov: -5, spd: -3 }], ['cover', 'Coverage linebacker', { cov: 7, spd: 3, tkl: -4, prs: -6 }], ['blitz', 'Blitzer: lives in the backfield', { prs: 8, tkl: 1, cov: -6, spd: -3 }]],
+  DB: [['bal', 'Balanced', {}], ['lock', 'Lockdown corner', { cov: 7, spd: 3, tkl: -7, bsk: -3 }], ['hawk', 'Ballhawk: picks off everything', { bsk: 8, cov: 0, tkl: -4, spd: -4 }], ['box', 'Box safety: a hitter', { tkl: 8, cov: -3, spd: -3, bsk: -2 }]],
+  K: [['bal', 'Balanced', {}], ['leg', 'Big leg', { kpw: 7, kac: -7 }], ['acc', 'Accurate', { kac: 7, kpw: -7 }]],
+  P: [['bal', 'Balanced', {}], ['leg', 'Big leg', { kpw: 7, kac: -7 }], ['acc', 'Directional punter', { kac: 7, kpw: -7 }]]
+};
+// questionnaire answers that shape the ratings: [question, answer] -> {group of ratings: shift}
+const CAREER_Q_AT = { '0:0': { size: 1.5 }, '0:1': { ath: 3 }, '0:3': { ath: 1, size: -0.5 }, '1:3': { ath: 2.5 }, '2:0': { iq: 3 }, '2:2': { iq: -2, ath: 1 }, '3:0': { ath: 2, size: 0.8 } };
+function htInches(s) { const m = String(s || '').match(/(\d)'\s*(\d+)/); return m ? +m[1] * 12 + +m[2] : null; }
+// A created player's rating offsets from his size, play style and answers
+function careerBuildAt(spec) {
+  const g = CAREER_GRPS.includes(spec.grp) ? spec.grp : 'WR', keys = ATTR_KEYS[g], S = SIZE[g];
+  const hin = htInches(spec.ht) || S[0], wt = +spec.wt || S[1];
+  const heavy = clamp((wt - S[1]) / S[3] - 0.5 * (hin - S[0]) / S[2], -2.5, 2.5);
+  const st = (CAREER_STYLES[g] || []).find(x => x[0] === spec.style) || (CAREER_STYLES[g] || [])[0], sty = st ? st[2] : {};
+  const q = { ath: 0, iq: 0, size: 0 };
+  (spec.ans || []).forEach((j, i) => { const e = CAREER_Q_AT[i + ':' + j]; if (e) for (const k in e) q[k] += e[k]; });
+  const off = keys.map(k => (ATTR_SIZE[k] || 0) * (heavy + q.size) * 2.2 + (sty[k] || 0) + (ATTR_ATH[k] || 0) * q.ath + (ATTR_IQ[k] || 0) * q.iq);
+  return { keys, at: centerAt(off), hin, wt };
+}
+function careerAttrPreview(spec, ovr) {
+  const b = careerBuildAt(spec);
+  return b.keys.map((k, i) => ({ k, name: ATTR_NAME[k], short: ATTR_SHORT[k], v: clamp(Math.round(ovr + b.at[i]), 20, 99) }));
+}
 const CAREER_POS = { QB: ['QB'], RB: ['RB', 'FB'], WR: ['WR'], TE: ['TE'], OL: ['T', 'G', 'C'], DL: ['DE', 'DT'], LB: ['LB'], DB: ['CB', 'S'], K: ['K'], P: ['P'] };
 function careerPreview(tier, ans) {
   const T = CAREER_TIERS.find(t => t.id === tier) || CAREER_TIERS[2], s = { o: 0, pot: 0, dev: 0, dur: 0, st: 0, iq: 0, ego: 0, loyal: 0, ring: 0, age: 22 };
@@ -3854,6 +4024,8 @@ function careerCreate(L, spec) {
   const p = mkPlayer(L, { name, grp, pos, age: v.age, ovr, pot, team: -3, college: String(spec.college || '').slice(0, 40) || R.pick(COLLEGES), real: false,
     reveal: D.year, scout: clamp(v.stock + R.int(-2, 2), 38, 92), me: 1, cdev: v.dev, cdur: v.dur, ciq: v.iq, ego: v.ego, loyal: v.loyal, ringChaser: v.ring,
     ht: spec.ht || null, wt: spec.wt || null, home: String(spec.home || '').slice(0, 40) || null, num: spec.num ? clamp(+spec.num, 0, 99) : undefined, tier: spec.tier });
+  const B = careerBuildAt(Object.assign({}, spec, { grp }));
+  p.at = B.at; p.atG = grp; p.atSrc = 'me'; p.hin = B.hin; p.wt = B.wt; p.cstyle = spec.style || 'bal';
   D.pool.push(p.id);
   careerBegin(L, p);
   careerLog(L, `Declared for the ${D.year} draft out of ${p.college}. Scouts grade you ${p.scout}: projected ${v.round.toLowerCase()}.`);
@@ -4134,6 +4306,8 @@ const CAREER_FOCUS = {
   kicking: { name: 'Kicking', txt: 'Range and accuracy. For kickers and punters.', g: ['K', 'P'] },
   recovery: { name: 'Rest and recovery', txt: 'Fewer injuries and a slower decline. No growth.', g: [] }
 };
+const FOCUS_ATTR = { strength: ['pow', 'str', 'rbk', 'rdf', 'blk', 'phy', 'arm'], speed: ['spd', 'mob', 'qck', 'elu', 'ftw'], film: ['acc', 'pkt', 'rte', 'cov', 'bsk', 'pbk'], kicking: ['kpw', 'kac'] };
+function setCareerDrill(L, k) { const p = careerP(L); if (p && (ATTR_KEYS[p.grp] || []).includes(k)) L.career.drill = k; else if (!k) L.career.drill = null; }
 const CAREER_PLANS = { light: { name: 'Light', inj: 0.8, gain: 0.6 }, balanced: { name: 'Balanced', inj: 1, gain: 1 }, extra: { name: 'Extra work', inj: 1.3, gain: 1.4 } };
 function setCareerFocus(L, f) { if (CAREER_FOCUS[f]) L.career.focus = f; }
 function setCareerPlan(L, k) { if (CAREER_PLANS[k]) L.career.plan = k; }
@@ -4151,6 +4325,10 @@ function careerGrowth(L, p, d) {
   if (p.age <= 24 && p.ciq) b += p.ciq * 0.3;
   b = Math.round(b + Math.random() - 0.5);
   C.lastCamp = { y: L.year + 1, focus: C.focus, plan: C.plan, base: d, bonus: b };
+  // the rating he drilled moves up relative to the others; the focus nudges its group
+  const keys = ATTR_KEYS[p.grp] || [];
+  if (C.drill && keys.includes(C.drill)) { const g = Math.round((p.age <= 29 ? 3 : 2) * plan.gain * work); bumpAttr(p, C.drill, g); C.lastCamp.drill = C.drill; C.lastCamp.drillUp = g; }
+  const FA = FOCUS_ATTR[C.focus]; if (FA) keys.forEach(k => { if (FA.includes(k)) bumpAttr(p, k, 1); });
   if (b > 0 && !(L.realCareers !== false && p.rc) && p.ovr + d + b > p.pot && p.age <= 27) p.pot = Math.min(97, p.pot + 1);
   return b;
 }
@@ -4390,7 +4568,7 @@ function careerLegacy(L) {
   return { score: Math.round(s), line: line && Math.round(line), pct: line ? Math.round(s / line * 100) : null, rings, jerseys, hof: p.hof || 0, verdict: C.verdict || null };
 }
 
-const API = { injText, injName, careerAgain, execTrade, setContract, SHAPES, contractTable, restructure, restructureInfo, june1Left, cashFor, baseFor, proLeft, careerScheme, careerStanding, careerAcceptRole, PB_SLOTS, proBowl, stadium, forecast, wxText, wxEffect, recordBook, REC_KEYS, careerSwitchOpts, careerSwitch, careerEarnings, careerCoachOpts, careerBecomeCoach, careerCoachNow, careerFrontOfficeOpts, careerToGM, NO_TEAM, CAREER_TIERS, CAREER_Q, CAREER_GRPS, CAREER_POS, CAREER_FOCUS, CAREER_PLANS, careerPreview, careerClass, startCareer, careerCreate, careerChooseReal, careerP, isCareer, careerRole, careerOffers, careerSign, careerHaggle, careerDiscount, careerRaiseInfo, careerAskRaise, careerHoldout, careerAskStart, careerRequestTrade, careerCancelTrade, careerTakeDeal, careerDeclineDeals, canTradeNow, setCareerFocus, setCareerPlan, careerGoalStatus, careerAwardRace, careerNext, careerSimYear, careerCanRetire, careerRetire, careerRanks, careerLegacy, careerTotal, hofLine, dismissAlert, STAT_NAME, COLLEGES, plog, practiceSquad, unsignedRights, psSize, psEligible, toPracticeSquad, promoteFromPS, signFromPS, signRefuserIfMoved, optionInfo, exerciseOption, declineOption, transitionTag, tagPrice, tradeablePick, rookieYears, playerFit, moraleReasons, holdoutInfo, marketFor, marketView, footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
+const API = { ensureAllAttrs, refreshAttrs, bodyText, careerAttrPreview, setCareerDrill, ATTR_SHORT, ATTR_KEYS, ATTR_NAME, attrs, attrOf, attrDelta, topAttr, attrSource, htText, ensureAttrs, attrFit, CAREER_STYLES, injText, injName, careerAgain, execTrade, setContract, SHAPES, contractTable, restructure, restructureInfo, june1Left, cashFor, baseFor, proLeft, careerScheme, careerStanding, careerAcceptRole, PB_SLOTS, proBowl, stadium, forecast, wxText, wxEffect, recordBook, REC_KEYS, careerSwitchOpts, careerSwitch, careerEarnings, careerCoachOpts, careerBecomeCoach, careerCoachNow, careerFrontOfficeOpts, careerToGM, NO_TEAM, CAREER_TIERS, CAREER_Q, CAREER_GRPS, CAREER_POS, CAREER_FOCUS, CAREER_PLANS, careerPreview, careerClass, startCareer, careerCreate, careerChooseReal, careerP, isCareer, careerRole, careerOffers, careerSign, careerHaggle, careerDiscount, careerRaiseInfo, careerAskRaise, careerHoldout, careerAskStart, careerRequestTrade, careerCancelTrade, careerTakeDeal, careerDeclineDeals, canTradeNow, setCareerFocus, setCareerPlan, careerGoalStatus, careerAwardRace, careerNext, careerSimYear, careerCanRetire, careerRetire, careerRanks, careerLegacy, careerTotal, hofLine, dismissAlert, STAT_NAME, COLLEGES, plog, practiceSquad, unsignedRights, psSize, psEligible, toPracticeSquad, promoteFromPS, signFromPS, signRefuserIfMoved, optionInfo, exerciseOption, declineOption, transitionTag, tagPrice, tradeablePick, rookieYears, playerFit, moraleReasons, holdoutInfo, marketFor, marketView, footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
   value, release, sign, proposeTrade, tradeVerdict, teamPicks, pickById, pickLabel, projectedOverall, pickWeight, playerWeight, ensurePicks, myDraftSlots, aiTrades, acceptOffer, rejectOffer, offerValid, cutTo, ratings, teamOverall, startRegular, canStartSeason, simWeek, simPlayoffRound, roundName,
   sortTeams, divisions, pct, startDraft, onClock, makePick, aiPick, draftUntilUser, draftAll, scoutPlayer, beginDraft, SCOUT_VISITS, endDraft, startNextSeason, leaders, potKnown, shownPot, roman, addNews };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.GG = API;

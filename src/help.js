@@ -174,6 +174,8 @@ const HELP = [
 <li><b>1970 rosters</b> are rated from the 1970 season.</li>
 <li><b>Generated players</b> fill the few spots the real data can't.</li>
 <li><b>Development.</b> Young players improve toward their potential, peak in their late 20s (quarterbacks, kickers and punters later) and decline after that. The camp report each preseason shows the changes.</li>
+<li><b>Position ratings.</b> Every player also has two to four ratings for his position (a quarterback has arm strength, accuracy, pocket presence and mobility; a corner has coverage, speed, ball skills and tackling). They average out to his overall, so they show <i>how</i> he is good, not how good he is. Real players' strengths come from real data: height and weight for nearly everyone since 1970, Combine results (40 time, bench, jumps, agility drills) from 2000 on, career passing, catching, sack and tackle numbers for drafted players, and detailed season stats from 1999 on. Players with no measurements get an estimate from their size. Each player page says what his ratings are based on.</li>
+<li><b>What they change.</b> The season sim still runs on overall ratings, so teams win and lose the same way. Position ratings change who gets the stats (accurate quarterbacks complete more, pass rushers get more of the sacks, ballhawks more of the picks, route runners more targets), how well a player fits a scheme, and how everyone plays in Play the Game. Speed fades after 28; accuracy, routes and coverage improve with experience.</li>
 </ul>` },
 
 { id: 'real', title: 'Real careers and real rosters', body: `

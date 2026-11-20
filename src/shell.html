@@ -234,6 +234,10 @@ button.crest{cursor:pointer;font:inherit;color:inherit;background:transparent}
 .calert { display: flex; align-items: flex-start; gap: 10px; justify-content: space-between; border-left: 4px solid var(--field); background: var(--panel); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
 .calert.good { border-left-color: var(--good); } .calert.warn, .calert.inj { border-left-color: var(--warn); } .calert.bad { border-left-color: var(--bad); }
 .calert .x { border: 0; background: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 0 2px; }
+.attrs .bar { grid-template-columns: 120px 1fr 34px; } .attrs .bar-l { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.attrchips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
+.achip { display: inline-flex; align-items: baseline; gap: 4px; padding: 2px 7px; border: 1.5px solid currentColor; border-radius: 6px; font-family: var(--cond); font-size: 12px; letter-spacing: .04em; }
+.achip b { font-size: 15px; }
 .tbar { height: 8px; border-radius: 6px; background: var(--line); overflow: hidden; margin: 8px 0 4px; }
 .tbar i { display: block; height: 100%; background: var(--gold); border-radius: 6px; }
 .dcgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px 16px; }

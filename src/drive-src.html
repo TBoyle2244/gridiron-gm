@@ -109,7 +109,7 @@ async function loadSaved() {
 let L = null, demo = false;
 function teamData(tid) {
   const t = L.teams[tid], d = G.depth(L, tid), F = G.startersFor(L, tid), r = G.ratings(L, tid);
-  const mk = p => p ? { id: p.id, name: p.name, last: p.name.split(' ').slice(-1)[0], num: p.num || '', ovr: G.eff(p), pos: p.pos, grp: p.grp } : { name: 'Backup', last: 'Backup', num: '', ovr: 45, pos: '', grp: '' };
+  const mk = p => { if (!p) return { name: 'Backup', last: 'Backup', num: '', ovr: 45, pos: '', grp: '', at: {} }; const o = G.eff(p), at = {}; (G.attrs ? G.attrs(p, o) : []).forEach(a => at[a.k] = a.v); return { id: p.id, name: p.name, last: p.name.split(' ').slice(-1)[0], num: p.num || '', ovr: o, pos: p.pos, grp: p.grp, at }; };
   const pick = (g, n) => { const out = []; for (let i = 0; i < n; i++) out.push(mk(d[g][i])); return out; };
   const os = G.SCHEME[t.coach.os], ds = G.SCHEME[t.coach.ds];
   return { id: tid, abbr: t.abbr, city: t.city, name: t.name, F, off: r.off, def: r.def, os, ds, fam: (os && os.fam) || t.coach.off || 'bal', dfam: (ds && ds.fam) || t.coach.def || 'bal',
@@ -120,6 +120,14 @@ function teamData(tid) {
 /* ---------- speed and skill from ratings ---------- */
 const BASE = { QB: 7.6, RB: 8.9, WR: 9.1, TE: 8.1, OL: 6.0, DL: 7.2, LB: 8.1, DB: 8.9 };
 const spd = (role, ovr) => BASE[role] * (0.84 + (ovr - 50) / 170);
+// one of a player's position ratings (falls back to his overall): rt(who, 'spd')
+const rt = (who, k) => (who && who.at && who.at[k] != null) ? who.at[k] : (who ? who.ovr : 50);
+const SPEED_KEY = { QB: 'mob', RB: 'spd', WR: 'spd', TE: 'spd', OL: 'ftw', DL: 'qck', LB: 'spd', DB: 'spd' };
+const speedOf = who => rt(who, SPEED_KEY[who.grp] || 'spd');
+// how hard he is to bring down: backs use elusiveness and power, receivers size, everyone else overall
+const breakOf = who => who.grp === 'RB' ? Math.max(rt(who, 'elu'), rt(who, 'pow')) * 0.6 + who.ovr * 0.4 : who.grp === 'WR' || who.grp === 'TE' ? (rt(who, who.grp === 'WR' ? 'phy' : 'blk') + who.ovr) / 2 : who.ovr;
+const blockOf = (who, run) => who.grp === 'OL' ? rt(who, run ? 'rbk' : 'pbk') : who.grp === 'TE' ? rt(who, 'blk') : who.ovr;
+const shedOf = (who, run) => who.grp === 'DL' ? rt(who, run ? 'rdf' : 'prs') : who.grp === 'LB' ? rt(who, run ? 'tkl' : 'prs') : who.ovr;
 
 /* ---------- playbook ---------- */
 // Routes are waypoints relative to the player's start: [dx (toward the middle +), dy downfield].
@@ -186,7 +194,7 @@ function sheetH() { const s = $('#sheet'); return s && s.style.display !== 'none
 
 /* ---------- play setup ---------- */
 let P = null; // the live play
-function makeUnit(role, who, x, y, side) { return { role, who, x, y, vx: 0, vy: 0, side, sp: spd(role, who.ovr), route: null, ri: 0, sx: x, sy: y, block: 0, stun: 0, trail: [] }; }
+function makeUnit(role, who, x, y, side) { return { role, who, x, y, vx: 0, vy: 0, side, sp: spd(role, speedOf(who)), route: null, ri: 0, sx: x, sy: y, block: 0, stun: 0, trail: [] }; }
 function setupPlay(play) {
   const los = GS.y, F = me.F, off = [], def = [], mid = W / 2;
   [-6.2, -3.1, 0, 3.1, 6.2].forEach((dx, i) => off.push(makeUnit('OL', me.OL[i], mid + dx, los - 0.7, 'o')));
@@ -231,7 +239,7 @@ function setupPlay(play) {
     const pressure = rushers().length;
     const ol = me.avg('OL'), dlv = op.avg('DL');
     P.pocket = clamp(2.9 + (ol - dlv) * 0.05 - (pressure - 4) * 0.4 + rnd(-0.4, 0.5), 1.5, 5.5);
-    dl.concat(lb).filter(u => u.rush).forEach((u, i) => u.shed = P.pocket * rnd(0.82, 1.08) - (u.role === 'LB' ? 0.5 : 0) + i * 0.05);
+    dl.concat(lb).filter(u => u.rush).forEach((u, i) => u.shed = Math.max(1, P.pocket * rnd(0.82, 1.08) - (u.role === 'LB' ? 0.5 : 0) + i * 0.05 - (rt(u.who, 'prs') - u.who.ovr) * 0.05));
   } else {
     P.runner = rbs[0] || qb;
     P.dir = play.run === 'out' ? (Math.random() < 0.5 ? -1 : 1) : 0;
@@ -268,12 +276,12 @@ function lineStep(dt) {
   P.off.forEach(o => {
     const d = o.mark; if (!d || o.lock || d.lock || (d.freeT || 0) > P.t) return;
     if (Math.hypot(d.x - o.x, d.y - o.y) < 1.5) {
-      if (P.play.run) { const hold = clamp(0.75 + (o.who.ovr - d.who.ovr) * 0.03 + rnd(0, 1.2), 0.3, 3); lockUp(o, d, P.t + hold, clamp(0.45 + (o.who.ovr - d.who.ovr) * 0.04, -0.6, 1.4)); }
-      else { const until = (d.shed != null ? d.shed : P.t + 1) * (o.role === 'OL' ? 1 : 0.7); lockUp(o, d, until, -clamp(0.3 + (d.who.ovr - o.who.ovr) * 0.03, 0.05, 1.0)); }
+      if (P.play.run) { const e = blockOf(o.who, 1) - shedOf(d.who, 1), hold = clamp(0.75 + e * 0.03 + rnd(0, 1.2), 0.3, 3); lockUp(o, d, P.t + hold, clamp(0.45 + e * 0.04, -0.6, 1.4)); }
+      else { const until = (d.shed != null ? d.shed : P.t + 1) * (o.role === 'OL' ? 1 : 0.7); lockUp(o, d, until, -clamp(0.3 + (shedOf(d.who, 0) - blockOf(o.who, 0)) * 0.03, 0.05, 1.0)); }
     }
   });
   // second level: free linemen on runs climb to linebackers
-  if (P.play.run) P.off.forEach(o => { if (o.role !== 'OL' || o.lock || (o.mark && !o.mark.lock && (o.mark.freeT || 0) <= P.t)) return; const lb = P.def.filter(d => (d.role === 'LB') && !d.lock && Math.hypot(d.x - o.x, d.y - o.y) < 1.7)[0]; if (lb) lockUp(o, lb, P.t + clamp(0.6 + rnd(0, 0.9) + (o.who.ovr - lb.who.ovr) * 0.02, 0.2, 2), 0.3); });
+  if (P.play.run) P.off.forEach(o => { if (o.role !== 'OL' || o.lock || (o.mark && !o.mark.lock && (o.mark.freeT || 0) <= P.t)) return; const lb = P.def.filter(d => (d.role === 'LB') && !d.lock && Math.hypot(d.x - o.x, d.y - o.y) < 1.7)[0]; if (lb) lockUp(o, lb, P.t + clamp(0.6 + rnd(0, 0.9) + (blockOf(o.who, 1) - rt(lb.who, 'tkl')) * 0.02, 0.2, 2), 0.3); });
   for (const k of P.locks.slice()) {
     const { o, d } = k;
     const runPast = P.carrier && P.carrier.y > d.y + 1.5;
@@ -315,8 +323,8 @@ cv.addEventListener('touchstart', down, { passive: false }); cv.addEventListener
 cv.addEventListener('mousedown', down); window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
 // Slingshot: drag back from where you touched; the throw goes the opposite way, longer the farther you pull.
 // A stronger arm throws farther and faster (the game rates QBs on one overall, so that stands in for arm strength)
-const armRange = () => clamp(28 + (me.QB.ovr - 50) * 0.85, 28, 64);
-const armSpeed = () => 19 + (me.QB.ovr - 50) * 0.18;
+const armRange = () => clamp(28 + (rt(me.QB, 'arm') - 50) * 0.85, 26, 66);
+const armSpeed = () => 19 + (rt(me.QB, 'arm') - 50) * 0.18;
 function aimFrom(t) {
   // pull left to throw right (downfield); pull up to throw toward the near sideline, down for the far one
   const q = P.qb, down = (t.sx - t.px) / S, across = (t.sy - t.py) / (S * SQ);
@@ -329,7 +337,7 @@ function aimFrom(t) {
 function throwBall(tx, ty) {
   const q = P.qb, d = Math.hypot(tx - q.x, ty - q.y);
   const press = rushers().reduce((m, u) => Math.min(m, Math.hypot(u.x - q.x, u.y - q.y)), 99);
-  const sig = d * 0.02 * (1.35 - (me.QB.ovr - 50) / 100) + (press < 2.5 ? 1.2 : press < 4 ? 0.45 : 0) + 0.12;
+  const sig = d * 0.02 * (1.35 - (rt(me.QB, 'acc') - 50) / 100) + (press < 2.5 ? 1.2 : press < 4 ? 0.45 : 0) + 0.12;
   const lx = clamp(tx + gauss() * sig * 0.8, -2, W + 2), ly = ty + gauss() * sig;
   const tof = d / armSpeed() + 0.25;
   // intended target: the eligible receiver closest to where the ball is going
@@ -400,7 +408,7 @@ function step(dt) {
       steer(u, c.x + c.vx * lead, c.y + c.vy * lead, u.sp * (u.role === 'DL' ? 0.95 : 1.08), dt, 13);
     } else if (B.st === 'air') {
       const d = Math.hypot(u.x - B.lx, u.y - B.ly);
-      if (u.man === B.tgt || d < (u.deep ? 15 : 7)) { u.react = (u.react || 0) + dt; if (u.react > clamp(0.45 - (u.who.ovr - 60) * 0.006, 0.18, 0.6)) steer(u, B.lx, B.ly, u.sp, dt, 18); else if (u.man) coverMove(u, dt); }
+      if (u.man === B.tgt || d < (u.deep ? 15 : 7)) { u.react = (u.react || 0) + dt; if (u.react > clamp(0.45 - (rt(u.who, 'cov') - 60) * 0.006, 0.18, 0.6)) steer(u, B.lx, B.ly, u.sp, dt, 18); else if (u.man) coverMove(u, dt); }
       else if (u.man) coverMove(u, dt);
     } else if (P.play.run) {
       const r = P.runner || q; steer(u, r.x, r.y, u.sp * 0.7, dt, 10);
@@ -454,7 +462,7 @@ function step(dt) {
       if (u.lock || u.block > 0 || u.stun > 0 || (u.free || 0) > P.t) return;
       if (!P.carrier && u.role !== 'DL' && u.role !== 'LB') return;
       const b = P.off.find(o => o !== P.carrier && !o.lock && o.role !== 'QB' && (o.role === 'OL' || o.blocker) && Math.hypot(o.x - u.x, o.y - u.y) < (o.role === 'OL' ? 1.4 : 1.2));
-      if (b) { const hold = clamp((0.75 + (b.who.ovr - u.who.ovr) * 0.025 + rnd(0, 1.0)) * (b.role === 'OL' ? 1 : 0.55), 0.15, 2.4); u.block = hold; u.free = P.t + hold + 0.5; }
+      if (b) { const hold = clamp((0.75 + (blockOf(b.who, 1) - shedOf(u.who, 1)) * 0.025 + rnd(0, 1.0)) * (b.role === 'OL' ? 1 : 0.55), 0.15, 2.4); u.block = hold; u.free = P.t + hold + 0.5; }
     });
   }
   // the ball
@@ -487,8 +495,8 @@ function step(dt) {
     for (const u of P.def) {
       if (u.stun > 0 || u.block > 0 || u.lock) continue;
       if (Math.hypot(u.x - c.x, u.y - c.y) < 1.15) {
-        let p = clamp(0.8 + (u.who.ovr - c.who.ovr) * 0.008, 0.6, 0.94);
-        if (c.jk > 0) p *= 0.55;
+        let p = clamp(0.8 + (rt(u.who, 'tkl') - breakOf(c.who)) * 0.008, 0.6, 0.94);
+        if (c.jk > 0) p *= clamp(0.62 - (rt(c.who, 'elu') - 60) * 0.006, 0.35, 0.75);
         if (Math.random() < p) { endPlay({ kind: c.y <= 0 && !P.play.kr ? 'safety' : 'tackle', y: c.y + (c.vy > 0 ? 0.7 : 0), x: c.x, who: c, by: u }); return; }
         u.stun = 0.55; flash('Broken tackle!', 600);
       }
@@ -523,7 +531,7 @@ function coverMove(u, dt) {
   // sharp cuts get open until the defender catches up. Better cover men react faster.
   if (!m.trail.length || m.trail[m.trail.length - 1][0] !== P.t) m.trail.push([P.t, m.x, m.y, m.vx, m.vy]);
   while (m.trail.length && P.t - m.trail[0][0] > 0.8) m.trail.shift();
-  const lag = clamp(0.3 - (u.who.ovr - m.who.ovr) * 0.007, 0.08, 0.5);
+  const lag = clamp(0.3 - (rt(u.who, 'cov') - rt(m.who, 'rte')) * 0.007, 0.08, 0.5);
   let h = m.trail[0]; for (const e of m.trail) if (P.t - e[0] >= lag) h = e;
   const tx = h ? h[1] + h[3] * lag : m.x, ty = (h ? h[2] + h[4] * lag : m.y) + 0.8;
   steer(u, tx, ty, u.sp * (u.role === 'LB' ? 0.95 : 1), dt, 16);
@@ -532,12 +540,12 @@ function resolveCatch() {
   const B = P.ball, r = B.tgt;
   const dR = r ? Math.hypot(r.x - B.lx, r.y - B.ly) : 99;
   let dD = 99, dd = null; P.def.forEach(u => { const d = Math.hypot(u.x - B.lx, u.y - B.ly); if (d < dD) { dD = d; dd = u; } });
-  const hands = r ? 0.84 + (r.who.ovr - 60) * 0.005 : 0;
+  const hands = r ? 0.84 + (rt(r.who, 'hnd') - 60) * 0.005 : 0;
   if (dd && dD < 1.0 && dD < dR - 0.3) {
     // the defender got there first: a pick, a pass breakup, or the receiver still wins it
-    const pInt = clamp(0.09 + (dd.who.ovr - me.QB.ovr) * 0.004, 0.03, 0.2);
+    const pInt = clamp(0.09 + ((rt(dd.who, 'bsk') + dd.who.ovr) / 2 - rt(me.QB, 'pkt')) * 0.004, 0.03, 0.2);
     if (Math.random() < pInt) { endPlay({ kind: 'int', y: B.ly, x: B.lx, by: dd }); return; }
-    if (Math.random() < clamp(0.5 + (dd.who.ovr - (r ? r.who.ovr : 60)) * 0.01, 0.3, 0.7)) { endPlay({ kind: 'inc', text: 'Broken up' }); return; }
+    if (Math.random() < clamp(0.5 + (rt(dd.who, 'cov') - (r ? (rt(r.who, 'hnd') + breakOf(r.who)) / 2 : 60)) * 0.01, 0.3, 0.7)) { endPlay({ kind: 'inc', text: 'Broken up' }); return; }
   }
   if (!r || dR > 2.6) { endPlay({ kind: 'inc', text: B.ly > 100 + 10 || B.lx < 0 || B.lx > W ? 'Out of bounds' : 'Incomplete' }); return; }
   const contest = dD < 1.0 ? 0.25 : dD < 2 ? 0.12 : dD < 3 ? 0.05 : 0;
@@ -655,7 +663,7 @@ function routeSvg(p) {
 }
 function fourthDown() {
   const dist = 100 - GS.y + 17, fg = dist <= 58;
-  const pFG = clamp(1.04 - (dist - 20) * 0.019 + (me.K.ovr - 70) * 0.005 - (GS.year < 1990 ? 0.08 : 0), 0.05, 0.99);
+  const pFG = clamp(1.04 - (dist - 20) * 0.019 * clamp(1 - (rt(me.K, 'kpw') - 70) * 0.006, 0.8, 1.2) + (rt(me.K, 'kac') - 70) * 0.005 - (GS.year < 1990 ? 0.08 : 0), 0.05, 0.99);
   sheet(`<h3>4th & ${Math.round(GS.togo)} at the ${GS.y < 50 ? 'own ' + Math.round(GS.y) : 'opponent ' + Math.round(100 - GS.y)}</h3>
     <div class="row"><button class="big" data-act="gofor">Go for it</button>${GS.y < 60 ? '<button class="big alt" data-act="punt">Punt</button>' : ''}${fg ? `<button class="big alt" data-act="fg">Field goal (${Math.round(dist)} yds, ${Math.round(pFG * 100)}%)</button>` : ''}</div>`);
   GS.pFG = pFG; GS.fgDist = dist;
@@ -677,7 +685,7 @@ function kickMeter(title, p, dist, done) {
 function kickPos() { if (!KICK) return 0.5; const ph = ((performance.now() - KICK.t0) / 1000 * KICK.v) % 2; return ph < 1 ? ph : 2 - ph; }
 function kickNow() { if (!KICK) return; const m = kickPos(), good = Math.abs(m - 0.5) <= KICK.p / 2, d = KICK.done; KICK = null; sheet(''); d(good, m); }
 function kickPAT() {
-  const p = clamp((GS.year >= 2015 ? 0.94 : 0.985) + (me.K.ovr - 70) * 0.002, 0.8, 0.995);
+  const p = clamp((GS.year >= 2015 ? 0.94 : 0.985) + (rt(me.K, 'kac') - 70) * 0.002, 0.8, 0.995);
   kickMeter(`Extra point · ${esc(me.K.name)}`, p, GS.year >= 2015 ? 33 : 20, good => {
     if (good) GS.my += 1; flash(good ? 'Extra point is good' : 'Extra point missed!', 1100); scoreBar();
     setTimeout(afterScore, 1100);
@@ -1011,7 +1019,7 @@ function setup() {
   $('#tA').innerHTML = esc(L.teams[myId].abbr); $('#tB').innerHTML = esc(L.teams[opId].abbr); $('#mid').innerHTML = `<b>Play the Game</b>${L.year} · preview`;
   sheet(`<div class="setup"><div><h3>Play the Game · preview</h3>
     <p>${demo ? 'No saved league on this device, so this uses a sample league with made-up players.' : `Using your saved ${L.year} league: real players and ratings.`} You play offense; their drives are simulated against your defense.</p>
-    <p class="note"><b>Passing:</b> after the snap, touch anywhere and pull back to the left like a slingshot, then let go. The ball flies the opposite way; pull farther to throw farther, pull up or down to aim across the field. <b>Running:</b> your runner always runs straight ahead at his own speed (faster players run faster). Slide your finger up or down to move him across the field, tap to juke, swipe right to dive forward and go down, swipe left to slide feet first. On a pass play, <b>QB run</b> takes off with your quarterback. Better quarterbacks have stronger arms (they throw farther and faster) and are more accurate; faster receivers get open. <b>Kicks:</b> you return kickoffs and punts (fair catch or take a knee while the ball is in the air); for field goals and extra points, tap Kick when the ball is between the uprights.</p></div><div>
+    <p class="note"><b>Passing:</b> after the snap, touch anywhere and pull back to the left like a slingshot, then let go. The ball flies the opposite way; pull farther to throw farther, pull up or down to aim across the field. <b>Running:</b> your runner always runs straight ahead at his own speed (faster players run faster). Slide your finger up or down to move him across the field, tap to juke, swipe right to dive forward and go down, swipe left to slide feet first. On a pass play, <b>QB run</b> takes off with your quarterback. Every player plays to his position ratings: a quarterback's arm strength sets how far and fast he throws and his accuracy how close it lands, receivers' speed and route running get them open and their hands catch it, backs' elusiveness makes jukes work, linemen's blocking and pass rush decide the line, and tacklers bring runners down. <b>Kicks:</b> you return kickoffs and punts (fair catch or take a knee while the ball is in the air); for field goals and extra points, tap Kick when the ball is between the uprights.</p></div><div>
     <label class="f">Your team</label><select id="selA">${opts(myId)}</select>
     <label class="f">Opponent</label><select id="selB">${opts(opId)}</select>
     <label class="f">Length</label><select id="selN"><option value="6">Short (6 drives each)</option><option value="8" selected>Standard (8 drives each)</option><option value="12">Long (12 drives each)</option></select>

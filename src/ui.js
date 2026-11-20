@@ -2,7 +2,7 @@
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-19e';
+const APP_VERSION = '2026-11-19f';
 let SLOT = (() => { try { return localStorage.getItem('gg-slot') === 'career' ? 'career' : 'league'; } catch (e) { return 'league'; } })();
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
@@ -66,6 +66,7 @@ async function doSave() {
   if (saving) { saveAgain = true; return; }
   saving = true;
   try {
+    if (L && G.ensureAllAttrs) G.ensureAllAttrs(L); // ratings are kept in the save so Play the Game can use them
     await DB.set(SLOT, L);
     const sig = imSignature();
     if (sig !== imSig) { await DB.set('imports', IM); imSig = sig; }
@@ -230,10 +231,26 @@ function playerPage(p) {
     ${fit && !p.retiredYear ? `<p class="small"><b>Fit with your ${mine ? 'team' : 'team if you got him'}:</b>${reasonsText(fit.why)}</p>` : ''}
     ${aw ? `<div class="awards">${aw}</div>` : ''}
     ${acts ? `<div class="row">${acts}</div>` : ''}</section>
+    ${attrCard(p, p.retiredYear ? 'Ratings at his peak' : 'Ratings')}
     ${!p.retiredYear && p.team >= 0 ? contractCard(p) : ''}
     ${stints.length ? `<section class="card"><h3>Teams</h3><div class="list">${stints.map(s => `<div class="pl"><div class="pl-main"><span class="pos">${s.tm != null && L.teams[s.tm] ? esc(L.teams[s.tm].abbr) : '–'}</span><div class="pl-name">${s.tm != null && L.teams[s.tm] ? tLink(s.tm) : 'Unknown'}<div class="pl-sub">${s.from === s.to ? s.from : s.from + '–' + s.to} · ${s.to - s.from + 1} season${s.to > s.from ? 's' : ''}</div></div></div></div>`).join('')}</div></section>` : ''}
     <section class="card"><h3>Season by season</h3>${ys.length ? table(seasonCols(p), rows.concat([totRow])) : '<p class="small">No seasons played in this league yet.</p>'}</section>
     ${log.length ? `<section class="card"><h3>Transactions</h3><ul class="news">${log.map(x => `<li><span class="nw">${x.y}</span>${esc(x.s)}</li>`).join('')}</ul></section>` : ''}`;
+}
+// "Best: Speed · Weakest: Hands" for a prospect (no numbers: the board doesn't show his overall)
+function strengthText(p) {
+  const A = G.attrs(p); if (A.length < 2) return '';
+  const o = A.slice().sort((a, b) => b.v - a.v), hi = o[0], lo = o[o.length - 1];
+  if (hi.v - lo.v < 5) return 'Well-rounded';
+  return `Best: <b>${esc(hi.name)}</b> · Weakest: ${esc(lo.name)}`;
+}
+// Position ratings: they average out to his overall
+function attrBar(a) { return `<div class="bar"><span class="bar-l" title="${esc(a.name)}">${esc(a.name)}</span><span class="bar-t"><span class="bar-f ${grade(a.v)}" style="width:${Math.max(4, Math.min(100, (a.v - 30) / 0.69))}%"></span></span><span class="bar-v">${a.v}</span></div>`; }
+function attrCard(p, title, note) {
+  const A = G.attrs(p, p.retiredYear ? (p.peak || p.ovr) : G.eff(p)); if (!A.length) return '';
+  const body = G.bodyText(p);
+  return `<section class="card"><h3>${title || 'Ratings'}</h3><div class="attrs">${A.map(attrBar).join('')}</div>
+    <p class="small">${body ? body + ' · ' : ''}${esc(G.attrSource(p))}. These average out to ${p.retiredYear ? 'his peak overall' : 'the overall rating'}; speed fades after 28 and know-how grows with experience.${note ? ' ' + note : ''}</p></section>`;
 }
 // Any team's depth chart, as its coach has it today (your player is outlined in a career)
 function teamDepthCard(tid) {
@@ -539,7 +556,7 @@ function vDraft() {
   const chipRow = `<div class="chips">${['ALL', 'SEEN'].concat(G.GRPS).map(g => `<button class="chip ${ui.draftGrp === g ? 'on' : ''}" data-act="chip" data-key="draftGrp" data-id="${g}">${g === 'ALL' ? 'All' : g === 'SEEN' ? 'Scouted' : g}</button>`).join('')}</div>`;
   h += draftTracker(D.log, D.year, D.rounds, n, true);
   h += `<section class="card"><div class="split"><h3>Draft board</h3><span class="small">${all.length} prospects</span></div>${chipRow}<div class="list">${pool.length ? pool.map(p => `
-    <div class="pl"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">${esc(p.college || '')} · age ${p.age}${p.realPick && p.realPick.rnd ? ` · real: R${p.realPick.rnd} #${p.realPick.pick} ${esc(p.realPick.tm)}` : ''}</div></div>
+    <div class="pl"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">${esc(p.college || '')} · age ${p.age}${G.bodyText(p) ? ' · ' + G.bodyText(p) : ''}${p.realPick && p.realPick.rnd ? ` · real: R${p.realPick.rnd} #${p.realPick.pick} ${esc(p.realPick.tm)}` : ''}${strengthText(p) ? `<br>${strengthText(p)}` : ''}</div></div>
     <div class="pl-r"><span class="lbl">SCOUT</span>${rating(p.scout)}</div>${p.seen ? `<div class="pl-r"><span class="lbl">TRUE</span>${rating(p.pot)}</div>` : ''}</div>
     <div class="pl-btns">${!p.seen && visits > 0 ? `<button class="btn sm" data-act="scout" data-id="${p.id}">Scout</button>` : ''}${mine ? `<button class="btn sm primary" data-act="draftPick" data-id="${p.id}">Draft</button>` : ''}</div></div>`).join('') : `<p>${ui.draftGrp === 'SEEN' ? 'You have not scouted anyone still on the board.' : 'No prospects at this position.'}</p>`}</div>
     ${all.length > show ? `<div class="row"><button class="btn" data-act="draftMore">Show ${Math.min(60, all.length - show)} more</button></div>` : ''}</section>`;
@@ -1274,6 +1291,11 @@ function vCareerCreate() {
   G.CAREER_Q.forEach((q, i) => {
     h += `<section class="card"><h3>${i + 2}. ${esc(q.q)}</h3><div class="qopts">${q.a.map((a, j) => `<button class="qopt ${c.ans[i] === j ? 'on' : ''}" data-act="cAns" data-id="${i}:${j}">${esc(a[0])}</button>`).join('')}</div></section>`;
   });
+  const styles = G.CAREER_STYLES[c.grp] || [];
+  if (!styles.some(x => x[0] === c.style)) c.style = 'bal';
+  h += `<section class="card"><h3>${G.CAREER_Q.length + 2}. What kind of ${esc(c.grp === 'K' || c.grp === 'P' ? 'specialist' : c.grp)} are you?</h3><p class="small">Your style decides your strengths and weaknesses. Height, weight and your answers above move them too.</p>
+    <div class="qopts">${styles.map(x => `<button class="qopt ${c.style === x[0] ? 'on' : ''}" data-act="cStyle" data-id="${x[0]}">${esc(x[1])}</button>`).join('')}</div>
+    <div class="attrs">${G.careerAttrPreview(Object.assign({}, c, { ht: c.ht || HT[DEF_HT[c.grp]], wt: c.wt || DEF_WT[c.grp] }), v.ovr).map(attrBar).join('')}</div></section>`;
   h += cPreviewCard(v);
   h += `<div class="row"><button class="btn primary" data-act="cCreate">Declare for the ${D.year} draft</button></div>`;
   return h;
@@ -1307,7 +1329,8 @@ function cHeader(p) {
   return `<section class="card hero"><div class="eyebrow">${esc(p.pos)}${p.num != null && p.team >= 0 ? ' · #' + p.num : ''} · Age ${p.age}${p.yrs ? ' · Year ' + (p.yrs + 1) : ' · Rookie'}</div>
     <h2>${pLink(p)}</h2><p>${p.team >= 0 ? tLink(p.team) : esc(cStatus(p))}${r ? ' · ' + esc(r.label) : ''}</p>
     <div class="stats4"><div>${rating(p.ovr)}<span>Overall</span></div><div>${rating(pot)}<span>Ceiling</span></div><div><b>${sal != null ? G.money(sal) + '/yr' : p.con ? 'Expired' : '–'}</b><span>${cConLine(p, y)}</span></div><div><b>${C.fo == null ? 50 : C.fo}</b><span>Front office</span></div></div>
-    <p class="small">Career earnings: <b>${G.money(G.careerEarnings(L))}</b></p>
+    <div class="attrchips">${G.attrs(p).map(a => `<span class="achip ${grade(a.v)}"><b>${a.v}</b>${esc(a.short)}</span>`).join('')}</div>
+    <p class="small">Career earnings: <b>${G.money(G.careerEarnings(L))}</b>${G.bodyText(p) ? ' · ' + G.bodyText(p) : ''}</p>
     ${p.inj ? `<p class="small bad">${esc(G.injText(p))}.</p>` : ''}${p.holdout ? '<p class="small warn">You are holding out.</p>' : ''}</section>`;
 }
 function cGameLine(l) {
@@ -1442,7 +1465,10 @@ function cTrainCard(p) {
     <div class="chips">${Object.keys(G.CAREER_FOCUS).map(k => `<button class="chip ${C.focus === k ? 'on' : ''}" data-act="cFocus" data-id="${k}">${esc(G.CAREER_FOCUS[k].name)}${G.CAREER_FOCUS[k].g.includes(p.grp) ? ' ★' : ''}</button>`).join('')}</div>
     <p class="small">${esc(G.CAREER_FOCUS[C.focus].txt)}</p>
     <div class="seg">${Object.keys(G.CAREER_PLANS).map(k => `<button class="${C.plan === k ? 'on' : ''}" data-act="cPlan" data-id="${k}">${esc(G.CAREER_PLANS[k].name)}</button>`).join('')}</div>
-    <p class="small">Extra work grows you faster and raises your injury risk; light work is the reverse.</p></section>`;
+    <p class="small">Extra work grows you faster and raises your injury risk; light work is the reverse.</p>
+    <h4>Drill one rating</h4>
+    <div class="chips"><button class="chip ${!C.drill ? 'on' : ''}" data-act="cDrill" data-id="">None</button>${G.attrs(p).map(a => `<button class="chip ${C.drill === a.k ? 'on' : ''}" data-act="cDrill" data-id="${a.k}">${esc(a.name)} ${a.v}</button>`).join('')}</div>
+    <p class="small">At camp the rating you drill rises against your others (your overall doesn't change from this). ${C.lastCamp && C.lastCamp.drill && C.lastCamp.y === L.year + (L.phase === 'offseason' || L.phase === 'draft' ? 1 : 0) ? `Last camp: ${esc(G.ATTR_NAME[C.lastCamp.drill])} +${C.lastCamp.drillUp} against the rest.` : ''}</p></section>`;
 }
 function cScheduleCard(p) {
   if (p.retiredYear != null || p.team < 0 || !L.schedule || !L.schedule.length || !(L.phase === 'regular' || L.phase === 'playoffs' || L.phase === 'season-over')) return '';
@@ -1555,6 +1581,8 @@ function careerAct(a, el) {
     case 'cWay': ui.cWay = id; break;
     case 'cTier': ui.cNew.tier = id; break;
     case 'cAns': { const [i, j] = id.split(':').map(Number); ui.cNew.ans[i] = j; break; }
+    case 'cStyle': ui.cNew.style = id; break;
+    case 'cDrill': G.setCareerDrill(L, id || null); break;
     case 'cCreate': { const c = ui.cNew; if (!c.name.trim()) { flash('Give your player a name.'); break; } const e = G.careerCreate(L, Object.assign({}, c, { pos: c.pos || G.CAREER_POS[c.grp][0], ht: c.ht || HT[DEF_HT[c.grp]], wt: c.wt || DEF_WT[c.grp] })); if (e) flash(e); else { track('career-create/' + c.grp + '/' + c.tier); toTop(); } break; }
     case 'cReal': { const e = G.careerChooseReal(L, +id); if (e) flash(e); else { track('career-real'); toTop(); } break; }
     case 'cRealGrp': ui.cRealGrp = id; ui.cRealShow = 80; break;
@@ -1589,8 +1617,8 @@ function careerChange(t) {
   const c = ui.cNew; if (!c) return false;
   if (t.id === 'cGrp') { c.grp = t.value; c.pos = G.CAREER_POS[c.grp][0]; c.ht = null; c.wt = null; render(); return true; }
   if (t.id === 'cPos') { c.pos = t.value; return true; }
-  if (t.id === 'cHt') { c.ht = t.value; return true; }
-  if (t.id === 'cWt') { c.wt = +t.value || null; return true; }
+  if (t.id === 'cHt') { c.ht = t.value; render(); return true; }
+  if (t.id === 'cWt') { c.wt = +t.value || null; render(); return true; }
   return false;
 }
 function careerInput(t) {
@@ -1848,14 +1876,16 @@ document.addEventListener('input', e => { if (careerInput(e.target)) return; if 
 async function loadRealRosters() {
   // nflverse rosters: who played where every season. Kept on the device so it works offline.
   let have = false;
-  try { const d = await DB.get('real'); if (d && d.players) { G.setRealData(d); have = true; } } catch (e) { /* none saved */ }
+  try { const d = await DB.get('real'); if (d && d.players) { G.setRealData(d); have = d.players.some(p => p.a) ? 2 : 1; } } catch (e) { /* none saved */ }
   if (!/^https?:/.test(location.protocol)) return;
   try {
     const res = await fetch('rosters.json', { cache: 'no-store' });
     if (!res.ok) return;
     const d = await res.json(); if (!d || !d.gridironRosters) return;
     const n = G.setRealData(d);
-    if (!have || (REALN && REALN !== n)) { DB.set('real', d).catch(() => {}); }
+    const hasA = d.players.some(p => p.a);
+    if (!have || (REALN && REALN !== n) || (hasA && have !== 2)) { DB.set('real', d).catch(() => {}); }
+    if (L) { G.refreshAttrs(L); save(); }
     REALN = n;
     if (!have) { flash(`Loaded real rosters for every season (${n.toLocaleString()} players).`); render(); }
   } catch (e) { /* offline: keep what's on the device */ }
