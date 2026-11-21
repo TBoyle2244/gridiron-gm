@@ -503,7 +503,10 @@ function prospectFromDraft(L, r, year) {
   // What he actually becomes: mostly his real (or projected) career, a little draft slot, plus some luck.
   const C = realCareer(r, year, grp);
   // The more real seasons we know about, the less luck: about ±5 for unknowns, ±2.5 for veterans.
-  const pot = clamp(Math.round(compressTop(0.2 * slot + 0.8 * C.score - 2.5 + R.norm() * noiseFor(C.s))), 40, 99);
+  // Draft slot only matters much when we don't know how his career went: a proven late-rounder
+  // (5+ real seasons) is judged almost entirely on what he did, not where he was picked.
+  const ws = C.s >= 5 ? 0.05 : C.s >= 2 ? 0.1 : 0.2;
+  const pot = clamp(Math.round(compressTop(ws * slot + (1 - ws) * C.score - 2.5 + R.norm() * noiseFor(C.s))), 40, 99);
   // Players who were good from day one start close to their ceiling.
   const ovr = C.quick ? clamp(pot - R.int(4, 8), 36, 84) : clamp(pot - R.int(8, 18), 36, 80);
   const scout = clamp(Math.round(slot + collegeBump(college) + R.norm() * 4), 40, 92);
