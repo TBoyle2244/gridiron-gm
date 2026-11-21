@@ -5212,7 +5212,7 @@ const HELP_FOR_TAB = { home: 'office', roster: 'roster', stats: 'stats', league:
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-20b';
+const APP_VERSION = '2026-11-20c';
 let SLOT = (() => { try { return localStorage.getItem('gg-slot') === 'career' ? 'career' : 'league'; } catch (e) { return 'league'; } })();
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
@@ -6046,16 +6046,16 @@ function rightsCard() {
 function vRoster() {
   const max = G.rules(L.year).rosterMax, all = G.roster(L, L.user), d = G.depth(L, L.user);
   const SFu = G.startersFor(L, L.user), starterIds = new Set(); G.GRPS.forEach(g => d[g].slice(0, SFu[g]).forEach(p => starterIds.add(p.id)));
-  const rc = cmp(ui.rSort), dg = ui.grp !== 'ALL' ? ui.grp : null;
+  const rc = cmp(ui.rSort || 'pos'), dg = ui.grp !== 'ALL' ? ui.grp : null;
   // one position picked: the list IS that position's depth chart, in order, with arrows to change it
   let list, chart = null;
   if (dg) { chart = G.depthChart(L, L.user, dg); const ids = new Set(chart.map(p => p.id)); list = chart.concat(all.filter(p => p.grp === dg && !ids.has(p.id))); }
-  else list = all.slice().sort((a, b) => (ui.rSort === 'sal' ? 0 : G.GRPS.indexOf(a.grp) - G.GRPS.indexOf(b.grp)) || rc(a, b));
+  else list = all.slice().sort(rc); // Position groups by position; Overall, Potential and Salary rank the whole roster
   const act = G.active(L, L.user).length, onIR = all.length - act, custom = dg && !!(me().dc && me().dc[dg]);
   const ord = (p, i) => chart && i < chart.length ? `<div class="pl-ord"><button class="btn sm ar" data-act="dcMove" data-id="${p.id}" data-key="-1"${i === 0 ? ' disabled' : ''} aria-label="Move up">▲</button><button class="btn sm ar" data-act="dcMove" data-id="${p.id}" data-key="1"${i === chart.length - 1 ? ' disabled' : ''} aria-label="Move down">▼</button></div>` : '';
   const head = dg ? `<p class="small"><b>${dg} depth chart.</b> ${SFu[dg] ? `The top ${SFu[dg]} healthy player${SFu[dg] === 1 ? '' : 's'} start${SFu[dg] === 1 ? 's' : ''} (green); ` : `Your formation doesn't start a ${dg}; `}use ▲▼ to change the order. Injured players are skipped unless you let them play hurt. ${custom ? 'Custom order.' : 'Sorted by rating.'}</p>
       <div class="row"><button class="btn sm" data-act="dcSort" data-key="ovr" data-id="${dg}">Order by overall</button><button class="btn sm" data-act="dcSort" data-key="pot" data-id="${dg}">Order by potential</button>${custom ? `<button class="btn sm" data-act="dcReset" data-id="${dg}">Reset to automatic</button>` : ''}</div>`
-    : `<p class="small">Green positions are starters. Pick a position to see and set its depth chart. Tap a player for options.</p>${sortSeg('rSort', false, 'ovr', true)}`;
+    : `<p class="small">Green positions are starters. Pick a position to see and set its depth chart. Tap a player for options.</p>${sortSeg('rSort', true, 'pos', true)}`;
   return rightsCard() + `<section class="card"><div class="split"><h3>${esc(me().name)} roster</h3><span class="count ${act > max ? 'bad' : ''}">${act} / ${max}${onIR ? ` <span class="small">+ ${onIR} on IR</span>` : ''}</span></div>
     ${chips('grp', ui.grp)}${head}
     <p class="small"><b>On the field:</b> ${esc(G.offPers(SFu))} on offense, ${esc(G.defPers(SFu))} on defense (set by your schemes on the Coach tab).</p>
