@@ -1351,19 +1351,45 @@ function era(y) {
 }
 
 /* ---------- coaching staff ---------- */
-const ROLE_NAME = { hc: 'Head coach', oc: 'Offensive coordinator', dc: 'Defensive coordinator' };
+const ROLE_NAME = { hc: 'Head coach', oc: 'Offensive coordinator', dc: 'Defensive coordinator', sc: 'Director of scouting', md: 'Head of medical staff' };
+const STAFF_ROLES = ['hc', 'oc', 'dc', 'sc', 'md'];
+/* ---------- staff budget ----------
+   The owner sets a yearly budget for the five staff jobs. Bigger markets and better teams get more.
+   Salaries scale with the era (a share of the league's average player salary) and with rating. */
+const ROLE_PAY = { hc: 2.2, oc: 0.9, dc: 0.9, sc: 0.45, md: 0.35 };
+const MARKET_BIG = ['New York', 'Los Angeles', 'Chicago', 'Dallas', 'Philadelphia', 'San Francisco', 'Washington', 'Houston', 'Boston', 'New England'];
+const MARKET_SMALL = ['Green Bay', 'Buffalo', 'Jacksonville', 'Cincinnati', 'New Orleans', 'Kansas City', 'Indianapolis', 'Tennessee', 'Cleveland', 'Pittsburgh', 'Nashville', 'Memphis'];
+function marketOf(t) { const c = t.city || ''; return MARKET_BIG.some(x => c.includes(x)) ? 'big' : MARKET_SMALL.some(x => c.includes(x)) ? 'small' : 'mid'; }
+const MARKET_MUL = { big: 1.15, mid: 1, small: 0.87 };
+const MARKET_NAME = { big: 'Large market', mid: 'Mid-size market', small: 'Small market' };
+function staffAsk(L, c, y) { return Math.round(avgSalary(y || L.year) * ROLE_PAY[c.role] * (0.45 + 1.3 * Math.pow(clamp((c.r - 35) / 55, 0, 1.1), 1.5)) / 5) * 5; }
+function staffSal(L, c) { if (!c) return 0; if (c.interim) return staffAsk(L, c); if (c.sal == null) c.sal = staffAsk(L, c); return c.sal; }
+// how good the team has been: last two seasons' win share, plus the current roster
+function budgetInfo(L, tid) {
+  const t = L.teams[tid], h = t.hist || [], last = h.slice(-2);
+  const wp = last.length ? last.reduce((a, x) => a + (x.w + x.t / 2) / Math.max(1, x.w + x.l + x.t), 0) / last.length : 0.5;
+  const mk = marketOf(t), win = 0.9 + wp * 0.2;
+  const base = avgSalary(L.year) * Object.values(ROLE_PAY).reduce((a, x) => a + x, 0) * 0.9;
+  const total = Math.round(base * MARKET_MUL[mk] * win / 10) * 10;
+  return { total, market: mk, marketName: MARKET_NAME[mk], wp, mult: MARKET_MUL[mk] * win };
+}
+function staffSpend(L, tid) { const st = L.teams[tid].staff || {}; return STAFF_ROLES.reduce((a, r) => a + (st[r] && !st[r].interim ? staffSal(L, st[r]) : 0), 0); }
+// How far off your scout's grades usually are (one standard deviation, in rating points)
+function scoutErr(c) { return c ? clamp(9 - (c.r - 35) * 0.12, 2, 9) : 10; }
+// Medical staff: fewer injuries and shorter ones with a good staff
+function medMul(L, tid) { const t = L.teams[tid], c = t && t.staff && t.staff.md; return c ? clamp(1 - (c.r - 60) * 0.008, 0.75, 1.3) : 1.3; }
 function genCoach(L, role, mean) {
   L.nextCoachId = L.nextCoachId || 1;
   return { id: L.nextCoachId++, name: genName(), age: R.int(33, 58), r: clamp(Math.round((mean || 58) + R.norm() * 8), 35, 92), role,
-    pref: role === 'oc' ? R.pick(['run', 'bal', 'pass']) : (role === 'dc' ? R.pick(['soft', 'bal', 'blitz']) : null), since: L.year };
+    pref: role === 'oc' ? R.pick(['run', 'bal', 'pass']) : (role === 'dc' ? R.pick(['soft', 'bal', 'blitz']) : null), since: L.year, sal: null };
 }
 function ensureStaff(L) {
   for (const t of L.teams) {
     t.staff = t.staff || {};
-    for (const role of ['hc', 'oc', 'dc']) if (t.staff[role] === undefined) t.staff[role] = genCoach(L, role);
+    for (const role of STAFF_ROLES) if (t.staff[role] === undefined) t.staff[role] = genCoach(L, role);
   }
   L.coachPool = L.coachPool || [];
-  for (const role of ['hc', 'oc', 'dc']) while (L.coachPool.filter(c => c.role === role).length < 8) L.coachPool.push(genCoach(L, role, 55));
+  for (const role of STAFF_ROLES) while (L.coachPool.filter(c => c.role === role).length < 8) L.coachPool.push(genCoach(L, role, 55));
 }
 // Coordinators add to their unit, more when the team runs the scheme they prefer. The head coach helps on game day.
 function staffBonus(L, tid, coach) {
@@ -1381,19 +1407,21 @@ function coachWindow(L) { return ['season-over', 'draft', 'offseason', 'preseaso
 function fireCoach(L, role) {
   if (!coachWindow(L)) return 'You can only change your staff between seasons.';
   const t = L.teams[L.user], c = t.staff[role]; if (!c) return 'That job is already open.';
-  t.staff[role] = null; c.r = Math.max(35, c.r - 2); L.coachPool.push(c);
+  t.staff[role] = null; if (!c.interim) { c.r = Math.max(35, c.r - 2); c.sal = null; L.coachPool.push(c); }
   addNews(L, `${t.abbr} fired ${ROLE_NAME[role].toLowerCase()} ${c.name}.`); return null;
 }
 function coachAcceptP(L, c, tid) { return clamp(0.95 - (c.r - 62) * 0.025 + (lastWP(L.teams[tid]) - 0.5) * 1.2 + (tid === L.user ? ({ rookie: 0.1, pro: 0, allpro: -0.1 }[L.diff] || 0) : 0), 0.1, 1); }
 function hireCoach(L, cid) {
   if (!coachWindow(L)) return 'You can only change your staff between seasons.';
   const c = L.coachPool.find(x => x.id === cid); if (!c) return 'He is no longer available.';
-  const t = L.teams[L.user]; if (t.staff[c.role]) return `Fire your ${ROLE_NAME[c.role].toLowerCase()} first.`;
+  const t = L.teams[L.user]; if (t.staff[c.role] && !t.staff[c.role].interim) return `Fire your ${ROLE_NAME[c.role].toLowerCase()} first.`;
+  const B = budgetInfo(L, L.user), ask = staffAsk(L, c), left = B.total - staffSpend(L, L.user);
+  if (ask > left) return `${c.name} wants ${money(ask)} a year. You have ${money(Math.max(0, left))} left in the owner's staff budget.`;
   c.decl = c.decl || {};
   if (c.decl[L.year] === L.user) return `${c.name} already turned you down this year.`;
   if (Math.random() > coachAcceptP(L, c, L.user)) { c.decl[L.year] = L.user; return `${c.name} turned you down. He wants a better situation.`; }
-  L.coachPool = L.coachPool.filter(x => x !== c); c.since = L.year + 1; t.staff[c.role] = c;
-  addNews(L, `${t.abbr} hired ${c.name} as ${ROLE_NAME[c.role].toLowerCase()}.`); return null;
+  L.coachPool = L.coachPool.filter(x => x !== c); c.since = L.year + 1; c.sal = ask; t.staff[c.role] = c;
+  addNews(L, `${t.abbr} hired ${c.name} as ${ROLE_NAME[c.role].toLowerCase()} for ${money(ask)} a year.`); return null;
 }
 // After each season: AI teams fire and hire, coaches age and improve or slip, new names enter.
 // After each season: ratings move with results, AI teams decide to keep or fire every coach,
@@ -1555,10 +1583,10 @@ function coachCarousel(L) {
   for (const t of L.teams) {
     const wp = (t.w + t.t / 2) / Math.max(1, t.w + t.l + t.t);
     const champ = P && P.champ === t.id;
-    for (const role of ['hc', 'oc', 'dc']) {
+    for (const role of STAFF_ROLES) {
       const c = t.staff[role]; if (!c) continue;
-      // rating change from this season
-      let d = role === 'hc' ? (wp >= 0.75 ? 3 : wp >= 0.6 ? 2 : wp >= 0.5 ? 1 : wp <= 0.25 ? -2 : wp <= 0.4 ? -1 : 0) + (inPO.has(t.id) ? 1 : 0) + (champ ? 2 : 0)
+      // rating change from this season (scouts and medical staffs mostly just age and drift)
+      let d = role === 'sc' || role === 'md' ? R.int(-1, 2) : role === 'hc' ? (wp >= 0.75 ? 3 : wp >= 0.6 ? 2 : wp >= 0.5 ? 1 : wp <= 0.25 ? -2 : wp <= 0.4 ? -1 : 0) + (inPO.has(t.id) ? 1 : 0) + (champ ? 2 : 0)
         : role === 'oc' ? unitDelta(offRank[t.id]) : unitDelta(defRank[t.id]);
       if (c.age >= 64 && Math.random() < 0.5) d -= 1;
       d -= Math.round((c.r - 62) * 0.08); // ratings drift back toward average without continued success
@@ -1570,12 +1598,13 @@ function coachCarousel(L) {
       const tenure = L.year - (c.since || L.year) + 1, tf = tenure <= 1 ? 0.4 : tenure === 2 ? 0.8 : 1;
       const prev = t.hist[t.hist.length - 2], prevBad = prev && (prev.w + prev.t / 2) / Math.max(1, prev.w + prev.l + prev.t) < 0.45;
       let pf = 0;
-      if (role === 'hc') pf = (wp < 0.25 ? 0.8 : wp < 0.35 ? 0.6 : wp < 0.45 ? 0.25 : wp < 0.5 ? 0.1 : 0.02) + (prevBad && wp < 0.45 ? 0.25 : 0);
+      if (role === 'sc' || role === 'md') pf = c.r < 50 ? 0.2 : 0.05;
+      else if (role === 'hc') pf = (wp < 0.25 ? 0.8 : wp < 0.35 ? 0.6 : wp < 0.45 ? 0.25 : wp < 0.5 ? 0.1 : 0.02) + (prevBad && wp < 0.45 ? 0.25 : 0);
       else { const rk = role === 'oc' ? offRank[t.id] : defRank[t.id]; pf = rk >= n - 5 ? 0.5 : rk >= n - 10 ? 0.25 : 0.03; }
       const fire = c.age >= 70 || Math.random() < pf * tf;
       if (fire) {
         t.staff[role] = null;
-        if (c.age < 70) { c.r = Math.max(35, c.r - 2); L.coachPool.push(c); }
+        if (c.age < 70) { c.r = Math.max(35, c.r - 2); c.sal = null; L.coachPool.push(c); }
         if (role === 'hc') news.push(c.age >= 70 ? `${t.abbr} head coach ${c.name} retired.` : `${t.abbr} fired head coach ${c.name} after a ${t.w}-${t.l}${t.t ? '-' + t.t : ''} season.`);
         // a new head coach usually brings his own coordinators
         if (role === 'hc' && c.age < 70) for (const r2 of ['oc', 'dc']) { const x = t.staff[r2]; if (x && Math.random() < 0.5) { t.staff[r2] = null; L.coachPool.push(x); } }
@@ -1583,7 +1612,7 @@ function coachCarousel(L) {
     }
   }
   L.coachPool = L.coachPool.filter(c => { c.age++; return c.age < 70; });
-  for (const role of ['hc', 'oc', 'dc']) for (let i = 0; i < 4; i++) L.coachPool.push(genCoach(L, role, 56));
+  for (const role of STAFF_ROLES) for (let i = 0; i < 4; i++) L.coachPool.push(genCoach(L, role, 56));
   exPlayerCoaches(L);
   // AI vacancies filled, worst teams first. Head-coach searches also look at top coordinators around the league.
   const order = L.teams.filter(t => t.id !== L.user).sort((a, b) => (a.w - b.w));
@@ -1604,7 +1633,7 @@ function coachCarousel(L) {
     h.since = L.year + 1; t.staff[role] = h;
   }
   // teams that lost a coordinator to another team's head-coach search fill the job now
-  for (const t of order) for (const role of ['oc', 'dc']) if (!t.staff[role]) {
+  for (const t of order) for (const role of ['oc', 'dc', 'sc', 'md']) if (!t.staff[role]) {
     const c = L.coachPool.filter(x => x.role === role).sort((a, b) => b.r - a.r).find(x => Math.random() < coachAcceptP(L, x, t.id)) || L.coachPool.filter(x => x.role === role)[0];
     if (c) { L.coachPool = L.coachPool.filter(x => x !== c); c.since = L.year + 1; t.staff[role] = c; }
   }
@@ -1612,7 +1641,7 @@ function coachCarousel(L) {
 }
 function fillInterim(L) {
   const t = L.teams[L.user]; if (!t) return;
-  for (const role of ['hc', 'oc', 'dc']) if (!t.staff[role]) { t.staff[role] = Object.assign(genCoach(L, role, 48), { r: 48, interim: true }); addNews(L, `No ${ROLE_NAME[role].toLowerCase()} hired, so ${t.staff[role].name} takes over on an interim basis.`); }
+  for (const role of STAFF_ROLES) if (!t.staff[role]) { t.staff[role] = Object.assign(genCoach(L, role, 48), { r: 48, interim: true }); addNews(L, `No ${ROLE_NAME[role].toLowerCase()} hired, so ${t.staff[role].name} takes over on an interim basis.`); }
 }
 
 /* ---------- owner & job security ---------- */
@@ -2259,11 +2288,11 @@ function injuries(L, rat) {
     }
   }));
   if (L.career) { const c = L.players[L.career.pid]; if (c && !c.inj && careerDurMult(L, c) > 1 && GRPS.some(g => rat.d[g].slice(0, F[g]).includes(c)) && Math.random() < 0.38 / 22 * (careerDurMult(L, c) - 1) * 3) { c.inj = 1 + R.poisson(1.4); injName(c, c.inj); noteInjury(L, c, c.inj); } }
-  if (Math.random() < 0.38) {
+  if (Math.random() < 0.38 * medMul(L, rat.tid)) {
     const pool = []; ['QB','RB','WR','TE','OL','DL','LB','DB'].forEach(g => rat.d[g].slice(0, F[g]).forEach(p => pool.push(p)));
     let p = R.pick(pool); if (!p) return;
     if (isCareer(L, p) && Math.random() > careerDurMult(L, p)) return;
-    p.inj = Math.random() < 0.04 ? 20 : 1 + R.poisson(1.4); injName(p, p.inj);
+    p.inj = Math.random() < 0.04 ? 20 : Math.max(1, Math.round((1 + R.poisson(1.4)) * medMul(L, rat.tid))); injName(p, p.inj);
     noteInjury(L, p, Math.min(p.inj, rules(L.year).games));
     if (p.team === L.user || p.ovr >= 80 || isCareer(L, p)) addNews(L, `${L.teams[p.team].abbr} ${p.pos} ${p.name}: ${injText(p).replace(', out', '. Out')}.`);
   }
@@ -2456,6 +2485,7 @@ function simWeek(L) {
   strikeAfter(L);
   aiIR(L);
   weeklyMorale(L); holdoutWeek(L); poachPS(L);
+  if (L.week === revealWeek(L) && L.teams[L.user]) rookieReveal(L);
   if (L.week < DEADLINE_WEEK && Math.random() < 0.4) makeOffers(L, 1, 6);
   if (L.week >= L.schedule.length) startPlayoffs(L);
 }
@@ -2745,8 +2775,7 @@ function startDraft(L, imports) {
     const byT = {}; comps.forEach(c => (byT[c.tid] = byT[c.tid] || []).push('R' + c.rnd));
     addNews(L, `Compensatory picks for the ${dy} draft: ` + Object.entries(byT).map(([tid, r]) => `${L.teams[tid].abbr} (${r.join(', ')})`).join(', ') + '.');
   }
-  L.draft = { year: dy, order, rounds, pick: 0, pool, log: [], started: false, visits: SCOUT_VISITS, ai: {}, slotPick };
-  aiScouting(L);
+  L.draft = { year: dy, order, rounds, pick: 0, pool, log: [], started: false, visits: 0, ai: {}, slotPick };
   L.phase = 'draft';
   addNews(L, `The ${dy} draft is open: ${rounds} rounds, ${order.length} teams.` + (rows ? '' : ' No real class imported, so this class is generated.') + (rows && genCount > 30 ? ` Added ${genCount} generated prospects to fill the board.` : ''));
 }
@@ -2862,7 +2891,9 @@ function aiPick(L) {
   let best = null, bs = -1e9;
   for (const id of D.pool) {
     const p = L.players[id];
-    let s = (seen.has(id) ? p.pot : p.scout) + R.norm() * 3;
+    // the team's own scouting director pulls the consensus grade toward what he sees
+    const sd = L.teams[tid].staff && L.teams[tid].staff.sc, w = tid === L.user ? 1 : clamp(((sd ? sd.r : 45) - 35) / 110, 0, 0.5);
+    let s = (seen.has(id) ? p.pot : p.scout + w * (scoutRead(L, tid, p).pot - p.scout)) + R.norm() * 3;
     if (counts[p.grp] < SFd[p.grp] + 1) s += 3;
     // kickers and punters are late-round picks (only a handful ever went in round 1)
     if ((p.grp === 'K' || p.grp === 'P') && D.pick < order32(D) * 3) s -= 25;
@@ -3690,12 +3721,40 @@ function aiCapCompliance(L) {
 }
 
 /* ---------- leaders ---------- */
+// Halfway through the season your rookies' true ratings show: how close was your scout?
+function rookieReveal(L) {
+  const rk = roster(L, L.user).filter(p => p.reveal === L.year && !p.seen);
+  if (!rk.length) return;
+  const sc = L.teams[L.user].staff.sc;
+  const lines = rk.sort((a, b) => b.pot - a.pot).slice(0, 6).map(p => { const r = scoutRead(L, L.user, p); return `${p.pos} ${p.name} ${p.ovr}/${p.pot} (scouted ${r.ovr}/${r.pot})`; });
+  const miss = rk.reduce((a, p) => a + Math.abs(scoutRead(L, L.user, p).pot - p.pot), 0) / rk.length;
+  addNews(L, `Halfway through the season, your rookies' true ratings are in (overall/potential): ${lines.join(', ')}. ${sc ? `${sc.name}'s potential grades were off by ${miss.toFixed(1)} points on average.` : ''}`);
+}
+// A rookie's true ratings show once he's played half his first season.
+function revealWeek(L) { return Math.ceil(rules(L.year).games / 2); }
 function potKnown(L, p) {
   if (p.reveal == null || p.seen) return true;
   if (L.year > p.reveal) return true;
-  return L.year === p.reveal && (L.phase === 'season-over' || L.phase === 'draft' || L.phase === 'offseason');
+  return L.year === p.reveal && (L.phase === 'playoffs' || L.phase === 'season-over' || L.phase === 'draft' || L.phase === 'offseason' || (L.phase === 'regular' && L.week >= revealWeek(L)));
 }
-function shownPot(L, p) { return potKnown(L, p) ? p.pot : p.scout; }
+// What a team's scouting director thinks a prospect is now (ovr) and will become (pot).
+// Each scout has his own consistent misses; a better scout misses by less.
+function scoutRead(L, tid, p) {
+  const t = L.teams[tid], c = t && t.staff && t.staff.sc, e = scoutErr(c);
+  let h = 2166136261 ^ ((c ? c.id : 7) * 7919) ^ (p.id * 104729);
+  const rnd = () => { h += 0x6D2B79F5; let x = h; x = Math.imul(x ^ x >>> 15, x | 1); x ^= x + Math.imul(x ^ x >>> 7, x | 61); return ((x ^ x >>> 14) >>> 0) / 4294967296; };
+  const nrm = () => Math.sqrt(-2 * Math.log(Math.max(1e-9, rnd()))) * Math.cos(2 * Math.PI * rnd());
+  const o = clamp(Math.round(p.ovr + nrm() * e * 0.7), 25, 99), pt = clamp(Math.round(p.pot + nrm() * e), 30, 99);
+  return { ovr: o, pot: Math.max(o, pt), err: e };
+}
+function hasScout(L) { return !!(L.teams[L.user] && L.teams[L.user].staff); }
+function shownPot(L, p) { return potKnown(L, p) ? p.pot : hasScout(L) ? scoutRead(L, L.user, p).pot : p.scout; }
+// his overall as you see it: your scout's read until his true rating shows
+function shownOvr(L, p, base) {
+  const b = base == null ? p.ovr : base;
+  if (potKnown(L, p) || !hasScout(L)) return b;
+  return clamp(b + scoutRead(L, L.user, p).ovr - p.ovr, 20, 99);
+}
 
 function leaders(L, key, n, year) {
   const y = year || L.year, out = [];
@@ -4610,7 +4669,7 @@ function careerLegacy(L) {
   return { score: Math.round(s), line: line && Math.round(line), pct: line ? Math.round(s / line * 100) : null, rings, jerseys, hof: p.hof || 0, verdict: C.verdict || null };
 }
 
-const API = { playerType, capPlan, minSalary, psPay, ensureAllAttrs, refreshAttrs, bodyText, careerAttrPreview, setCareerDrill, ATTR_SHORT, ATTR_KEYS, ATTR_NAME, attrs, attrOf, attrDelta, topAttr, attrSource, htText, ensureAttrs, attrFit, CAREER_STYLES, injText, injName, careerAgain, execTrade, setContract, SHAPES, contractTable, restructure, restructureInfo, june1Left, cashFor, baseFor, proLeft, careerScheme, careerStanding, careerAcceptRole, PB_SLOTS, proBowl, stadium, forecast, wxText, wxEffect, recordBook, REC_KEYS, careerSwitchOpts, careerSwitch, careerEarnings, careerCoachOpts, careerBecomeCoach, careerCoachNow, careerFrontOfficeOpts, careerToGM, NO_TEAM, CAREER_TIERS, CAREER_Q, CAREER_GRPS, CAREER_POS, CAREER_FOCUS, CAREER_PLANS, careerPreview, careerClass, startCareer, careerCreate, careerChooseReal, careerP, isCareer, careerRole, careerOffers, careerSign, careerHaggle, careerDiscount, careerRaiseInfo, careerAskRaise, careerHoldout, careerAskStart, careerRequestTrade, careerCancelTrade, careerTakeDeal, careerDeclineDeals, canTradeNow, setCareerFocus, setCareerPlan, careerGoalStatus, careerAwardRace, careerNext, careerSimYear, careerCanRetire, careerRetire, careerRanks, careerLegacy, careerTotal, hofLine, dismissAlert, STAT_NAME, COLLEGES, plog, practiceSquad, unsignedRights, psSize, psEligible, toPracticeSquad, promoteFromPS, signFromPS, signRefuserIfMoved, optionInfo, exerciseOption, declineOption, transitionTag, tagPrice, tradeablePick, rookieYears, playerFit, moraleReasons, holdoutInfo, marketFor, marketView, footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
+const API = { STAFF_ROLES, budgetInfo, staffSpend, staffSal, staffAsk, scoutErr, medMul, scoutRead, shownOvr, revealWeek, marketOf, playerType, capPlan, minSalary, psPay, ensureAllAttrs, refreshAttrs, bodyText, careerAttrPreview, setCareerDrill, ATTR_SHORT, ATTR_KEYS, ATTR_NAME, attrs, attrOf, attrDelta, topAttr, attrSource, htText, ensureAttrs, attrFit, CAREER_STYLES, injText, injName, careerAgain, execTrade, setContract, SHAPES, contractTable, restructure, restructureInfo, june1Left, cashFor, baseFor, proLeft, careerScheme, careerStanding, careerAcceptRole, PB_SLOTS, proBowl, stadium, forecast, wxText, wxEffect, recordBook, REC_KEYS, careerSwitchOpts, careerSwitch, careerEarnings, careerCoachOpts, careerBecomeCoach, careerCoachNow, careerFrontOfficeOpts, careerToGM, NO_TEAM, CAREER_TIERS, CAREER_Q, CAREER_GRPS, CAREER_POS, CAREER_FOCUS, CAREER_PLANS, careerPreview, careerClass, startCareer, careerCreate, careerChooseReal, careerP, isCareer, careerRole, careerOffers, careerSign, careerHaggle, careerDiscount, careerRaiseInfo, careerAskRaise, careerHoldout, careerAskStart, careerRequestTrade, careerCancelTrade, careerTakeDeal, careerDeclineDeals, canTradeNow, setCareerFocus, setCareerPlan, careerGoalStatus, careerAwardRace, careerNext, careerSimYear, careerCanRetire, careerRetire, careerRanks, careerLegacy, careerTotal, hofLine, dismissAlert, STAT_NAME, COLLEGES, plog, practiceSquad, unsignedRights, psSize, psEligible, toPracticeSquad, promoteFromPS, signFromPS, signRefuserIfMoved, optionInfo, exerciseOption, declineOption, transitionTag, tagPrice, tradeablePick, rookieYears, playerFit, moraleReasons, holdoutInfo, marketFor, marketView, footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
   value, release, sign, proposeTrade, tradeVerdict, teamPicks, pickById, pickLabel, projectedOverall, pickWeight, playerWeight, ensurePicks, myDraftSlots, aiTrades, acceptOffer, rejectOffer, offerValid, cutTo, ratings, teamOverall, startRegular, canStartSeason, simWeek, simPlayoffRound, roundName,
   sortTeams, divisions, pct, startDraft, onClock, makePick, aiPick, draftUntilUser, draftAll, scoutPlayer, beginDraft, SCOUT_VISITS, endDraft, startNextSeason, leaders, potKnown, shownPot, roman, addNews };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.GG = API;

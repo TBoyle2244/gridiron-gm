@@ -1637,19 +1637,45 @@ function era(y) {
 }
 
 /* ---------- coaching staff ---------- */
-const ROLE_NAME = { hc: 'Head coach', oc: 'Offensive coordinator', dc: 'Defensive coordinator' };
+const ROLE_NAME = { hc: 'Head coach', oc: 'Offensive coordinator', dc: 'Defensive coordinator', sc: 'Director of scouting', md: 'Head of medical staff' };
+const STAFF_ROLES = ['hc', 'oc', 'dc', 'sc', 'md'];
+/* ---------- staff budget ----------
+   The owner sets a yearly budget for the five staff jobs. Bigger markets and better teams get more.
+   Salaries scale with the era (a share of the league's average player salary) and with rating. */
+const ROLE_PAY = { hc: 2.2, oc: 0.9, dc: 0.9, sc: 0.45, md: 0.35 };
+const MARKET_BIG = ['New York', 'Los Angeles', 'Chicago', 'Dallas', 'Philadelphia', 'San Francisco', 'Washington', 'Houston', 'Boston', 'New England'];
+const MARKET_SMALL = ['Green Bay', 'Buffalo', 'Jacksonville', 'Cincinnati', 'New Orleans', 'Kansas City', 'Indianapolis', 'Tennessee', 'Cleveland', 'Pittsburgh', 'Nashville', 'Memphis'];
+function marketOf(t) { const c = t.city || ''; return MARKET_BIG.some(x => c.includes(x)) ? 'big' : MARKET_SMALL.some(x => c.includes(x)) ? 'small' : 'mid'; }
+const MARKET_MUL = { big: 1.15, mid: 1, small: 0.87 };
+const MARKET_NAME = { big: 'Large market', mid: 'Mid-size market', small: 'Small market' };
+function staffAsk(L, c, y) { return Math.round(avgSalary(y || L.year) * ROLE_PAY[c.role] * (0.45 + 1.3 * Math.pow(clamp((c.r - 35) / 55, 0, 1.1), 1.5)) / 5) * 5; }
+function staffSal(L, c) { if (!c) return 0; if (c.interim) return staffAsk(L, c); if (c.sal == null) c.sal = staffAsk(L, c); return c.sal; }
+// how good the team has been: last two seasons' win share, plus the current roster
+function budgetInfo(L, tid) {
+  const t = L.teams[tid], h = t.hist || [], last = h.slice(-2);
+  const wp = last.length ? last.reduce((a, x) => a + (x.w + x.t / 2) / Math.max(1, x.w + x.l + x.t), 0) / last.length : 0.5;
+  const mk = marketOf(t), win = 0.9 + wp * 0.2;
+  const base = avgSalary(L.year) * Object.values(ROLE_PAY).reduce((a, x) => a + x, 0) * 0.9;
+  const total = Math.round(base * MARKET_MUL[mk] * win / 10) * 10;
+  return { total, market: mk, marketName: MARKET_NAME[mk], wp, mult: MARKET_MUL[mk] * win };
+}
+function staffSpend(L, tid) { const st = L.teams[tid].staff || {}; return STAFF_ROLES.reduce((a, r) => a + (st[r] && !st[r].interim ? staffSal(L, st[r]) : 0), 0); }
+// How far off your scout's grades usually are (one standard deviation, in rating points)
+function scoutErr(c) { return c ? clamp(9 - (c.r - 35) * 0.12, 2, 9) : 10; }
+// Medical staff: fewer injuries and shorter ones with a good staff
+function medMul(L, tid) { const t = L.teams[tid], c = t && t.staff && t.staff.md; return c ? clamp(1 - (c.r - 60) * 0.008, 0.75, 1.3) : 1.3; }
 function genCoach(L, role, mean) {
   L.nextCoachId = L.nextCoachId || 1;
   return { id: L.nextCoachId++, name: genName(), age: R.int(33, 58), r: clamp(Math.round((mean || 58) + R.norm() * 8), 35, 92), role,
-    pref: role === 'oc' ? R.pick(['run', 'bal', 'pass']) : (role === 'dc' ? R.pick(['soft', 'bal', 'blitz']) : null), since: L.year };
+    pref: role === 'oc' ? R.pick(['run', 'bal', 'pass']) : (role === 'dc' ? R.pick(['soft', 'bal', 'blitz']) : null), since: L.year, sal: null };
 }
 function ensureStaff(L) {
   for (const t of L.teams) {
     t.staff = t.staff || {};
-    for (const role of ['hc', 'oc', 'dc']) if (t.staff[role] === undefined) t.staff[role] = genCoach(L, role);
+    for (const role of STAFF_ROLES) if (t.staff[role] === undefined) t.staff[role] = genCoach(L, role);
   }
   L.coachPool = L.coachPool || [];
-  for (const role of ['hc', 'oc', 'dc']) while (L.coachPool.filter(c => c.role === role).length < 8) L.coachPool.push(genCoach(L, role, 55));
+  for (const role of STAFF_ROLES) while (L.coachPool.filter(c => c.role === role).length < 8) L.coachPool.push(genCoach(L, role, 55));
 }
 // Coordinators add to their unit, more when the team runs the scheme they prefer. The head coach helps on game day.
 function staffBonus(L, tid, coach) {
@@ -1667,19 +1693,21 @@ function coachWindow(L) { return ['season-over', 'draft', 'offseason', 'preseaso
 function fireCoach(L, role) {
   if (!coachWindow(L)) return 'You can only change your staff between seasons.';
   const t = L.teams[L.user], c = t.staff[role]; if (!c) return 'That job is already open.';
-  t.staff[role] = null; c.r = Math.max(35, c.r - 2); L.coachPool.push(c);
+  t.staff[role] = null; if (!c.interim) { c.r = Math.max(35, c.r - 2); c.sal = null; L.coachPool.push(c); }
   addNews(L, `${t.abbr} fired ${ROLE_NAME[role].toLowerCase()} ${c.name}.`); return null;
 }
 function coachAcceptP(L, c, tid) { return clamp(0.95 - (c.r - 62) * 0.025 + (lastWP(L.teams[tid]) - 0.5) * 1.2 + (tid === L.user ? ({ rookie: 0.1, pro: 0, allpro: -0.1 }[L.diff] || 0) : 0), 0.1, 1); }
 function hireCoach(L, cid) {
   if (!coachWindow(L)) return 'You can only change your staff between seasons.';
   const c = L.coachPool.find(x => x.id === cid); if (!c) return 'He is no longer available.';
-  const t = L.teams[L.user]; if (t.staff[c.role]) return `Fire your ${ROLE_NAME[c.role].toLowerCase()} first.`;
+  const t = L.teams[L.user]; if (t.staff[c.role] && !t.staff[c.role].interim) return `Fire your ${ROLE_NAME[c.role].toLowerCase()} first.`;
+  const B = budgetInfo(L, L.user), ask = staffAsk(L, c), left = B.total - staffSpend(L, L.user);
+  if (ask > left) return `${c.name} wants ${money(ask)} a year. You have ${money(Math.max(0, left))} left in the owner's staff budget.`;
   c.decl = c.decl || {};
   if (c.decl[L.year] === L.user) return `${c.name} already turned you down this year.`;
   if (Math.random() > coachAcceptP(L, c, L.user)) { c.decl[L.year] = L.user; return `${c.name} turned you down. He wants a better situation.`; }
-  L.coachPool = L.coachPool.filter(x => x !== c); c.since = L.year + 1; t.staff[c.role] = c;
-  addNews(L, `${t.abbr} hired ${c.name} as ${ROLE_NAME[c.role].toLowerCase()}.`); return null;
+  L.coachPool = L.coachPool.filter(x => x !== c); c.since = L.year + 1; c.sal = ask; t.staff[c.role] = c;
+  addNews(L, `${t.abbr} hired ${c.name} as ${ROLE_NAME[c.role].toLowerCase()} for ${money(ask)} a year.`); return null;
 }
 // After each season: AI teams fire and hire, coaches age and improve or slip, new names enter.
 // After each season: ratings move with results, AI teams decide to keep or fire every coach,
@@ -1841,10 +1869,10 @@ function coachCarousel(L) {
   for (const t of L.teams) {
     const wp = (t.w + t.t / 2) / Math.max(1, t.w + t.l + t.t);
     const champ = P && P.champ === t.id;
-    for (const role of ['hc', 'oc', 'dc']) {
+    for (const role of STAFF_ROLES) {
       const c = t.staff[role]; if (!c) continue;
-      // rating change from this season
-      let d = role === 'hc' ? (wp >= 0.75 ? 3 : wp >= 0.6 ? 2 : wp >= 0.5 ? 1 : wp <= 0.25 ? -2 : wp <= 0.4 ? -1 : 0) + (inPO.has(t.id) ? 1 : 0) + (champ ? 2 : 0)
+      // rating change from this season (scouts and medical staffs mostly just age and drift)
+      let d = role === 'sc' || role === 'md' ? R.int(-1, 2) : role === 'hc' ? (wp >= 0.75 ? 3 : wp >= 0.6 ? 2 : wp >= 0.5 ? 1 : wp <= 0.25 ? -2 : wp <= 0.4 ? -1 : 0) + (inPO.has(t.id) ? 1 : 0) + (champ ? 2 : 0)
         : role === 'oc' ? unitDelta(offRank[t.id]) : unitDelta(defRank[t.id]);
       if (c.age >= 64 && Math.random() < 0.5) d -= 1;
       d -= Math.round((c.r - 62) * 0.08); // ratings drift back toward average without continued success
@@ -1856,12 +1884,13 @@ function coachCarousel(L) {
       const tenure = L.year - (c.since || L.year) + 1, tf = tenure <= 1 ? 0.4 : tenure === 2 ? 0.8 : 1;
       const prev = t.hist[t.hist.length - 2], prevBad = prev && (prev.w + prev.t / 2) / Math.max(1, prev.w + prev.l + prev.t) < 0.45;
       let pf = 0;
-      if (role === 'hc') pf = (wp < 0.25 ? 0.8 : wp < 0.35 ? 0.6 : wp < 0.45 ? 0.25 : wp < 0.5 ? 0.1 : 0.02) + (prevBad && wp < 0.45 ? 0.25 : 0);
+      if (role === 'sc' || role === 'md') pf = c.r < 50 ? 0.2 : 0.05;
+      else if (role === 'hc') pf = (wp < 0.25 ? 0.8 : wp < 0.35 ? 0.6 : wp < 0.45 ? 0.25 : wp < 0.5 ? 0.1 : 0.02) + (prevBad && wp < 0.45 ? 0.25 : 0);
       else { const rk = role === 'oc' ? offRank[t.id] : defRank[t.id]; pf = rk >= n - 5 ? 0.5 : rk >= n - 10 ? 0.25 : 0.03; }
       const fire = c.age >= 70 || Math.random() < pf * tf;
       if (fire) {
         t.staff[role] = null;
-        if (c.age < 70) { c.r = Math.max(35, c.r - 2); L.coachPool.push(c); }
+        if (c.age < 70) { c.r = Math.max(35, c.r - 2); c.sal = null; L.coachPool.push(c); }
         if (role === 'hc') news.push(c.age >= 70 ? `${t.abbr} head coach ${c.name} retired.` : `${t.abbr} fired head coach ${c.name} after a ${t.w}-${t.l}${t.t ? '-' + t.t : ''} season.`);
         // a new head coach usually brings his own coordinators
         if (role === 'hc' && c.age < 70) for (const r2 of ['oc', 'dc']) { const x = t.staff[r2]; if (x && Math.random() < 0.5) { t.staff[r2] = null; L.coachPool.push(x); } }
@@ -1869,7 +1898,7 @@ function coachCarousel(L) {
     }
   }
   L.coachPool = L.coachPool.filter(c => { c.age++; return c.age < 70; });
-  for (const role of ['hc', 'oc', 'dc']) for (let i = 0; i < 4; i++) L.coachPool.push(genCoach(L, role, 56));
+  for (const role of STAFF_ROLES) for (let i = 0; i < 4; i++) L.coachPool.push(genCoach(L, role, 56));
   exPlayerCoaches(L);
   // AI vacancies filled, worst teams first. Head-coach searches also look at top coordinators around the league.
   const order = L.teams.filter(t => t.id !== L.user).sort((a, b) => (a.w - b.w));
@@ -1890,7 +1919,7 @@ function coachCarousel(L) {
     h.since = L.year + 1; t.staff[role] = h;
   }
   // teams that lost a coordinator to another team's head-coach search fill the job now
-  for (const t of order) for (const role of ['oc', 'dc']) if (!t.staff[role]) {
+  for (const t of order) for (const role of ['oc', 'dc', 'sc', 'md']) if (!t.staff[role]) {
     const c = L.coachPool.filter(x => x.role === role).sort((a, b) => b.r - a.r).find(x => Math.random() < coachAcceptP(L, x, t.id)) || L.coachPool.filter(x => x.role === role)[0];
     if (c) { L.coachPool = L.coachPool.filter(x => x !== c); c.since = L.year + 1; t.staff[role] = c; }
   }
@@ -1898,7 +1927,7 @@ function coachCarousel(L) {
 }
 function fillInterim(L) {
   const t = L.teams[L.user]; if (!t) return;
-  for (const role of ['hc', 'oc', 'dc']) if (!t.staff[role]) { t.staff[role] = Object.assign(genCoach(L, role, 48), { r: 48, interim: true }); addNews(L, `No ${ROLE_NAME[role].toLowerCase()} hired, so ${t.staff[role].name} takes over on an interim basis.`); }
+  for (const role of STAFF_ROLES) if (!t.staff[role]) { t.staff[role] = Object.assign(genCoach(L, role, 48), { r: 48, interim: true }); addNews(L, `No ${ROLE_NAME[role].toLowerCase()} hired, so ${t.staff[role].name} takes over on an interim basis.`); }
 }
 
 /* ---------- owner & job security ---------- */
@@ -2545,11 +2574,11 @@ function injuries(L, rat) {
     }
   }));
   if (L.career) { const c = L.players[L.career.pid]; if (c && !c.inj && careerDurMult(L, c) > 1 && GRPS.some(g => rat.d[g].slice(0, F[g]).includes(c)) && Math.random() < 0.38 / 22 * (careerDurMult(L, c) - 1) * 3) { c.inj = 1 + R.poisson(1.4); injName(c, c.inj); noteInjury(L, c, c.inj); } }
-  if (Math.random() < 0.38) {
+  if (Math.random() < 0.38 * medMul(L, rat.tid)) {
     const pool = []; ['QB','RB','WR','TE','OL','DL','LB','DB'].forEach(g => rat.d[g].slice(0, F[g]).forEach(p => pool.push(p)));
     let p = R.pick(pool); if (!p) return;
     if (isCareer(L, p) && Math.random() > careerDurMult(L, p)) return;
-    p.inj = Math.random() < 0.04 ? 20 : 1 + R.poisson(1.4); injName(p, p.inj);
+    p.inj = Math.random() < 0.04 ? 20 : Math.max(1, Math.round((1 + R.poisson(1.4)) * medMul(L, rat.tid))); injName(p, p.inj);
     noteInjury(L, p, Math.min(p.inj, rules(L.year).games));
     if (p.team === L.user || p.ovr >= 80 || isCareer(L, p)) addNews(L, `${L.teams[p.team].abbr} ${p.pos} ${p.name}: ${injText(p).replace(', out', '. Out')}.`);
   }
@@ -2742,6 +2771,7 @@ function simWeek(L) {
   strikeAfter(L);
   aiIR(L);
   weeklyMorale(L); holdoutWeek(L); poachPS(L);
+  if (L.week === revealWeek(L) && L.teams[L.user]) rookieReveal(L);
   if (L.week < DEADLINE_WEEK && Math.random() < 0.4) makeOffers(L, 1, 6);
   if (L.week >= L.schedule.length) startPlayoffs(L);
 }
@@ -3031,8 +3061,7 @@ function startDraft(L, imports) {
     const byT = {}; comps.forEach(c => (byT[c.tid] = byT[c.tid] || []).push('R' + c.rnd));
     addNews(L, `Compensatory picks for the ${dy} draft: ` + Object.entries(byT).map(([tid, r]) => `${L.teams[tid].abbr} (${r.join(', ')})`).join(', ') + '.');
   }
-  L.draft = { year: dy, order, rounds, pick: 0, pool, log: [], started: false, visits: SCOUT_VISITS, ai: {}, slotPick };
-  aiScouting(L);
+  L.draft = { year: dy, order, rounds, pick: 0, pool, log: [], started: false, visits: 0, ai: {}, slotPick };
   L.phase = 'draft';
   addNews(L, `The ${dy} draft is open: ${rounds} rounds, ${order.length} teams.` + (rows ? '' : ' No real class imported, so this class is generated.') + (rows && genCount > 30 ? ` Added ${genCount} generated prospects to fill the board.` : ''));
 }
@@ -3148,7 +3177,9 @@ function aiPick(L) {
   let best = null, bs = -1e9;
   for (const id of D.pool) {
     const p = L.players[id];
-    let s = (seen.has(id) ? p.pot : p.scout) + R.norm() * 3;
+    // the team's own scouting director pulls the consensus grade toward what he sees
+    const sd = L.teams[tid].staff && L.teams[tid].staff.sc, w = tid === L.user ? 1 : clamp(((sd ? sd.r : 45) - 35) / 110, 0, 0.5);
+    let s = (seen.has(id) ? p.pot : p.scout + w * (scoutRead(L, tid, p).pot - p.scout)) + R.norm() * 3;
     if (counts[p.grp] < SFd[p.grp] + 1) s += 3;
     // kickers and punters are late-round picks (only a handful ever went in round 1)
     if ((p.grp === 'K' || p.grp === 'P') && D.pick < order32(D) * 3) s -= 25;
@@ -3976,12 +4007,40 @@ function aiCapCompliance(L) {
 }
 
 /* ---------- leaders ---------- */
+// Halfway through the season your rookies' true ratings show: how close was your scout?
+function rookieReveal(L) {
+  const rk = roster(L, L.user).filter(p => p.reveal === L.year && !p.seen);
+  if (!rk.length) return;
+  const sc = L.teams[L.user].staff.sc;
+  const lines = rk.sort((a, b) => b.pot - a.pot).slice(0, 6).map(p => { const r = scoutRead(L, L.user, p); return `${p.pos} ${p.name} ${p.ovr}/${p.pot} (scouted ${r.ovr}/${r.pot})`; });
+  const miss = rk.reduce((a, p) => a + Math.abs(scoutRead(L, L.user, p).pot - p.pot), 0) / rk.length;
+  addNews(L, `Halfway through the season, your rookies' true ratings are in (overall/potential): ${lines.join(', ')}. ${sc ? `${sc.name}'s potential grades were off by ${miss.toFixed(1)} points on average.` : ''}`);
+}
+// A rookie's true ratings show once he's played half his first season.
+function revealWeek(L) { return Math.ceil(rules(L.year).games / 2); }
 function potKnown(L, p) {
   if (p.reveal == null || p.seen) return true;
   if (L.year > p.reveal) return true;
-  return L.year === p.reveal && (L.phase === 'season-over' || L.phase === 'draft' || L.phase === 'offseason');
+  return L.year === p.reveal && (L.phase === 'playoffs' || L.phase === 'season-over' || L.phase === 'draft' || L.phase === 'offseason' || (L.phase === 'regular' && L.week >= revealWeek(L)));
 }
-function shownPot(L, p) { return potKnown(L, p) ? p.pot : p.scout; }
+// What a team's scouting director thinks a prospect is now (ovr) and will become (pot).
+// Each scout has his own consistent misses; a better scout misses by less.
+function scoutRead(L, tid, p) {
+  const t = L.teams[tid], c = t && t.staff && t.staff.sc, e = scoutErr(c);
+  let h = 2166136261 ^ ((c ? c.id : 7) * 7919) ^ (p.id * 104729);
+  const rnd = () => { h += 0x6D2B79F5; let x = h; x = Math.imul(x ^ x >>> 15, x | 1); x ^= x + Math.imul(x ^ x >>> 7, x | 61); return ((x ^ x >>> 14) >>> 0) / 4294967296; };
+  const nrm = () => Math.sqrt(-2 * Math.log(Math.max(1e-9, rnd()))) * Math.cos(2 * Math.PI * rnd());
+  const o = clamp(Math.round(p.ovr + nrm() * e * 0.7), 25, 99), pt = clamp(Math.round(p.pot + nrm() * e), 30, 99);
+  return { ovr: o, pot: Math.max(o, pt), err: e };
+}
+function hasScout(L) { return !!(L.teams[L.user] && L.teams[L.user].staff); }
+function shownPot(L, p) { return potKnown(L, p) ? p.pot : hasScout(L) ? scoutRead(L, L.user, p).pot : p.scout; }
+// his overall as you see it: your scout's read until his true rating shows
+function shownOvr(L, p, base) {
+  const b = base == null ? p.ovr : base;
+  if (potKnown(L, p) || !hasScout(L)) return b;
+  return clamp(b + scoutRead(L, L.user, p).ovr - p.ovr, 20, 99);
+}
 
 function leaders(L, key, n, year) {
   const y = year || L.year, out = [];
@@ -4896,7 +4955,7 @@ function careerLegacy(L) {
   return { score: Math.round(s), line: line && Math.round(line), pct: line ? Math.round(s / line * 100) : null, rings, jerseys, hof: p.hof || 0, verdict: C.verdict || null };
 }
 
-const API = { playerType, capPlan, minSalary, psPay, ensureAllAttrs, refreshAttrs, bodyText, careerAttrPreview, setCareerDrill, ATTR_SHORT, ATTR_KEYS, ATTR_NAME, attrs, attrOf, attrDelta, topAttr, attrSource, htText, ensureAttrs, attrFit, CAREER_STYLES, injText, injName, careerAgain, execTrade, setContract, SHAPES, contractTable, restructure, restructureInfo, june1Left, cashFor, baseFor, proLeft, careerScheme, careerStanding, careerAcceptRole, PB_SLOTS, proBowl, stadium, forecast, wxText, wxEffect, recordBook, REC_KEYS, careerSwitchOpts, careerSwitch, careerEarnings, careerCoachOpts, careerBecomeCoach, careerCoachNow, careerFrontOfficeOpts, careerToGM, NO_TEAM, CAREER_TIERS, CAREER_Q, CAREER_GRPS, CAREER_POS, CAREER_FOCUS, CAREER_PLANS, careerPreview, careerClass, startCareer, careerCreate, careerChooseReal, careerP, isCareer, careerRole, careerOffers, careerSign, careerHaggle, careerDiscount, careerRaiseInfo, careerAskRaise, careerHoldout, careerAskStart, careerRequestTrade, careerCancelTrade, careerTakeDeal, careerDeclineDeals, canTradeNow, setCareerFocus, setCareerPlan, careerGoalStatus, careerAwardRace, careerNext, careerSimYear, careerCanRetire, careerRetire, careerRanks, careerLegacy, careerTotal, hofLine, dismissAlert, STAT_NAME, COLLEGES, plog, practiceSquad, unsignedRights, psSize, psEligible, toPracticeSquad, promoteFromPS, signFromPS, signRefuserIfMoved, optionInfo, exerciseOption, declineOption, transitionTag, tagPrice, tradeablePick, rookieYears, playerFit, moraleReasons, holdoutInfo, marketFor, marketView, footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
+const API = { STAFF_ROLES, budgetInfo, staffSpend, staffSal, staffAsk, scoutErr, medMul, scoutRead, shownOvr, revealWeek, marketOf, playerType, capPlan, minSalary, psPay, ensureAllAttrs, refreshAttrs, bodyText, careerAttrPreview, setCareerDrill, ATTR_SHORT, ATTR_KEYS, ATTR_NAME, attrs, attrOf, attrDelta, topAttr, attrSource, htText, ensureAttrs, attrFit, CAREER_STYLES, injText, injName, careerAgain, execTrade, setContract, SHAPES, contractTable, restructure, restructureInfo, june1Left, cashFor, baseFor, proLeft, careerScheme, careerStanding, careerAcceptRole, PB_SLOTS, proBowl, stadium, forecast, wxText, wxEffect, recordBook, REC_KEYS, careerSwitchOpts, careerSwitch, careerEarnings, careerCoachOpts, careerBecomeCoach, careerCoachNow, careerFrontOfficeOpts, careerToGM, NO_TEAM, CAREER_TIERS, CAREER_Q, CAREER_GRPS, CAREER_POS, CAREER_FOCUS, CAREER_PLANS, careerPreview, careerClass, startCareer, careerCreate, careerChooseReal, careerP, isCareer, careerRole, careerOffers, careerSign, careerHaggle, careerDiscount, careerRaiseInfo, careerAskRaise, careerHoldout, careerAskStart, careerRequestTrade, careerCancelTrade, careerTakeDeal, careerDeclineDeals, canTradeNow, setCareerFocus, setCareerPlan, careerGoalStatus, careerAwardRace, careerNext, careerSimYear, careerCanRetire, careerRetire, careerRanks, careerLegacy, careerTotal, hofLine, dismissAlert, STAT_NAME, COLLEGES, plog, practiceSquad, unsignedRights, psSize, psEligible, toPracticeSquad, promoteFromPS, signFromPS, signRefuserIfMoved, optionInfo, exerciseOption, declineOption, transitionTag, tagPrice, tradeablePick, rookieYears, playerFit, moraleReasons, holdoutInfo, marketFor, marketView, footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
   value, release, sign, proposeTrade, tradeVerdict, teamPicks, pickById, pickLabel, projectedOverall, pickWeight, playerWeight, ensurePicks, myDraftSlots, aiTrades, acceptOffer, rejectOffer, offerValid, cutTo, ratings, teamOverall, startRegular, canStartSeason, simWeek, simPlayoffRound, roundName,
   sortTeams, divisions, pct, startDraft, onClock, makePick, aiPick, draftUntilUser, draftAll, scoutPlayer, beginDraft, SCOUT_VISITS, endDraft, startNextSeason, leaders, potKnown, shownPot, roman, addNews };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.GG = API;
@@ -4940,7 +4999,7 @@ const HELP = [
 <li><b>During the season:</b> trade before the deadline (after week 9), handle injuries, place players on injured reserve, and answer trade offers.</li>
 <li><b>Playoffs.</b> Play each round on the Office tab.</li>
 <li><b>After the season:</b> awards, the Hall of Fame and the owner's verdict on your job. Then re-sign or let go of your expiring players.</li>
-<li><b>The draft.</b> Scout prospects, then draft or let your scouts pick. AI teams may offer to trade up for your pick.</li>
+<li><b>The draft.</b> Check your director of scouting's board, then draft or let your scouts pick. AI teams may offer to trade up for your pick.</li>
 <li><b>Free agency and the offseason.</b> Sign free agents, extend your stars, make trades.</li>
 <li><b>Start the next season</b> and do it again. The league keeps changing with real history.</li>
 </ol>
@@ -4988,7 +5047,10 @@ const HELP = [
 <li><b>Offensive and defensive scheme.</b> Pick from the schemes that exist that season (see <a data-help="schemes">Era schemes</a>). Each shows how well your roster fits it.</li>
 <li><b>Aggressiveness.</b> Higher means more fourth-down tries and deep shots: bigger wins and bigger losses.</li>
 <li><b>Develop young starters.</b> Starters 26 and under who play most of the season get an extra development bump in the offseason.</li>
-<li><b>Coaching staff.</b> Head coach, offensive and defensive coordinators. Their ratings add to your team. A coordinator whose preferred style matches your scheme gives his full boost. Coaches' ratings rise after good seasons and fall after bad ones. Other teams can hire your coordinators away to be head coaches. You can fire a coach and hire from the available pool. A few years after retiring, the smartest former players (quarterbacks, centers, linebackers and safeties most often) join the pool as coordinators, and the very best as head coaches. They start as middling coaches and rise with success.</li>
+<li><b>Staff and budget.</b> Five jobs: head coach, offensive and defensive coordinators, director of scouting and head of medical staff. Each offseason the owner sets a staff budget from your market size (New York, Los Angeles, Chicago and the like get the most; Green Bay, Buffalo and other small markets the least) and how much you've won over the last two seasons. Better staff cost more, and you can't hire anyone who doesn't fit what's left. If the budget shrinks below what you already pay, you keep your staff but can't hire until you're under it.</li>
+<li><b>Coordinators and head coach.</b> Their ratings add to your team. A coordinator whose preferred style matches your scheme gives his full boost. The head coach helps on game day and with young players. Coaches' ratings rise after good seasons and fall after bad ones.</li>
+<li><b>Director of scouting.</b> He grades every draft prospect: a rating for how good he is now and one for how good he can become. A 90 scout is usually within about 2 points; a 50 scout can be off by 7 or more, and each scout has his own blind spots. Other teams draft on their own scouts' grades. Your rookies' true ratings show halfway through their first season, along with a news item saying how close your scout was.</li>
+<li><b>Medical staff.</b> A good one means fewer injuries and quicker recoveries (up to about 25% better than average); a bad one, the reverse.</li>
 <li><b>Unit ratings.</b> Your offense, defense and every position group at a glance.</li>
 </ul>` },
 
@@ -5066,9 +5128,9 @@ const HELP = [
 
 { id: 'draft', title: 'The draft and scouting', body: `
 <ul>
-<li><b>Real draft classes.</b> Every class from 1971 on is the real one, with real names, positions and colleges. Your scouts only see a <b>scout grade</b>, based on where he was really drafted and his college, so there are steals and busts.</li>
+<li><b>Real draft classes.</b> Every class from 1971 on is the real one, with real names, positions and colleges. How good each one turns out is based on his real career. Your director of scouting sees that only as well as his rating allows, so a weak scout still misses steals and busts.</li>
 <li><b>Draft class board</b> (League tab → Draft class). During the season, next year's class fills in as your scouts see more players each week, in random order. Sort it by position and grade.</li>
-<li><b>Scouting visits.</b> You get 10 visits each draft to reveal a prospect's true potential. AI teams get 5, 10 or 15 depending on difficulty.</li>
+<li><b>Your scout's grades.</b> Your director of scouting (Coach tab) grades every prospect for now (OVR) and his ceiling (POT). How close he gets depends on his rating: a top scout is usually within 2 points, a poor one can miss by 7 or more. Every team's scout has his own blind spots, so AI teams draft on different boards. The true numbers show halfway through a player's rookie season.</li>
 <li><b>Draft tracker.</b> On draft day, every pick shows up as it's made, newest first, with the round, team, college, your scouts' grade and where he really went. Filter by round or team. Past drafts (the last 15) are under League → Draft results.</li>
 <li><b>Draft day.</b> Draft when you're on the clock, sim to your next pick, let your scouts pick, or auto-draft the rest. AI teams may offer to trade up for your pick: accept or keep the pick. AI teams also trade picks with each other.</li>
 <li><b>Compensatory picks</b> (from 1994): teams that lose more good free agents than they sign get up to 4 extra picks in rounds 3–7, placed at the end of the round. They can't be traded until 2017, when the NFL started allowing it.</li>
@@ -5179,9 +5241,9 @@ const HELP = [
 
 { id: 'difficulty', title: 'Difficulty', body: `
 <ul>
-<li><b>Rookie:</b> AI teams take cheaper trades and make generous offers, scout less (5 visits), adjust their schemes less often, and your team gets a small boost.</li>
-<li><b>Pro:</b> balanced. Fair trades, 10 visits each.</li>
-<li><b>All-Pro:</b> AI teams want more in trades and offer less, scout more (15 visits), your team plays at a small disadvantage, and opposing coaches adjust their game plans to counter yours.</li>
+<li><b>Rookie:</b> AI teams take cheaper trades and make generous offers, adjust their schemes less often, and your team gets a small boost.</li>
+<li><b>Pro:</b> balanced. Fair trades.</li>
+<li><b>All-Pro:</b> AI teams want more in trades and offer less, your team plays at a small disadvantage, and opposing coaches adjust their game plans to counter yours.</li>
 <li>You can change difficulty any time on the Data tab.</li>
 </ul>` },
 
@@ -5212,7 +5274,7 @@ const HELP_FOR_TAB = { home: 'office', roster: 'roster', stats: 'stats', league:
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-20c';
+const APP_VERSION = '2026-11-21a';
 let SLOT = (() => { try { return localStorage.getItem('gg-slot') === 'career' ? 'career' : 'league'; } catch (e) { return 'league'; } })();
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
@@ -5435,7 +5497,7 @@ function playerPage(p) {
   return `<section class="card hero"><div class="eyebrow">${esc(p.pos)}${p.num ? ' · #' + p.num : ''}${p.retiredYear ? '' : ' · age ' + p.age}${p.yrs ? ' · ' + p.yrs + ' season' + (p.yrs > 1 ? 's' : '') : ''}</div><h2>${esc(p.name)}</h2>
     <p class="small">${status}${p.college ? ' · ' + esc(p.college) : ''}${dr ? ' · ' + dr : ''}${real ? ' · <i>' + real + '</i>' : ''}${coach ? '<br>' + coach : ''}</p>
     ${p.retiredYear ? `<div class="row"><div class="pl-r"><span class="lbl">PEAK</span>${rating(p.peak || p.ovr)}</div></div>` : `<div class="row">
-      <div class="pl-r"><span class="lbl">OVR</span>${rating(G.eff(p))}</div><div class="pl-r"><span class="lbl">${known ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div><div class="pl-r"><span class="lbl">PEAK</span>${rating(Math.max(p.peak || 0, p.ovr))}</div>
+      <div class="pl-r"><span class="lbl">OVR</span>${rating(G.shownOvr(L, p, G.eff(p)))}</div><div class="pl-r"><span class="lbl">${known ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div><div class="pl-r"><span class="lbl">PEAK</span>${rating(Math.max(p.peak || 0, p.ovr))}</div>
       ${fit ? `<div class="pl-r"><span class="lbl">FIT</span><span class="fitg">${fit.grade}</span></div>` : ''}</div>`}
     ${!p.retiredYear && p.team >= 0 ? `<p class="small">${p.con ? 'Contract: ' + conText(p) : 'No contract'} · Morale ${G.moraleWord(p)}${p.inj ? ` · <b class="bad">${esc(G.injText(p))}</b>` : ''}${p.holdout ? ' · <b class="bad">Holding out</b>' : ''}</p>` : ''}
     ${fit && !p.retiredYear ? `<p class="small"><b>Fit with your ${mine ? 'team' : 'team if you got him'}:</b>${reasonsText(fit.why)}</p>` : ''}
@@ -5510,7 +5572,7 @@ function teamPage(t) {
     ${sbw.length ? `<div class="awards">${sbw.map(c => `<span class="award">Super Bowl ${G.roman(c.sb)} champions (${c.y}, ${c.score})</span>`).join('')}</div>` : ''}
     ${tid !== L.user && !isC() ? `<div class="row"><button class="btn sm" data-act="tradeWith" data-id="${tid}">Trade with them</button></div>` : ''}</section>
     <section class="card"><h3>Now</h3><p class="small">Home: ${(() => { const S = G.stadium(L, tid); return `${esc(S.name)} (${S.roof === 'dome' ? 'dome' : S.roof === 'retr' ? 'retractable roof' : 'open air'})`; })()} · Head coach ${st.hc ? esc(st.hc.name) : 'vacant'} · OC ${st.oc ? esc(st.oc.name) : 'vacant'} · DC ${st.dc ? esc(st.dc.name) : 'vacant'}${c.os && G.SCHEME[c.os] ? ` · ${esc(G.SCHEME[c.os].name)} offense, ${esc(G.SCHEME[c.ds].name)} defense` : ''} · payroll ${G.money(G.payroll(L, tid))}</p>
-      <div class="list">${ros.map(p => `<div class="pl"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${pLink(p)}<div class="pl-sub">Age ${p.age}${p.num ? ' · #' + p.num : ''}</div></div><div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div></div></div>`).join('')}</div></section>
+      <div class="list">${ros.map(p => `<div class="pl"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${pLink(p)}<div class="pl-sub">Age ${p.age}${p.num ? ' · #' + p.num : ''}</div></div><div class="pl-r"><span class="lbl">OVR</span>${rating(G.shownOvr(L, p))}</div></div></div>`).join('')}</div></section>
     <section class="card"><h3>Season by season</h3>${H.length ? `<div class="tscroll"><table class="tbl stat"><thead><tr><th class="l">Year</th><th>Record</th><th>PF</th><th>PA</th><th class="l">Result</th><th class="l">Head coach</th></tr></thead><tbody>${H.slice().reverse().map(h => `<tr class="${h.gm ? 'me' : ''}"><td class="l">${h.y}</td><td>${h.w}-${h.l}${h.t ? '-' + h.t : ''}</td><td>${h.pf}</td><td>${h.pa}</td><td class="l">${res(h)}</td><td class="l small">${esc(h.hc || '–')}${h.gm ? ' · you were GM' : ''}</td></tr>`).join('')}</tbody></table></div>` : '<p class="small">No completed seasons yet.</p>'}</section>
     ${teamDepthCard(tid)}
     ${recordBookCard(tid)}
@@ -5562,7 +5624,7 @@ function holdoutCard() {
   const hs = G.roster(L, L.user).filter(p => p.holdout);
   if (!hs.length) return '';
   return `<section class="card offers"><h3>Holdouts (${hs.length})</h3><p class="small">These players won't play until they get a new deal. A player holds out when he's rated 72 or better, paid under 65% of his market value, and his morale has dropped below 40. Each week there's a small chance one reports anyway, angrier than before. You can also trade them.</p>
-    <div class="list">${hs.map(p => `<div class="pl wide"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">${(() => { const h = G.holdoutInfo(L, p); return `<b>Why he's holding out:</b> he's rated ${p.ovr} but paid ${G.money(h.sal)}, ${h.pct}% of his ${G.money(h.mv)} market value, and his morale is ${h.word} (${h.mor}).${reasonsText(h.why.filter(r => !/^Underpaid/.test(r[1])))}<br>A new deal at ${G.money(h.price)} ends it today.`; })()}</div></div><div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div></div>
+    <div class="list">${hs.map(p => `<div class="pl wide"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">${(() => { const h = G.holdoutInfo(L, p); return `<b>Why he's holding out:</b> he's rated ${p.ovr} but paid ${G.money(h.sal)}, ${h.pct}% of his ${G.money(h.mv)} market value, and his morale is ${h.word} (${h.mor}).${reasonsText(h.why.filter(r => !/^Underpaid/.test(r[1])))}<br>A new deal at ${G.money(h.price)} ends it today.`; })()}</div></div><div class="pl-r"><span class="lbl">OVR</span>${rating(G.shownOvr(L, p))}</div></div>
       <div class="pl-btns"><button class="btn sm primary" data-act="reneg" data-id="${p.id}">New deal at ${G.money(G.renegotiatePrice(L, p))}</button><button class="btn sm" data-act="shop" data-id="${p.id}">Shop him</button></div></div>`).join('')}</div></section>`;
 }
 function lastGameCard() {
@@ -5732,7 +5794,7 @@ function planCard() {
 function offersCard() {
   const list = (L.offers || []).filter(o => G.offerValid(L, o));
   if (!list.length) return '';
-  const items = pkg => (pkg.players || []).map(id => { const p = L.players[id]; return `<li><span class="pos">${esc(p.pos)}</span> ${esc(p.name)} <span class="small">age ${p.age}</span> ${rating(p.ovr)} ${rating(G.shownPot(L, p))}</li>`; })
+  const items = pkg => (pkg.players || []).map(id => { const p = L.players[id]; return `<li><span class="pos">${esc(p.pos)}</span> ${esc(p.name)} <span class="small">age ${p.age}</span> ${rating(G.shownOvr(L, p))} ${rating(G.shownPot(L, p))}</li>`; })
     .concat((pkg.picks || []).map(id => { const k = G.pickById(L, id); return `<li><span class="pos pk">PICK</span> ${esc(G.pickLabel(L, k))} <span class="small">≈#${G.projectedOverall(L, k)}</span></li>`; })).join('');
   return `<section class="card offers"><h3>Trade offers (${list.length})</h3>${list.map(o => `
     <div class="offer"><div class="split"><b>${esc(tname(L.teams[o.from]))}</b><span class="small">${o.exp >= 0 ? `Expires when you play week ${o.exp + 1}` : 'Expires at kickoff'}</span></div>
@@ -5747,12 +5809,13 @@ function vDraft() {
   if (c === null) return `<section class="card hero"><div class="eyebrow">${D.year} draft</div><h2>All ${D.rounds} rounds are complete</h2><div class="row"><button class="btn primary" data-act="endDraft">Finish the draft</button></div></section>` + myPicks() + draftTracker(D.log, D.year, D.rounds, n, false);
   const rnd = Math.floor(D.pick / n) + 1, pk = D.pick % n + 1, mine = started && c === L.user;
   const slots = G.myDraftSlots(L), ord = slots.length ? 'at #' + slots.slice(0, 8).join(', #') + (slots.length > 8 ? ` and ${slots.length - 8} more` : '') : 'nowhere (you traded all your picks)';
-  const visitTxt = `<b>${visits}</b> of ${G.SCOUT_VISITS} scouting visits left`;
+  const sc = me().staff && me().staff.sc, err = G.scoutErr(sc);
+  const visitTxt = sc ? `Grades from your director of scouting, <b>${esc(sc.name)}</b> (rating ${sc.r}): usually within <b>±${Math.round(err)}</b> points` : 'No director of scouting: your grades are rough guesses (±10 points)';
   let h;
   if (!started) {
-    h = `<section class="card hero"><div class="eyebrow">${D.year} draft · Scouting week</div><h2>Send your scouts out</h2>
-      <p>${visitTxt}. A visit reveals a prospect's true potential. Every other team gets ${G.SCOUT_VISITS} visits too, and they use what they learn.</p>
-      <p class="small">Your picks: ${ord}. Scout grades come from projected draft slot and college, not from how careers turned out. Unused visits carry into the draft but not into next year.</p>
+    h = `<section class="card hero"><div class="eyebrow">${D.year} draft · Draft board</div><h2>Your scouts' board is ready</h2>
+      <p>${visitTxt}. Every prospect has a grade for how good he is now (OVR) and how good he can become (POT). A better scout misses by less, and every scout has his own blind spots.</p>
+      <p class="small">Your picks: ${ord}. Other teams draft on their own scouts' grades. Your rookies' true ratings show halfway through their first season.</p>
       <div class="row"><button class="btn primary" data-act="beginDraft">Begin the draft</button></div></section>`;
   } else {
     h = `<section class="card hero"><div class="eyebrow">${D.year} draft · Round ${rnd} of ${D.rounds} · Pick ${pk} (#${D.pick + 1} overall)</div>
@@ -5762,14 +5825,14 @@ function vDraft() {
       <div class="row">${mine ? '<button class="btn" data-act="autoPick">Let scouts pick</button>' : '<button class="btn primary" data-act="toMyPick">Sim to my pick</button>'}<button class="btn" data-act="draftRest">Auto-draft the rest</button></div></section>`;
   }
   const show = ui.draftShow || 60;
-  const all = D.pool.map(i => L.players[i]).filter(p => ui.draftGrp === 'ALL' || (ui.draftGrp === 'SEEN' ? p.seen : p.grp === ui.draftGrp)).sort((a, b) => b.scout - a.scout);
+  const all = D.pool.map(i => L.players[i]).filter(p => !ui.draftGrp || ui.draftGrp === 'ALL' || ui.draftGrp === 'SEEN' || p.grp === ui.draftGrp).sort((a, b) => G.shownPot(L, b) - G.shownPot(L, a) || G.shownOvr(L, b) - G.shownOvr(L, a));
   const pool = all.slice(0, show);
-  const chipRow = `<div class="chips">${['ALL', 'SEEN'].concat(G.GRPS).map(g => `<button class="chip ${ui.draftGrp === g ? 'on' : ''}" data-act="chip" data-key="draftGrp" data-id="${g}">${g === 'ALL' ? 'All' : g === 'SEEN' ? 'Scouted' : g}</button>`).join('')}</div>`;
+  const chipRow = `<div class="chips">${['ALL'].concat(G.GRPS).map(g => `<button class="chip ${(ui.draftGrp || 'ALL') === g || (g === 'ALL' && ui.draftGrp === 'SEEN') ? 'on' : ''}" data-act="chip" data-key="draftGrp" data-id="${g}">${g === 'ALL' ? 'All' : g}</button>`).join('')}</div>`;
   h += draftTracker(D.log, D.year, D.rounds, n, true);
   h += `<section class="card"><div class="split"><h3>Draft board</h3><span class="small">${all.length} prospects</span></div>${chipRow}<div class="list">${pool.length ? pool.map(p => `
     <div class="pl"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">${esc(p.college || '')} · age ${p.age}${G.bodyText(p) ? ' · ' + G.bodyText(p) : ''}${p.realPick && p.realPick.rnd ? ` · real: R${p.realPick.rnd} #${p.realPick.pick} ${esc(p.realPick.tm)}` : ''}${strengthText(p) ? `<br>${strengthText(p)}` : ''}</div></div>
-    <div class="pl-r"><span class="lbl">SCOUT</span>${rating(p.scout)}</div>${p.seen ? `<div class="pl-r"><span class="lbl">TRUE</span>${rating(p.pot)}</div>` : ''}</div>
-    <div class="pl-btns">${!p.seen && visits > 0 ? `<button class="btn sm" data-act="scout" data-id="${p.id}">Scout</button>` : ''}${mine ? `<button class="btn sm primary" data-act="draftPick" data-id="${p.id}">Draft</button>` : ''}</div></div>`).join('') : `<p>${ui.draftGrp === 'SEEN' ? 'You have not scouted anyone still on the board.' : 'No prospects at this position.'}</p>`}</div>
+    <div class="pl-r"><span class="lbl">OVR</span>${rating(G.shownOvr(L, p))}</div><div class="pl-r"><span class="lbl">POT</span>${rating(G.shownPot(L, p))}</div></div>
+    <div class="pl-btns">${mine ? `<button class="btn sm primary" data-act="draftPick" data-id="${p.id}">Draft</button>` : ''}</div></div>`).join('') : '<p>No prospects at this position.</p>'}</div>
     ${all.length > show ? `<div class="row"><button class="btn" data-act="draftMore">Show ${Math.min(60, all.length - show)} more</button></div>` : ''}</section>`;
   return h + myPicks();
 }
@@ -5785,18 +5848,18 @@ function draftTracker(log, year, rounds, n, live) {
   const rnds = []; for (let r = 1; r <= rounds; r++) rnds.push(r);
   const line = x => { const p = L.players[x.pid] || G.getP(L, x.pid); if (!p) return ''; const t = L.teams[x.tid], rnd = rndOf(x), rp = p.realPick;
     return `<div class="pl wide${x.tid === L.user ? ' mine' : ''}"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${pLink(p)}<div class="pl-sub"><b>#${x.n}</b> · round ${rnd} · ${esc(t ? t.abbr : '?')}${x.tid === L.user ? ' <span class="good">· your pick</span>' : ''}${p.college ? ' · ' + esc(p.college) : ''}${rp && rp.pick ? ` · really went #${rp.pick}${rp.tm ? ' to ' + esc(rp.tm) : ''}` : ''}</div></div>
-      <div class="pl-r"><span class="lbl">${p.seen ? 'TRUE' : 'SCOUT'}</span>${rating(p.seen ? p.pot : p.scout)}</div></div></div>`; };
+      <div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SC POT'}</span>${rating(G.shownPot(L, p))}</div></div></div>`; };
   return `<section class="card"><div class="split"><h3>${live ? 'Draft tracker' : year + ' draft results'}</h3><span class="small">${log.length} pick${log.length === 1 ? '' : 's'}${live ? ', newest first' : ''}</span></div>
     <div class="row trk"><label class="fld">Round<select id="trkRnd"><option value="0">All rounds</option>${rnds.map(r => `<option value="${r}"${rf === r ? ' selected' : ''}>Round ${r}</option>`).join('')}</select></label>
     <label class="fld">Team<select id="trkTeam"><option value="-1">All teams</option>${L.teams.slice().sort((a, b) => tname(a).localeCompare(tname(b))).map(t => `<option value="${t.id}"${tf === t.id ? ' selected' : ''}>${esc(tname(t))}</option>`).join('')}</select></label></div>
     <div class="list">${show.map(line).join('') || '<p class="small">No picks match.</p>'}</div>
     ${!all ? `<div class="row"><button class="btn sm" data-act="trkAll">Show all ${rows.length}</button></div>` : ''}
-    <p class="small">Ratings are your scouts' grade unless you scouted him (TRUE potential).</p></section>`;
+    <p class="small">Potential is your scouts' grade (SC POT) until a player's true ratings show, halfway through his rookie season.</p></section>`;
 }
 function myPicks() {
   const mine = L.draft.log.filter(x => x.tid === L.user);
   if (!mine.length) return '';
-  return `<section class="card"><h3>Your class</h3><div class="list">${mine.map(x => { const p = L.players[x.pid]; return `<div class="pl"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">Round ${p.draft.rnd}, #${x.n} overall</div></div><div class="pl-r"><span class="lbl">${p.seen ? 'TRUE' : 'SCOUT'}</span>${rating(p.seen ? p.pot : p.scout)}</div></div></div>`; }).join('')}</div></section>`;
+  return `<section class="card"><h3>Your class</h3><div class="list">${mine.map(x => { const p = L.players[x.pid]; return `<div class="pl"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">Round ${p.draft.rnd}, #${x.n} overall</div></div><div class="pl-r"><span class="lbl">OVR</span>${rating(G.shownOvr(L, p))}</div><div class="pl-r"><span class="lbl">POT</span>${rating(G.shownPot(L, p))}</div></div></div>`; }).join('')}</div><p class="small">These are your scouts' grades. The true numbers show halfway through their rookie season.</p></section>`;
 }
 
 /* ---------- Contracts ---------- */
@@ -5823,7 +5886,7 @@ function faCard() {
   G.ensureFA(L);
   const F = L.fa, y = F.y, info = G.ERA_INFO[F.era];
   const prow = (p, extra, btns) => `<div class="pl wide"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">Age ${p.age + 1} in ${y} · ${(p.yrs || 0) + 1} yrs exp${extra ? ' · ' + extra : ''}</div></div>
-    <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></div><div class="pl-btns">${btns}</div></div>`;
+    <div class="pl-r"><span class="lbl">OVR</span>${rating(G.shownOvr(L, p))}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></div><div class="pl-btns">${btns}</div></div>`;
   let h = `<section class="card offers"><div class="eyebrow">${y} offseason · ${esc(info.name)}</div><h3>Contracts &amp; free agency</h3><p class="small">${esc(info.text)}</p>
     <div class="ctbar"><span class="lbl">POSITION</span>${chips('ctGrp', ui.ctGrp || 'ALL')}${sortSeg('ctSort', true, 'pos', true)}</div>`;
   // offer sheets on your players
@@ -5846,7 +5909,7 @@ function faCard() {
   if (ufa) h += marketList(F);
   if (F.era === 'planb') {
     const pr = F.protect, mine = ctFilter(G.roster(L, L.user).slice());
-    h += `<h3 class="sub">Plan B protection (${pr.length} / 37)</h3><p class="small">Unprotected players worth keeping may sign elsewhere when the season starts.</p><div class="tlist protect">${mine.map(p => `<button class="tp ${pr.includes(p.id) ? 'on' : ''}" data-act="protect" data-id="${p.id}"><span class="pos">${esc(p.pos)}</span><span class="tp-n">${esc(p.name)}</span><span class="tp-a">${p.age}</span>${rating(p.ovr)}</button>`).join('')}</div>`;
+    h += `<h3 class="sub">Plan B protection (${pr.length} / 37)</h3><p class="small">Unprotected players worth keeping may sign elsewhere when the season starts.</p><div class="tlist protect">${mine.map(p => `<button class="tp ${pr.includes(p.id) ? 'on' : ''}" data-act="protect" data-id="${p.id}"><span class="pos">${esc(p.pos)}</span><span class="tp-n">${esc(p.name)}</span><span class="tp-a">${p.age}</span>${rating(G.shownOvr(L, p))}</button>`).join('')}</div>`;
     const pool = ctFilter(G.planBPool(L)).slice(0, 40);
     h += `<h3 class="sub">Plan B market</h3><p class="small">Other teams' unprotected players. Sign them with no compensation.</p><div class="list">${pool.map(p => prow(p, esc(L.teams[p.team].abbr), `<button class="btn sm" data-act="sign" data-id="${p.id}">Sign ${G.money(G.askPrice(L, p))}</button>`)).join('')}</div>`;
   }
@@ -5897,7 +5960,7 @@ function marketList(F) {
         <span class="small ${o && (o.label.startsWith('Below') || o.label.startsWith('Ranked')) ? 'bad' : 'good'}">${o ? esc(o.label) : ''}</span>${marketLine(p, b)}</div>`
       : `<div class="bid"><button class="btn sm primary" data-act="bid" data-id="${p.id}" data-key="new">Bid ${G.money(ask)}</button>${marketLine(p, null)}</div>`;
     return `<div class="pl wide"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${pLink(p)}<div class="pl-sub">Age ${p.age + 1} · ${p.prevTeam != null && L.teams[p.prevTeam] ? 'was ' + esc(L.teams[p.prevTeam].abbr) + ' · ' : ''}asking ${G.money(ask)} · scheme fit <b>${G.playerFit(L, p, L.user).grade}</b>${reasonsText(fit.reasons)}</div></div>
-      <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></div><div class="pl-btns">${bidUI}</div></div>`;
+      <div class="pl-r"><span class="lbl">OVR</span>${rating(G.shownOvr(L, p))}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></div><div class="pl-btns">${bidUI}</div></div>`;
   }).join('');
   const grpName = { QB: 'Quarterbacks', RB: 'Running backs', WR: 'Wide receivers', TE: 'Tight ends', OL: 'Offensive line', DL: 'Defensive line', LB: 'Linebackers', DB: 'Defensive backs', K: 'Kickers', P: 'Punters' };
   return `<h3 class="sub" id="mkt">Free agent market</h3>
@@ -5913,7 +5976,7 @@ function extCard() {
   if (!el.length) return '';
   return `<section class="card"><h3>Extensions</h3><p class="small">These players are in the last year of their deals. Extend them now, or they reach free agency after the season. Their price depends on how they feel about your team.</p>
     <div class="list">${el.map(([p, x]) => `<div class="pl wide"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">Age ${p.age} · now ${G.money(p.con.sal)} · market ${G.money(G.marketValue(L, p, x.from))}${reasonsText(x.fit.reasons)}</div></div>
-      <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></div>
+      <div class="pl-r"><span class="lbl">OVR</span>${rating(G.shownOvr(L, p))}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></div>
       <div class="pl-btns"><button class="btn sm primary" data-act="extend" data-id="${p.id}">Extend ${x.yrs} yr${x.yrs > 1 ? 's' : ''} at ${G.money(x.sal)}</button></div></div>`).join('')}</div></section>`;
 }
 
@@ -5924,7 +5987,7 @@ function searchResults() {
   for (const id in L.players) { const p = L.players[id]; if (p.team >= 0 && p.team !== L.user && p.name.toLowerCase().includes(q)) hits.push(p); }
   hits.sort((a, b) => b.ovr - a.ovr);
   if (!hits.length) return '<p class="small">No players found.</p>';
-  return `<div class="tlist search">${hits.slice(0, 12).map(p => `<button class="tp" data-act="pickFound" data-id="${p.id}"><span class="pos">${esc(p.pos)}</span><span class="tp-n">${esc(p.name)}</span><span class="tp-a">${esc(L.teams[p.team].abbr)} · ${p.age}</span>${rating(p.ovr)}</button>`).join('')}</div><p class="small">Tap a player to add him to the deal with his team.</p>`;
+  return `<div class="tlist search">${hits.slice(0, 12).map(p => `<button class="tp" data-act="pickFound" data-id="${p.id}"><span class="pos">${esc(p.pos)}</span><span class="tp-n">${esc(p.name)}</span><span class="tp-a">${esc(L.teams[p.team].abbr)} · ${p.age}</span>${rating(G.shownOvr(L, p))}</button>`).join('')}</div><p class="small">Tap a player to add him to the deal with his team.</p>`;
 }
 function leaguePSCard() {
   if (!G.psSize(L.year) || !(L.phase === 'regular' || L.phase === 'preseason')) return '';
@@ -5932,7 +5995,7 @@ function leaguePSCard() {
   if (!all.length) return '';
   return `<section class="card"><h3>Other teams' practice squads</h3><p class="small">You can sign any of them straight to your roster (a two-year minimum deal). The best prospects first.</p>
     <div class="list">${all.map(p => `<div class="pl"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">${esc(L.teams[p.team].abbr)} · age ${p.age}</div></div>
-      <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></div>
+      <div class="pl-r"><span class="lbl">OVR</span>${rating(G.shownOvr(L, p))}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></div>
       <button class="btn sm" data-act="psPoach" data-id="${p.id}">Sign</button></div>`).join('')}</div></section>`;
 }
 function blockCard() {
@@ -5949,7 +6012,7 @@ function foundCard() {
   const F = ui.found; if (!F) return '';
   if (F.err) return `<div class="found"><p class="small bad">${esc(F.err)}</p></div>`;
   if (!F.offers.length) return '<div class="found"><p class="small">No team wants that package right now. Try adding more, or different players or picks.</p></div>';
-  const txt = pkg => (pkg.players || []).map(id => { const p = L.players[id]; return p ? `${esc(p.pos)} ${esc(p.name)} ${rating(p.ovr)}` : ''; })
+  const txt = pkg => (pkg.players || []).map(id => { const p = L.players[id]; return p ? `${esc(p.pos)} ${esc(p.name)} ${rating(G.shownOvr(L, p))}` : ''; })
     .concat((pkg.picks || []).map(id => { const k = G.pickById(L, id); return k ? `${esc(G.pickLabel(L, k))} pick <span class="small">≈#${G.projectedOverall(L, k)}</span>` : ''; })).filter(Boolean).join('<br>');
   return `<div class="found"><div class="eyebrow">Offers for your package</div>${F.offers.map((o, i) => `<div class="offer"><div class="split"><b>${esc(tname(L.teams[o.from]))}</b><button class="btn sm primary" data-act="takeFound" data-id="${i}">Accept</button></div><div class="small">They send:</div><div>${txt(o.get)}</div></div>`).join('')}</div>`;
 }
@@ -5993,7 +6056,7 @@ function expansionCard() {
   return `<section class="card offers"><div class="eyebrow">${X.y} expansion draft</div><h3>${esc(names)} join the league</h3>
     <p class="small">${protect ? `Every team protects ${lim} players. The new teams pick from everyone else, and no team loses more than ${X.rules.perTeam}.` : `Every team leaves ${lim} players unprotected for the new teams to choose from. No team loses more than ${X.rules.perTeam}.`} This year's draft picks are exempt. The draft happens when you start the ${X.y} season.</p>
     <p><b>${protect ? 'Protected' : 'Left unprotected'}: ${E.ids.length} / ${lim}</b></p>
-    <div class="tlist protect">${mine.filter(p => !rookies.has(p.id)).map(p => { const on = E.ids.includes(p.id); return `<button class="tp ${on ? 'on' : ''}" data-act="expT" data-id="${p.id}"><span class="pos">${esc(p.pos)}</span><span class="tp-n">${esc(p.name)}</span><span class="tp-a">${p.age}</span>${rating(p.ovr)}</button>`; }).join('')}</div>
+    <div class="tlist protect">${mine.filter(p => !rookies.has(p.id)).map(p => { const on = E.ids.includes(p.id); return `<button class="tp ${on ? 'on' : ''}" data-act="expT" data-id="${p.id}"><span class="pos">${esc(p.pos)}</span><span class="tp-n">${esc(p.name)}</span><span class="tp-a">${p.age}</span>${rating(G.shownOvr(L, p))}</button>`; }).join('')}</div>
     <p class="small">${protect ? 'Highlighted players are protected.' : 'Highlighted players are exposed and can be taken.'}</p></section>`;
 }
 function ringView() {
@@ -6017,7 +6080,7 @@ function cmp(key) {
   if (key === 'pos') return (a, b) => G.GRPS.indexOf(a.grp) - G.GRPS.indexOf(b.grp) || b.ovr - a.ovr;
   return key === 'pot'
     ? (a, b) => G.shownPot(L, b) - G.shownPot(L, a) || b.ovr - a.ovr
-    : (a, b) => b.ovr - a.ovr || G.shownPot(L, b) - G.shownPot(L, a);
+    : (a, b) => G.shownOvr(L, b) - G.shownOvr(L, a) || G.shownPot(L, b) - G.shownPot(L, a);
 }
 function sortSeg(stateKey, withPos, def, withSal) {
   const cur = ui[stateKey] || def || 'ovr';
@@ -6035,7 +6098,7 @@ function psCard() {
   return `<section class="card"><div class="split"><h3>Practice squad</h3><span class="count">${ps.length} / ${n}</span></div>
     <p class="small">Players here practice and develop but don't count on your roster or play.${G.psPay(L.year) ? ` Each one's pay (${G.money(G.psPay(L.year))} a season) counts against your cap during the season, so promoting one adds only the difference up to the ${G.money(G.minSalary(L.year))} minimum.` : ''} ${L.year >= 2020 ? 'Players with up to two seasons qualify, plus up to six veterans.' : 'Players with up to two seasons qualify.'} Other teams can sign them away during the season. Add players from the roster (tap a player) or from free agents.</p>
     <div class="list">${ps.length ? ps.map(p => `<div class="pl wide"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">Age ${p.age} · ${p.yrs ? p.yrs + ' yr' + (p.yrs > 1 ? 's' : '') : 'Rookie'}</div></div>
-      <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></div>
+      <div class="pl-r"><span class="lbl">OVR</span>${rating(G.shownOvr(L, p))}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></div>
       <div class="pl-btns"><button class="btn sm primary" data-act="psUp" data-id="${p.id}"${inS && G.roster(L, L.user).length >= G.rules(L.year).rosterMax ? ' disabled' : ''}>Promote to roster</button><button class="btn sm" data-act="psCut" data-id="${p.id}">Release</button></div></div>`).join('') : '<p class="small">Empty.</p>'}</div></section>`;
 }
 function rightsCard() {
@@ -6062,7 +6125,7 @@ function vRoster() {
     <div class="list">${list.map((p, i) => `<div class="pl ${ui.open === p.id ? 'open' : ''}">${chart && i < chart.length ? `<span class="dc-n">${i + 1}</span>` : ''}
       <button class="pl-main" data-act="open" data-id="${p.id}"><span class="pos ${starterIds.has(p.id) ? 'st' : ''}">${esc(p.pos)}</span>
       <div class="pl-name">${esc(p.name)}${p.inj ? `<span class="inj">${p.injT ? esc(p.injT) + ' · ' : 'INJ '}${p.inj >= 20 ? 'season' : p.inj + 'w'}</span>` : ''}<div class="pl-sub">${p.num ? '#' + p.num + ' · ' : ''}${(() => { const C = L.camp; if (!C || C.year !== L.year || (L.phase !== 'preseason' && L.phase !== 'regular')) return ''; const r = C.mine.find(x => x.id === p.id); if (!r || r.a === r.b) return ''; const d = r.a - r.b; return `<span class="${d > 0 ? 'good' : 'bad'}">${d > 0 ? '▲' + d : '▼' + (-d)} camp</span> · `; })()}${p.ir ? '<b class="bad">INJURED RESERVE</b> · ' : ''}${p.holdout ? '<b class="bad">HOLDOUT</b> · ' : ''}${p.striking ? '<b class="bad">ON STRIKE</b> · ' : ''}${p.repl ? '<b class="warn">Replacement player</b> · ' : ''}${(() => { const rt = G.roleTag(L, p), f = G.playerFit(L, p, L.user); return rt ? `<span class="${rt.c}">${rt.t}</span>, fit <b>${f.grade}</b> · ` : ''; })()}Age <b>${p.age}</b> · ${p.yrs ? p.yrs + ' yr' + (p.yrs > 1 ? 's' : '') + ' pro' : 'Rookie'}${(() => { const ty = G.playerType(p); return ty ? ` · <b>${esc(ty.name)}</b>` : ''; })()}<br>Mood: <b class="${G.mor(p) < 50 ? 'bad' : (G.mor(p) >= 75 ? 'good' : '')}">${G.moraleWord(p)}</b> · ${conText(p)}${statLine(p) ? ' · ' + statLine(p) : ''}</div></div>
-      <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></button>${ord(p, i)}
+      <div class="pl-r"><span class="lbl">OVR</span>${rating(G.shownOvr(L, p))}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></button>${ord(p, i)}
       ${ui.open === p.id ? `<div class="pl-act"><button class="btn sm" data-act="pl" data-id="${p.id}">Player page</button>${(() => { const ty = G.playerType(p), A = G.attrs(p); return A.length ? `<div class="small whybox"><b>${ty ? esc(ty.name) : 'Ratings'}${ty && ty.blurb ? ':</b> ' + esc(ty.blurb) + '<br>' : '</b><br>'}${A.map(a => `${esc(a.name)} <b>${a.v}</b>`).join(' · ')}</div>` : ''; })()}<div class="small whybox"><b>Scheme fit ${G.playerFit(L, p, L.user).grade}:</b> ${reasonsText(G.playerFit(L, p, L.user).why)}<br><b>Morale ${G.moraleWord(p)} (${G.mor(p)}):</b> ${reasonsText(G.moraleReasons(L, p)) || 'nothing notable'}${p.holdout ? `<br><b class="bad">Holding out</b> until he gets a new deal (${G.money(G.renegotiatePrice(L, p))}).` : ''}</div>${p.college ? `<span class="small">${esc(p.college)}${p.draft ? ` · drafted ${p.draft.year} R${p.draft.rnd}` : ''}</span>` : ''}${G.canIR(L, p) ? `<button class="btn sm" data-act="ir" data-id="${p.id}">Place on injured reserve</button>` : ''}${p.ir ? (() => { const i = G.irReturnInfo(L, p); return i.ok ? `<button class="btn sm primary" data-act="irOff" data-id="${p.id}">Activate from IR</button>` : `<span class="small">${esc(i.why)}</span>`; })() : ''}${(p.holdout || (G.mor(p) < 50 && G.underpaid(L, p))) && p.con ? `<button class="btn sm primary" data-act="reneg" data-id="${p.id}">New deal ${G.money(G.renegotiatePrice(L, p))}</button>` : ''}${G.extInfo(L, p) ? `<button class="btn sm primary" data-act="extend" data-id="${p.id}">Extend ${G.money(G.extInfo(L, p).sal)}</button>` : ''}${G.canPlayHurt(p) ? `<button class="btn sm" data-act="hurt" data-id="${p.id}">${p.playHurt ? 'Rest him' : 'Play through injury'}</button>` : ''}${G.psSize(L.year) && G.psEligible(L, p) && L.phase !== 'playoffs' ? `<button class="btn sm" data-act="psDown" data-id="${p.id}">Move to practice squad</button>` : ''}${G.optionInfo(L, p) ? `<button class="btn sm primary" data-act="opt5" data-id="${p.id}">Pick up 5th-year option ${G.money(G.optionInfo(L, p).sal)}</button><button class="btn sm" data-act="opt5no" data-id="${p.id}">Decline option</button>` : ''}${G.restructureInfo(L, p) ? confirmBtn('rst' + p.id, `Restructure (saves ${G.money(G.restructureInfo(L, p).saves)} now)`) : ''}${confirmBtn('rel' + p.id, G.deadCharge(L, p) ? `Release (${G.money(G.deadCharge(L, p))} dead money)` : 'Release')}${G.june1Left(L) > 0 && p.con && p.con.base && G.deadCharge(L, p) ? confirmBtn('rlj' + p.id, `June 1 cut (${G.money(G.deadCharge(L, p, true).now)} now, ${G.money(G.deadCharge(L, p, true).later)} next year)`) : ''}<button class="btn sm" data-act="shop" data-id="${p.id}">Offer in trade</button></div>` : ''}
     </div>`).join('')}</div></section>` + psCard();
 }
@@ -6231,17 +6294,17 @@ function draftClassView() {
   const all = C.pool.map(id => L.players[id]).filter(p => p && p.team === -3);
   const seen = all.filter(p => G.scoutedYet(L, p));
   const g = ui.prGrp || 'ALL';
-  const list = seen.filter(p => g === 'ALL' || p.grp === g).sort((a, b) => b.scout - a.scout);
+  const list = seen.filter(p => g === 'ALL' || p.grp === g).sort((a, b) => G.shownPot(L, b) - G.shownPot(L, a));
   const show = list.slice(0, ui.prShow || 50);
   const games = G.rules(L.year).games;
   const stage = L.phase === 'preseason' ? 'Training camp: scouts have graded a random handful of prospects so far.'
     : L.phase === 'regular' ? `Week ${L.week} of ${games}: scouts grade a random batch of prospects every week, not best-first, so a top player can turn up late.` : 'Every prospect has been graded.';
-  const rankOf = new Map(seen.slice().sort((a, b) => b.scout - a.scout).map((p, i) => [p.id, i + 1]));
+  const rankOf = new Map(seen.slice().sort((a, b) => G.shownPot(L, b) - G.shownPot(L, a)).map((p, i) => [p.id, i + 1]));
   return `<section class="card"><div class="split"><h3>${C.year} draft class</h3><span class="count">${seen.length} / ${all.length}</span></div>
-    <p class="small">${stage} ${C.real ? 'This is the real class you imported.' : `No ${C.year} class has been imported, so these prospects are generated.`} Scout grades are estimates. True potential stays hidden until you use a scouting visit at the draft or a player finishes his rookie season.</p>
+    <p class="small">${stage} ${C.real ? 'This is the real class you imported.' : `No ${C.year} class has been imported, so these prospects are generated.`} These are your director of scouting's grades${me().staff && me().staff.sc ? ` (${esc(me().staff.sc.name)}, usually within ±${Math.round(G.scoutErr(me().staff.sc))})` : ' (no scout: ±10)'}. True ratings show halfway through a player's rookie season.</p>
     ${chips('prGrp', g)}
     <div class="list">${show.map(p => `<div class="pl"><div class="pl-main"><span class="dc-n">${rankOf.get(p.id)}</span><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">${esc(p.college || '')} · age ${p.age}${p.realPick && p.realPick.rnd ? ` · real: R${p.realPick.rnd} #${p.realPick.pick}` : ''}</div></div>
-      <div class="pl-r"><span class="lbl">SCOUT</span>${rating(p.scout)}</div></div></div>`).join('') || '<p class="small">No graded prospects at this position yet.</p>'}</div>
+      <div class="pl-r"><span class="lbl">OVR</span>${rating(G.shownOvr(L, p))}</div><div class="pl-r"><span class="lbl">POT</span>${rating(G.shownPot(L, p))}</div></div></div>`).join('') || '<p class="small">No graded prospects at this position yet.</p>'}</div>
     ${list.length > show.length ? `<div class="row"><button class="btn" data-act="prMore">Show more (${list.length - show.length} left)</button></div>` : ''}</section>`;
 }
 
@@ -6312,7 +6375,7 @@ function vMoves() {
   let h = offersCard() + expansionCard() + payrollCard() + faCard() + extCard() + (bidding ? '' : `<section class="card"><div class="split"><h3>Free agents</h3><span class="count">${n} / ${max}</span></div>
     <p class="small">${faNote}</p>${chips('faGrp', ui.faGrp)}${sortSeg('mSort')}
     <div class="list">${fa.length ? fa.map(p => `<div class="pl"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">Age ${p.age}</div></div>
-      <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></div>
+      <div class="pl-r"><span class="lbl">OVR</span>${rating(G.shownOvr(L, p))}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div></div>
       <div class="pl-btns"><button class="btn sm" data-act="sign" data-id="${p.id}"${inSeason && n >= max ? ' disabled' : ''}>Sign ${G.money(G.askPrice(L, p) * (inSeason ? 0.6 : 1))}</button>${G.psSize(L.year) && (p.yrs || 0) <= 2 && G.practiceSquad(L, L.user).length < G.psSize(L.year) ? `<button class="btn sm" data-act="psSign" data-id="${p.id}">Practice squad</button>` : ''}</div></div>`).join('') : '<p>No free agents at this position.</p>'}</div></section>`) + leaguePSCard();
   const others = L.teams.filter(t => t.id !== L.user);
   // "All teams" (-1): browse the whole league; the partner is whichever team you pick from
@@ -6399,20 +6462,27 @@ function vCoach() {
   const c = me().coach, r = G.ratings(L, L.user);
   G.ensureStaff(L);
   const st = me().staff, win = G.coachWindow(L), sb = G.staffBonus(L, L.user);
-  const prefTxt = x => x.role === 'oc' ? ({ run: 'Prefers run-first schemes', bal: 'Prefers balanced schemes', pass: 'Prefers pass-first schemes' })[x.pref] : x.role === 'dc' ? ({ soft: "Prefers bend-don't-break schemes", bal: 'Prefers balanced schemes', blitz: 'Prefers pressure schemes' })[x.pref] : 'Game day and player development';
+  const medTxt = x => { const m = Math.round((1 - Math.max(0.75, Math.min(1.3, 1 - (x.r - 60) * 0.008))) * 100); return Math.abs(m) < 2 ? 'About average at preventing and treating injuries' : m > 0 ? `${m}% fewer injuries, ${m}% quicker recoveries than an average staff` : `${-m}% more injuries, ${-m}% slower recoveries than an average staff`; };
+  const prefTxt = x => x.role === 'oc' ? ({ run: 'Prefers run-first schemes', bal: 'Prefers balanced schemes', pass: 'Prefers pass-first schemes' })[x.pref] : x.role === 'dc' ? ({ soft: "Prefers bend-don't-break schemes", bal: 'Prefers balanced schemes', blitz: 'Prefers pressure schemes' })[x.pref]
+    : x.role === 'sc' ? `Draft grades usually within ±${Math.round(G.scoutErr(x))} points` : x.role === 'md' ? medTxt(x) : 'Game day and player development';
   const match = x => (x.role === 'oc' && x.pref === c.off) || (x.role === 'dc' && x.pref === c.def);
-  const staffRows = ['hc', 'oc', 'dc'].map(role => { const x = st[role];
-    return x ? `<div class="pl wide"><div class="pl-main"><span class="pos">${role.toUpperCase()}</span><div class="pl-name">${esc(x.name)}${x.interim ? ' <span class="small">(interim)</span>' : ''}<div class="pl-sub">${G.ROLE_NAME[role]}${x.ex ? ` · former ${esc(x.ex.pos)}` : ''} · age ${x.age}${x.rec && x.rec.yrs ? ` · ${x.rec.w}-${x.rec.l}${x.rec.t ? '-' + x.rec.t : ''} in ${x.rec.yrs} season${x.rec.yrs > 1 ? 's' : ''}` : ''}${x.titles ? ` · ${x.titles} title${x.titles > 1 ? 's' : ''}` : ''}${x.delta ? ` · <span class="${x.delta > 0 ? 'good' : 'bad'}">${x.delta > 0 ? '+' : ''}${x.delta} rating last season</span>` : ''} · ${prefTxt(x)}${role !== 'hc' ? (match(x) ? ' · <span class="good">matches your scheme</span>' : ' · <span class="warn">scheme mismatch, half effect</span>') : ''}</div></div><div class="pl-r"><span class="lbl">RTG</span>${rating(x.r)}</div></div>
+  const B = G.budgetInfo(L, L.user), spent = G.staffSpend(L, L.user), left = B.total - spent;
+  const salTxt = x => x.interim ? 'interim' : G.money(G.staffSal(L, x)) + '/yr';
+  const staffRows = G.STAFF_ROLES.map(role => { const x = st[role];
+    return x ? `<div class="pl wide"><div class="pl-main"><span class="pos">${role.toUpperCase()}</span><div class="pl-name">${esc(x.name)}${x.interim ? ' <span class="small">(interim)</span>' : ''}<div class="pl-sub">${G.ROLE_NAME[role]}${x.ex ? ` · former ${esc(x.ex.pos)}` : ''} · age ${x.age}${x.rec && x.rec.yrs ? ` · ${x.rec.w}-${x.rec.l}${x.rec.t ? '-' + x.rec.t : ''} in ${x.rec.yrs} season${x.rec.yrs > 1 ? 's' : ''}` : ''}${x.titles ? ` · ${x.titles} title${x.titles > 1 ? 's' : ''}` : ''} · <b>${salTxt(x)}</b>${x.delta ? ` · <span class="${x.delta > 0 ? 'good' : 'bad'}">${x.delta > 0 ? '+' : ''}${x.delta} rating last season</span>` : ''} · ${prefTxt(x)}${role === 'oc' || role === 'dc' ? (match(x) ? ' · <span class="good">matches your scheme</span>' : ' · <span class="warn">scheme mismatch, half effect</span>') : ''}</div></div><div class="pl-r"><span class="lbl">RTG</span>${rating(x.r)}</div></div>
       ${win ? `<div class="pl-btns">${confirmBtn('fire' + role, 'Fire')}</div>` : ''}</div>`
-      : `<div class="pl wide"><div class="pl-main"><span class="pos">${role.toUpperCase()}</span><div class="pl-name"><b class="bad">Vacant</b><div class="pl-sub">${G.ROLE_NAME[role]}. Hire one below before kickoff, or an interim coach takes over.</div></div></div></div>`; }).join('');
-  const open = ['hc', 'oc', 'dc'].filter(role => !st[role]);
-  const pool = open.length && win ? L.coachPool.filter(x => open.includes(x.role)).sort((a, b) => b.r - a.r).slice(0, 15) : [];
-  const poolRows = pool.map(x => { const pr = G.coachAcceptP(L, x, L.user), lk = pr >= 0.75 ? 'Interested' : pr >= 0.4 ? 'Might listen' : 'Unlikely'; const dec = x.decl && x.decl[L.year] === L.user;
-    return `<div class="pl wide"><div class="pl-main"><span class="pos">${x.role.toUpperCase()}</span><div class="pl-name">${esc(x.name)}<div class="pl-sub">${x.ex ? `<b>Former ${esc(x.ex.pos)}</b>, ${x.ex.yrs} seasons${x.ex.hof ? ', Hall of Famer' : ''} · ` : ''}Age ${x.age} · ${prefTxt(x)} · <span class="${pr >= 0.75 ? 'good' : pr < 0.4 ? 'bad' : ''}">${dec ? 'Turned you down' : lk}</span></div></div><div class="pl-r"><span class="lbl">RTG</span>${rating(x.r)}</div></div>
-      <div class="pl-btns">${dec ? '' : `<button class="btn sm primary" data-act="hire" data-id="${x.id}">Offer the job</button>`}</div></div>`; }).join('');
-  const staffCard = `<section class="card"><div class="split"><h3>Coaching staff</h3><span class="small">Offense ${sb.off >= 0 ? '+' : ''}${sb.off.toFixed(1)} · Defense ${sb.def >= 0 ? '+' : ''}${sb.def.toFixed(1)} · Game day ${sb.gd >= 0 ? '+' : ''}${sb.gd.toFixed(1)} pts</span></div>
-    <p class="small">Coordinators boost their unit, with full effect only when your scheme matches what they prefer. The head coach adds points on game day and helps young players develop. ${win ? 'You can change your staff until kickoff.' : 'You can change your staff after the season.'}</p>
-    <div class="list">${staffRows}</div>${poolRows ? `<h3 class="sub">Available coaches</h3><p class="small">Top coaches prefer winning teams.</p><div class="list">${poolRows}</div>` : ''}</section>`;
+      : `<div class="pl wide"><div class="pl-main"><span class="pos">${role.toUpperCase()}</span><div class="pl-name"><b class="bad">Vacant</b><div class="pl-sub">${G.ROLE_NAME[role]}. Hire one below before kickoff, or an interim fills in.</div></div></div></div>`; }).join('');
+  const open = G.STAFF_ROLES.filter(role => !st[role] || st[role].interim);
+  const pool = open.length && win ? L.coachPool.filter(x => open.includes(x.role)).sort((a, b) => G.STAFF_ROLES.indexOf(a.role) - G.STAFF_ROLES.indexOf(b.role) || b.r - a.r).filter((x, i, A) => A.filter(y => y.role === x.role).indexOf(x) < 8) : [];
+  const poolRows = pool.map(x => { const pr = G.coachAcceptP(L, x, L.user), lk = pr >= 0.75 ? 'Interested' : pr >= 0.4 ? 'Might listen' : 'Unlikely'; const dec = x.decl && x.decl[L.year] === L.user, ask = G.staffAsk(L, x), fits = ask <= left;
+    return `<div class="pl wide"><div class="pl-main"><span class="pos">${x.role.toUpperCase()}</span><div class="pl-name">${esc(x.name)}<div class="pl-sub">${G.ROLE_NAME[x.role]} · ${x.ex ? `<b>Former ${esc(x.ex.pos)}</b>, ${x.ex.yrs} seasons${x.ex.hof ? ', Hall of Famer' : ''} · ` : ''}Age ${x.age} · ${prefTxt(x)} · <span class="${pr >= 0.75 ? 'good' : pr < 0.4 ? 'bad' : ''}">${dec ? 'Turned you down' : lk}</span><br>Wants <b class="${fits ? '' : 'bad'}">${G.money(ask)}/yr</b>${fits ? '' : ' (over your budget)'}</div></div><div class="pl-r"><span class="lbl">RTG</span>${rating(x.r)}</div></div>
+      <div class="pl-btns">${dec ? '' : `<button class="btn sm primary" data-act="hire" data-id="${x.id}"${fits ? '' : ' disabled'}>Offer the job</button>`}</div></div>`; }).join('');
+  const staffCard = `<section class="card"><div class="split"><h3>Staff</h3><span class="small">Offense ${sb.off >= 0 ? '+' : ''}${sb.off.toFixed(1)} · Defense ${sb.def >= 0 ? '+' : ''}${sb.def.toFixed(1)} · Game day ${sb.gd >= 0 ? '+' : ''}${sb.gd.toFixed(1)} pts</span></div>
+    <div class="budget"><div class="split"><b>Owner's staff budget: ${G.money(B.total)}</b><span class="${left < 0 ? 'bad' : 'good'}">${left < 0 ? G.money(-left) + ' over' : G.money(left) + ' left'}</span></div>
+      <div class="tbar"><i style="width:${Math.min(100, spent / B.total * 100)}%${left < 0 ? ';background:var(--bad)' : ''}"></i></div>
+      <p class="small">${B.marketName} · ${Math.round(B.wp * 100)}% wins over the last two seasons. Bigger markets and winning teams get more. Spent ${G.money(spent)} on five jobs. The budget is reset every offseason${left < 0 ? '; you can keep the staff you have, but you can\'t hire anyone until you\'re under it' : ''}.</p></div>
+    <p class="small">Coordinators boost their unit, with full effect only when your scheme matches what they prefer. The head coach adds points on game day and helps young players develop. Your director of scouting grades every draft prospect: the better he is, the closer his grades are to the truth. Your medical staff decides how often players get hurt and how fast they come back. ${win ? 'You can change your staff until kickoff.' : 'You can change your staff after the season.'}</p>
+    <div class="list">${staffRows}</div>${poolRows ? `<h3 class="sub">Available</h3><p class="small">Top names prefer winning teams, and better ones cost more. Fire someone above to open his job (an interim fills in until you hire).</p><div class="list">${poolRows}</div>` : ''}</section>`;
   const segc = (key, opts) => `<div class="seg">${opts.map(([v, n]) => `<button class="${c[key] === v ? 'on' : ''}" data-act="coach" data-key="${key}" data-id="${v}">${n}</button>`).join('')}</div>`;
   const bar = (n, v) => `<div class="bar"><span class="bar-l">${n}</span><span class="bar-t"><span class="bar-f ${grade(v)}" style="width:${Math.max(4, Math.min(100, (v - 30) / 0.65))}%"></span></span><span class="bar-v">${Math.round(v)}</span></div>`;
   const SF = G.startersFor(L, L.user), dg = ui.dcGrp || 'QB', chart = G.depthChart(L, L.user, dg), dep = G.depth(L, L.user)[dg].slice(0, SF[dg]).map(p => p.id);
@@ -6421,7 +6491,7 @@ function vCoach() {
     const out = p.striking || p.holdout || (p.inj && !(p.playHurt && G.canPlayHurt(p))), st = dep.includes(p.id);
     return `<div class="dc ${out ? 'out' : ''}"><span class="dc-n">${i + 1}</span><span class="pos ${st ? 'st' : ''}">${esc(p.pos)}</span>
       <div class="pl-name">${pLink(p)}${p.striking ? '<span class="inj">ON STRIKE</span>' : ''}${p.holdout ? '<span class="inj">HOLDOUT</span>' : ''}${p.repl ? '<span class="inj">REPLACEMENT</span>' : ''}${p.inj ? `<span class="inj">${p.injT ? esc(p.injT) + ' · ' : ''}${p.inj >= 20 ? 'OUT season' : (p.playHurt ? 'HURT ' : 'OUT ') + p.inj + 'w'}</span>` : ''}<div class="pl-sub">Age ${p.age}${p.playHurt && p.inj ? ` · plays at ${G.eff(p)}` : ''}</div></div>
-      <div class="pl-r"><span class="lbl">OVR</span>${rating(G.eff(p))}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div>
+      <div class="pl-r"><span class="lbl">OVR</span>${rating(G.shownOvr(L, p, G.eff(p)))}</div><div class="pl-r"><span class="lbl">${G.potKnown(L, p) ? 'POT' : 'SCOUT'}</span>${rating(G.shownPot(L, p))}</div>
       ${G.canPlayHurt(p) ? `<button class="btn sm" data-act="hurt" data-id="${p.id}">${p.playHurt ? 'Rest' : 'Play hurt'}</button>` : ''}
       <button class="btn sm ar" data-act="dcMove" data-id="${p.id}" data-key="-1"${i === 0 ? ' disabled' : ''} aria-label="Move up">▲</button><button class="btn sm ar" data-act="dcMove" data-id="${p.id}" data-key="1"${i === chart.length - 1 ? ' disabled' : ''} aria-label="Move down">▼</button></div>`;
   }).join('');
@@ -6560,7 +6630,7 @@ function cHeader(p) {
   const pot = Math.max(p.pot, p.ovr);
   return `<section class="card hero"><div class="eyebrow">${esc(p.pos)}${p.num != null && p.team >= 0 ? ' · #' + p.num : ''} · Age ${p.age}${p.yrs ? ' · Year ' + (p.yrs + 1) : ' · Rookie'}</div>
     <h2>${pLink(p)}</h2><p>${p.team >= 0 ? tLink(p.team) : esc(cStatus(p))}${r ? ' · ' + esc(r.label) : ''}</p>
-    <div class="stats4"><div>${rating(p.ovr)}<span>Overall</span></div><div>${rating(pot)}<span>Ceiling</span></div><div><b>${sal != null ? G.money(sal) + '/yr' : p.con ? 'Expired' : '–'}</b><span>${cConLine(p, y)}</span></div><div><b>${C.fo == null ? 50 : C.fo}</b><span>Front office</span></div></div>
+    <div class="stats4"><div>${rating(G.shownOvr(L, p))}<span>Overall</span></div><div>${rating(pot)}<span>Ceiling</span></div><div><b>${sal != null ? G.money(sal) + '/yr' : p.con ? 'Expired' : '–'}</b><span>${cConLine(p, y)}</span></div><div><b>${C.fo == null ? 50 : C.fo}</b><span>Front office</span></div></div>
     <div class="attrchips">${G.attrs(p).map(a => `<span class="achip ${grade(a.v)}"><b>${a.v}</b>${esc(a.short)}</span>`).join('')}</div>
     <p class="small">Career earnings: <b>${G.money(G.careerEarnings(L))}</b>${G.bodyText(p) ? ' · ' + G.bodyText(p) : ''}</p>
     ${p.inj ? `<p class="small bad">${esc(G.injText(p))}.</p>` : ''}${p.holdout ? '<p class="small warn">You are holding out.</p>' : ''}</section>`;

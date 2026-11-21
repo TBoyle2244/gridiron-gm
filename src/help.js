@@ -34,7 +34,7 @@ const HELP = [
 <li><b>During the season:</b> trade before the deadline (after week 9), handle injuries, place players on injured reserve, and answer trade offers.</li>
 <li><b>Playoffs.</b> Play each round on the Office tab.</li>
 <li><b>After the season:</b> awards, the Hall of Fame and the owner's verdict on your job. Then re-sign or let go of your expiring players.</li>
-<li><b>The draft.</b> Scout prospects, then draft or let your scouts pick. AI teams may offer to trade up for your pick.</li>
+<li><b>The draft.</b> Check your director of scouting's board, then draft or let your scouts pick. AI teams may offer to trade up for your pick.</li>
 <li><b>Free agency and the offseason.</b> Sign free agents, extend your stars, make trades.</li>
 <li><b>Start the next season</b> and do it again. The league keeps changing with real history.</li>
 </ol>
@@ -82,7 +82,10 @@ const HELP = [
 <li><b>Offensive and defensive scheme.</b> Pick from the schemes that exist that season (see <a data-help="schemes">Era schemes</a>). Each shows how well your roster fits it.</li>
 <li><b>Aggressiveness.</b> Higher means more fourth-down tries and deep shots: bigger wins and bigger losses.</li>
 <li><b>Develop young starters.</b> Starters 26 and under who play most of the season get an extra development bump in the offseason.</li>
-<li><b>Coaching staff.</b> Head coach, offensive and defensive coordinators. Their ratings add to your team. A coordinator whose preferred style matches your scheme gives his full boost. Coaches' ratings rise after good seasons and fall after bad ones. Other teams can hire your coordinators away to be head coaches. You can fire a coach and hire from the available pool. A few years after retiring, the smartest former players (quarterbacks, centers, linebackers and safeties most often) join the pool as coordinators, and the very best as head coaches. They start as middling coaches and rise with success.</li>
+<li><b>Staff and budget.</b> Five jobs: head coach, offensive and defensive coordinators, director of scouting and head of medical staff. Each offseason the owner sets a staff budget from your market size (New York, Los Angeles, Chicago and the like get the most; Green Bay, Buffalo and other small markets the least) and how much you've won over the last two seasons. Better staff cost more, and you can't hire anyone who doesn't fit what's left. If the budget shrinks below what you already pay, you keep your staff but can't hire until you're under it.</li>
+<li><b>Coordinators and head coach.</b> Their ratings add to your team. A coordinator whose preferred style matches your scheme gives his full boost. The head coach helps on game day and with young players. Coaches' ratings rise after good seasons and fall after bad ones.</li>
+<li><b>Director of scouting.</b> He grades every draft prospect: a rating for how good he is now and one for how good he can become. A 90 scout is usually within about 2 points; a 50 scout can be off by 7 or more, and each scout has his own blind spots. Other teams draft on their own scouts' grades. Your rookies' true ratings show halfway through their first season, along with a news item saying how close your scout was.</li>
+<li><b>Medical staff.</b> A good one means fewer injuries and quicker recoveries (up to about 25% better than average); a bad one, the reverse.</li>
 <li><b>Unit ratings.</b> Your offense, defense and every position group at a glance.</li>
 </ul>` },
 
@@ -160,9 +163,9 @@ const HELP = [
 
 { id: 'draft', title: 'The draft and scouting', body: `
 <ul>
-<li><b>Real draft classes.</b> Every class from 1971 on is the real one, with real names, positions and colleges. Your scouts only see a <b>scout grade</b>, based on where he was really drafted and his college, so there are steals and busts.</li>
+<li><b>Real draft classes.</b> Every class from 1971 on is the real one, with real names, positions and colleges. How good each one turns out is based on his real career. Your director of scouting sees that only as well as his rating allows, so a weak scout still misses steals and busts.</li>
 <li><b>Draft class board</b> (League tab → Draft class). During the season, next year's class fills in as your scouts see more players each week, in random order. Sort it by position and grade.</li>
-<li><b>Scouting visits.</b> You get 10 visits each draft to reveal a prospect's true potential. AI teams get 5, 10 or 15 depending on difficulty.</li>
+<li><b>Your scout's grades.</b> Your director of scouting (Coach tab) grades every prospect for now (OVR) and his ceiling (POT). How close he gets depends on his rating: a top scout is usually within 2 points, a poor one can miss by 7 or more. Every team's scout has his own blind spots, so AI teams draft on different boards. The true numbers show halfway through a player's rookie season.</li>
 <li><b>Draft tracker.</b> On draft day, every pick shows up as it's made, newest first, with the round, team, college, your scouts' grade and where he really went. Filter by round or team. Past drafts (the last 15) are under League → Draft results.</li>
 <li><b>Draft day.</b> Draft when you're on the clock, sim to your next pick, let your scouts pick, or auto-draft the rest. AI teams may offer to trade up for your pick: accept or keep the pick. AI teams also trade picks with each other.</li>
 <li><b>Compensatory picks</b> (from 1994): teams that lose more good free agents than they sign get up to 4 extra picks in rounds 3–7, placed at the end of the round. They can't be traded until 2017, when the NFL started allowing it.</li>
@@ -273,9 +276,9 @@ const HELP = [
 
 { id: 'difficulty', title: 'Difficulty', body: `
 <ul>
-<li><b>Rookie:</b> AI teams take cheaper trades and make generous offers, scout less (5 visits), adjust their schemes less often, and your team gets a small boost.</li>
-<li><b>Pro:</b> balanced. Fair trades, 10 visits each.</li>
-<li><b>All-Pro:</b> AI teams want more in trades and offer less, scout more (15 visits), your team plays at a small disadvantage, and opposing coaches adjust their game plans to counter yours.</li>
+<li><b>Rookie:</b> AI teams take cheaper trades and make generous offers, adjust their schemes less often, and your team gets a small boost.</li>
+<li><b>Pro:</b> balanced. Fair trades.</li>
+<li><b>All-Pro:</b> AI teams want more in trades and offer less, your team plays at a small disadvantage, and opposing coaches adjust their game plans to counter yours.</li>
 <li>You can change difficulty any time on the Data tab.</li>
 </ul>` },
 
