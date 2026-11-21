@@ -1663,10 +1663,10 @@ function coachCarousel(L) {
     for (const role of STAFF_ROLES) {
       const c = t.staff[role]; if (!c) continue;
       // rating change from this season (scouts and medical staffs mostly just age and drift)
-      let d = role === 'sc' || role === 'md' ? R.int(-1, 2) : role === 'hc' ? (wp >= 0.75 ? 3 : wp >= 0.6 ? 2 : wp >= 0.5 ? 1 : wp <= 0.25 ? -2 : wp <= 0.4 ? -1 : 0) + (inPO.has(t.id) ? 1 : 0) + (champ ? 2 : 0)
+      let d = role === 'sc' ? 0 : role === 'md' ? R.int(-1, 2) : role === 'hc' ? (wp >= 0.75 ? 3 : wp >= 0.6 ? 2 : wp >= 0.5 ? 1 : wp <= 0.25 ? -2 : wp <= 0.4 ? -1 : 0) + (inPO.has(t.id) ? 1 : 0) + (champ ? 2 : 0)
         : role === 'oc' ? unitDelta(offRank[t.id]) : unitDelta(defRank[t.id]);
       if (c.age >= 64 && Math.random() < 0.5) d -= 1;
-      d -= Math.round((c.r - 62) * 0.08); // ratings drift back toward average without continued success
+      if (role !== 'sc') d -= Math.round((c.r - 62) * 0.08); // ratings drift back toward average without continued success
       c.r = clamp(c.r + d, 35, 95); c.delta = d; c.age++;
       c.rec = c.rec || { w: 0, l: 0, t: 0, yrs: 0 }; c.rec.w += t.w; c.rec.l += t.l; c.rec.t += t.t; c.rec.yrs++;
       if (champ) c.titles = (c.titles || 0) + 1;
@@ -2562,7 +2562,7 @@ function simWeek(L) {
   strikeAfter(L);
   aiIR(L);
   weeklyMorale(L); holdoutWeek(L); poachPS(L);
-  if (L.week === revealWeek(L) && L.teams[L.user]) rookieReveal(L);
+  if (L.week === revealWeek(L)) { scoutReview(L); if (L.teams[L.user]) rookieReveal(L); }
   if (L.week < DEADLINE_WEEK && Math.random() < 0.4) makeOffers(L, 1, 6);
   if (L.week >= L.schedule.length) startPlayoffs(L);
 }
@@ -2890,6 +2890,7 @@ function makePick(L, pid) {
   const D = L.draft, tid = onClock(L); if (tid == null) return;
   const p = L.players[pid]; if (!p || p.team !== -3) return;
   p.team = tid; p.draft = { year: D.year, rnd: Math.floor(D.pick / D.order.length) + 1, pick: D.pick + 1, tid };
+  { const sc = L.teams[tid].staff && L.teams[tid].staff.sc; if (sc && !sc.interim && p.scout != null) p.scG = { sid: sc.id, pot: scoutRead(L, tid, p).pot }; }
   if (p.realPick && !p.rc) attachRC(p, D.year, REAL ? REAL.byDraft[D.year + '-' + p.realPick.pick] : null, p.realTo);
   rookieDeal(L, p, D.year, D.pick + 1, p.draft.rnd);
   plog(L, p, `Drafted by ${L.teams[tid].city} ${L.teams[tid].name}: round ${p.draft.rnd}, #${D.pick + 1} overall.`);
@@ -3798,6 +3799,26 @@ function aiCapCompliance(L) {
 }
 
 /* ---------- leaders ---------- */
+// When a class's true ratings show, every scout is judged on the players his team drafted:
+// did his grades beat the league consensus? His rating moves with the answer.
+function findStaff(L, id) { for (const t of L.teams) for (const r of STAFF_ROLES) { const c = t.staff && t.staff[r]; if (c && c.id === id) return { c, t }; } const c = (L.coachPool || []).find(x => x.id === id); return c ? { c, t: null } : null; }
+function scoutReview(L) {
+  const by = {};
+  for (const id in L.players) { const p = L.players[id]; if (p.scG && p.draft && p.draft.year === L.year && p.scout != null) (by[p.scG.sid] = by[p.scG.sid] || []).push(p); }
+  for (const sid in by) {
+    const ps = by[sid], f = findStaff(L, +sid); if (!f || ps.length < 2) continue;
+    const c = f.c, miss = ps.reduce((a, p) => a + Math.abs(p.scG.pot - p.pot), 0) / ps.length, cons = ps.reduce((a, p) => a + Math.abs(p.scout - p.pot), 0) / ps.length;
+    const gain = cons - miss, d = clamp(Math.round((gain - 0.4) * 0.9), -4, 4); // scouts usually beat the consensus a little: only clearly better or worse moves him
+    // his best call: the player he liked most more than the consensus did, and who was really that good
+    const best = ps.filter(p => p.scG.pot - p.scout >= 4 && p.pot - p.scout >= 4).sort((a, b) => (b.pot - b.scout) - (a.pot - a.scout))[0];
+    const worst = ps.filter(p => p.scG.pot - p.pot >= 6).sort((a, b) => (b.scG.pot - b.pot) - (a.scG.pot - a.pot))[0];
+    const old = c.r; c.r = clamp(c.r + d, 35, 95); c.sal = c.sal; // salary stays until he's re-hired
+    c.rev = (c.rev || []).concat([{ y: L.year, n: ps.length, miss: +miss.toFixed(1), cons: +cons.toFixed(1), d, best: best ? best.name : null, worst: worst ? worst.name : null }]).slice(-6);
+    if (f.t && f.t.id === L.user) {
+      addNews(L, `Scouting review of your ${L.year} class: ${c.name}'s potential grades were off by ${miss.toFixed(1)} points on average; the league consensus was off by ${cons.toFixed(1)}. ${gain >= 1 ? 'He beat the consensus' : gain <= -1 ? 'He did worse than the consensus' : 'About the same as the consensus'}${best ? `, and his best call was ${best.pos} ${best.name}` : ''}${worst ? `${best ? ';' : '. His'} worst miss was ${worst.pos} ${worst.name}` : ''}. Rating ${d > 0 ? '+' + d : d < 0 ? d : 'unchanged'}${d ? ` (${old} to ${c.r})` : ''}.`);
+    }
+  }
+}
 // Halfway through the season your rookies' true ratings show: how close was your scout?
 function rookieReveal(L) {
   const rk = roster(L, L.user).filter(p => p.reveal === L.year && !p.seen);

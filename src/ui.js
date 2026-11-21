@@ -2,7 +2,7 @@
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-21b';
+const APP_VERSION = '2026-11-21d';
 let SLOT = (() => { try { return localStorage.getItem('gg-slot') === 'career' ? 'career' : 'league'; } catch (e) { return 'league'; } })();
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
@@ -542,7 +542,7 @@ function vDraft() {
   let h;
   if (!started) {
     h = `<section class="card hero"><div class="eyebrow">${D.year} draft · Draft board</div><h2>Your scouts' board is ready</h2>
-      <p>${visitTxt}. Every prospect has a grade for how good he is now (OVR) and how good he can become (POT). A better scout finds more of the real steals and busts, and every scout has his own blind spots.</p>
+      <p>${visitTxt}. Every prospect has a grade for how good he is now (OVR) and how good he can become (POT). A better scout finds more of the real steals and busts, and every scout has his own blind spots. <b>LEAGUE</b> is the consensus grade for his ceiling (what most teams think); where your scout disagrees by 5 or more, it's flagged. A weak scout's disagreements are often wrong; a strong one's are worth a gamble.</p>
       <p class="small">Your picks: ${ord}. Other teams draft on their own scouts' grades. Your rookies' true ratings show halfway through their first season.</p>
       <div class="row"><button class="btn primary" data-act="beginDraft">Begin the draft</button></div></section>`;
   } else {
@@ -553,13 +553,15 @@ function vDraft() {
       <div class="row">${mine ? '<button class="btn" data-act="autoPick">Let scouts pick</button>' : '<button class="btn primary" data-act="toMyPick">Sim to my pick</button>'}<button class="btn" data-act="draftRest">Auto-draft the rest</button></div></section>`;
   }
   const show = ui.draftShow || 60;
-  const all = D.pool.map(i => L.players[i]).filter(p => !ui.draftGrp || ui.draftGrp === 'ALL' || ui.draftGrp === 'SEEN' || p.grp === ui.draftGrp).sort((a, b) => G.shownPot(L, b) - G.shownPot(L, a) || G.shownOvr(L, b) - G.shownOvr(L, a));
+  const byLg = ui.dSort === 'lg';
+  const all = D.pool.map(i => L.players[i]).filter(p => !ui.draftGrp || ui.draftGrp === 'ALL' || ui.draftGrp === 'SEEN' || p.grp === ui.draftGrp).sort((a, b) => byLg ? b.scout - a.scout || G.shownPot(L, b) - G.shownPot(L, a) : G.shownPot(L, b) - G.shownPot(L, a) || G.shownOvr(L, b) - G.shownOvr(L, a));
   const pool = all.slice(0, show);
-  const chipRow = `<div class="chips">${['ALL'].concat(G.GRPS).map(g => `<button class="chip ${(ui.draftGrp || 'ALL') === g || (g === 'ALL' && ui.draftGrp === 'SEEN') ? 'on' : ''}" data-act="chip" data-key="draftGrp" data-id="${g}">${g === 'ALL' ? 'All' : g}</button>`).join('')}</div>`;
+  const chipRow = `<div class="sortrow"><span class="lbl">RANK BY</span><div class="seg mini"><button class="${byLg ? '' : 'on'}" data-act="sort" data-key="dSort" data-id="me">Your scout</button><button class="${byLg ? 'on' : ''}" data-act="sort" data-key="dSort" data-id="lg">League consensus</button></div></div><div class="chips">${['ALL'].concat(G.GRPS).map(g => `<button class="chip ${(ui.draftGrp || 'ALL') === g || (g === 'ALL' && ui.draftGrp === 'SEEN') ? 'on' : ''}" data-act="chip" data-key="draftGrp" data-id="${g}">${g === 'ALL' ? 'All' : g}</button>`).join('')}</div>`;
   h += draftTracker(D.log, D.year, D.rounds, n, true);
   h += `<section class="card"><div class="split"><h3>Draft board</h3><span class="small">${all.length} prospects</span></div>${chipRow}<div class="list">${pool.length ? pool.map(p => `
     <div class="pl"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">${esc(p.college || '')} · age ${p.age}${G.bodyText(p) ? ' · ' + G.bodyText(p) : ''}${p.realPick && p.realPick.rnd ? ` · real: R${p.realPick.rnd} #${p.realPick.pick} ${esc(p.realPick.tm)}` : ''}${strengthText(p) ? `<br>${strengthText(p)}` : ''}</div></div>
-    <div class="pl-r"><span class="lbl">OVR</span>${rating(G.shownOvr(L, p))}</div><div class="pl-r"><span class="lbl">POT</span>${rating(G.shownPot(L, p))}</div></div>
+    <div class="pl-r"><span class="lbl">OVR</span>${rating(G.shownOvr(L, p))}</div><div class="pl-r"><span class="lbl">POT</span>${rating(G.shownPot(L, p))}</div>${p.scout != null ? `<div class="pl-r cons"><span class="lbl">LEAGUE</span>${rating(p.scout)}</div>` : ''}</div>
+    ${(() => { const d = G.shownPot(L, p) - p.scout; return Math.abs(d) >= 5 ? `<div class="small ${d > 0 ? 'good' : 'bad'} scnote">Your scout ${d > 0 ? 'likes him more' : 'is lower on him'} than the league (${d > 0 ? '+' : ''}${d})</div>` : ''; })()}
     <div class="pl-btns">${mine ? `<button class="btn sm primary" data-act="draftPick" data-id="${p.id}">Draft</button>` : ''}</div></div>`).join('') : '<p>No prospects at this position.</p>'}</div>
     ${all.length > show ? `<div class="row"><button class="btn" data-act="draftMore">Show ${Math.min(60, all.length - show)} more</button></div>` : ''}</section>`;
   return h + myPicks();
@@ -1032,7 +1034,7 @@ function draftClassView() {
     <p class="small">${stage} ${C.real ? 'This is the real class you imported.' : `No ${C.year} class has been imported, so these prospects are generated.`} These are your director of scouting's grades${me().staff && me().staff.sc ? ` (${esc(me().staff.sc.name)}, sees through about ${Math.round(G.scoutSkill(me().staff.sc).skill * 100)}% of the consensus's misses)` : ' (no scout: basically the consensus)'}. True ratings show halfway through a player's rookie season.</p>
     ${chips('prGrp', g)}
     <div class="list">${show.map(p => `<div class="pl"><div class="pl-main"><span class="dc-n">${rankOf.get(p.id)}</span><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">${esc(p.college || '')} · age ${p.age}${p.realPick && p.realPick.rnd ? ` · real: R${p.realPick.rnd} #${p.realPick.pick}` : ''}</div></div>
-      <div class="pl-r"><span class="lbl">OVR</span>${rating(G.shownOvr(L, p))}</div><div class="pl-r"><span class="lbl">POT</span>${rating(G.shownPot(L, p))}</div></div></div>`).join('') || '<p class="small">No graded prospects at this position yet.</p>'}</div>
+      <div class="pl-r"><span class="lbl">OVR</span>${rating(G.shownOvr(L, p))}</div><div class="pl-r"><span class="lbl">POT</span>${rating(G.shownPot(L, p))}</div>${p.scout != null ? `<div class="pl-r cons"><span class="lbl">LEAGUE</span>${rating(p.scout)}</div>` : ''}</div></div>`).join('') || '<p class="small">No graded prospects at this position yet.</p>'}</div>
     ${list.length > show.length ? `<div class="row"><button class="btn" data-act="prMore">Show more (${list.length - show.length} left)</button></div>` : ''}</section>`;
 }
 
@@ -1192,7 +1194,7 @@ function vCoach() {
   const st = me().staff, win = G.coachWindow(L), sb = G.staffBonus(L, L.user);
   const medTxt = x => { const m = Math.round((1 - Math.max(0.75, Math.min(1.3, 1 - (x.r - 60) * 0.008))) * 100); return Math.abs(m) < 2 ? 'About average at preventing and treating injuries' : m > 0 ? `${m}% fewer injuries, ${m}% quicker recoveries than an average staff` : `${-m}% more injuries, ${-m}% slower recoveries than an average staff`; };
   const prefTxt = x => x.role === 'oc' ? ({ run: 'Prefers run-first schemes', bal: 'Prefers balanced schemes', pass: 'Prefers pass-first schemes' })[x.pref] : x.role === 'dc' ? ({ soft: "Prefers bend-don't-break schemes", bal: 'Prefers balanced schemes', blitz: 'Prefers pressure schemes' })[x.pref]
-    : x.role === 'sc' ? `Sees through about ${Math.round(G.scoutSkill(x).skill * 100)}% of the draft consensus's misses` : x.role === 'md' ? medTxt(x) : 'Game day and player development';
+    : x.role === 'sc' ? `Sees through about ${Math.round(G.scoutSkill(x).skill * 100)}% of the draft consensus's misses${(() => { const r = (x.rev || []).slice(-1)[0], all = x.rev || []; if (!r) return ''; const beat = all.filter(v => v.cons - v.miss >= 1).length; return `<br>Last review (${r.y} class): off by ${r.miss} vs ${r.cons} for the consensus, <span class="${r.d > 0 ? 'good' : r.d < 0 ? 'bad' : ''}">${r.d > 0 ? '+' + r.d : r.d < 0 ? r.d : '±0'} rating</span>${r.best ? `, best call ${esc(r.best)}` : ''}${all.length > 1 ? ` · beat the consensus in ${beat} of ${all.length} classes` : ''}`; })()}` : x.role === 'md' ? medTxt(x) : 'Game day and player development';
   const match = x => (x.role === 'oc' && x.pref === c.off) || (x.role === 'dc' && x.pref === c.def);
   const B = G.budgetInfo(L, L.user), spent = G.staffSpend(L, L.user), left = B.total - spent;
   const salTxt = x => x.interim ? 'interim' : G.money(G.staffSal(L, x)) + '/yr';

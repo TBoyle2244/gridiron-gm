@@ -161,6 +161,8 @@ button.gl { cursor: pointer; }
 
 .list { display: flex; flex-direction: column; }
 .pl { border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 0; }
+.pl-r.cons { opacity: .7; }
+.scnote { width: 100%; padding-left: 52px; margin-top: -4px; }
 .pl-ord { display: flex; flex-direction: column; gap: 3px; }
 .pl-ord .btn.ar { min-width: 34px; padding: 1px 6px; font-size: 12px; line-height: 1.3; }
 .pl > .dc-n + .pl-main .pos { min-width: 0; }
@@ -1874,10 +1876,10 @@ function coachCarousel(L) {
     for (const role of STAFF_ROLES) {
       const c = t.staff[role]; if (!c) continue;
       // rating change from this season (scouts and medical staffs mostly just age and drift)
-      let d = role === 'sc' || role === 'md' ? R.int(-1, 2) : role === 'hc' ? (wp >= 0.75 ? 3 : wp >= 0.6 ? 2 : wp >= 0.5 ? 1 : wp <= 0.25 ? -2 : wp <= 0.4 ? -1 : 0) + (inPO.has(t.id) ? 1 : 0) + (champ ? 2 : 0)
+      let d = role === 'sc' ? 0 : role === 'md' ? R.int(-1, 2) : role === 'hc' ? (wp >= 0.75 ? 3 : wp >= 0.6 ? 2 : wp >= 0.5 ? 1 : wp <= 0.25 ? -2 : wp <= 0.4 ? -1 : 0) + (inPO.has(t.id) ? 1 : 0) + (champ ? 2 : 0)
         : role === 'oc' ? unitDelta(offRank[t.id]) : unitDelta(defRank[t.id]);
       if (c.age >= 64 && Math.random() < 0.5) d -= 1;
-      d -= Math.round((c.r - 62) * 0.08); // ratings drift back toward average without continued success
+      if (role !== 'sc') d -= Math.round((c.r - 62) * 0.08); // ratings drift back toward average without continued success
       c.r = clamp(c.r + d, 35, 95); c.delta = d; c.age++;
       c.rec = c.rec || { w: 0, l: 0, t: 0, yrs: 0 }; c.rec.w += t.w; c.rec.l += t.l; c.rec.t += t.t; c.rec.yrs++;
       if (champ) c.titles = (c.titles || 0) + 1;
@@ -2773,7 +2775,7 @@ function simWeek(L) {
   strikeAfter(L);
   aiIR(L);
   weeklyMorale(L); holdoutWeek(L); poachPS(L);
-  if (L.week === revealWeek(L) && L.teams[L.user]) rookieReveal(L);
+  if (L.week === revealWeek(L)) { scoutReview(L); if (L.teams[L.user]) rookieReveal(L); }
   if (L.week < DEADLINE_WEEK && Math.random() < 0.4) makeOffers(L, 1, 6);
   if (L.week >= L.schedule.length) startPlayoffs(L);
 }
@@ -3101,6 +3103,7 @@ function makePick(L, pid) {
   const D = L.draft, tid = onClock(L); if (tid == null) return;
   const p = L.players[pid]; if (!p || p.team !== -3) return;
   p.team = tid; p.draft = { year: D.year, rnd: Math.floor(D.pick / D.order.length) + 1, pick: D.pick + 1, tid };
+  { const sc = L.teams[tid].staff && L.teams[tid].staff.sc; if (sc && !sc.interim && p.scout != null) p.scG = { sid: sc.id, pot: scoutRead(L, tid, p).pot }; }
   if (p.realPick && !p.rc) attachRC(p, D.year, REAL ? REAL.byDraft[D.year + '-' + p.realPick.pick] : null, p.realTo);
   rookieDeal(L, p, D.year, D.pick + 1, p.draft.rnd);
   plog(L, p, `Drafted by ${L.teams[tid].city} ${L.teams[tid].name}: round ${p.draft.rnd}, #${D.pick + 1} overall.`);
@@ -4009,6 +4012,26 @@ function aiCapCompliance(L) {
 }
 
 /* ---------- leaders ---------- */
+// When a class's true ratings show, every scout is judged on the players his team drafted:
+// did his grades beat the league consensus? His rating moves with the answer.
+function findStaff(L, id) { for (const t of L.teams) for (const r of STAFF_ROLES) { const c = t.staff && t.staff[r]; if (c && c.id === id) return { c, t }; } const c = (L.coachPool || []).find(x => x.id === id); return c ? { c, t: null } : null; }
+function scoutReview(L) {
+  const by = {};
+  for (const id in L.players) { const p = L.players[id]; if (p.scG && p.draft && p.draft.year === L.year && p.scout != null) (by[p.scG.sid] = by[p.scG.sid] || []).push(p); }
+  for (const sid in by) {
+    const ps = by[sid], f = findStaff(L, +sid); if (!f || ps.length < 2) continue;
+    const c = f.c, miss = ps.reduce((a, p) => a + Math.abs(p.scG.pot - p.pot), 0) / ps.length, cons = ps.reduce((a, p) => a + Math.abs(p.scout - p.pot), 0) / ps.length;
+    const gain = cons - miss, d = clamp(Math.round((gain - 0.4) * 0.9), -4, 4); // scouts usually beat the consensus a little: only clearly better or worse moves him
+    // his best call: the player he liked most more than the consensus did, and who was really that good
+    const best = ps.filter(p => p.scG.pot - p.scout >= 4 && p.pot - p.scout >= 4).sort((a, b) => (b.pot - b.scout) - (a.pot - a.scout))[0];
+    const worst = ps.filter(p => p.scG.pot - p.pot >= 6).sort((a, b) => (b.scG.pot - b.pot) - (a.scG.pot - a.pot))[0];
+    const old = c.r; c.r = clamp(c.r + d, 35, 95); c.sal = c.sal; // salary stays until he's re-hired
+    c.rev = (c.rev || []).concat([{ y: L.year, n: ps.length, miss: +miss.toFixed(1), cons: +cons.toFixed(1), d, best: best ? best.name : null, worst: worst ? worst.name : null }]).slice(-6);
+    if (f.t && f.t.id === L.user) {
+      addNews(L, `Scouting review of your ${L.year} class: ${c.name}'s potential grades were off by ${miss.toFixed(1)} points on average; the league consensus was off by ${cons.toFixed(1)}. ${gain >= 1 ? 'He beat the consensus' : gain <= -1 ? 'He did worse than the consensus' : 'About the same as the consensus'}${best ? `, and his best call was ${best.pos} ${best.name}` : ''}${worst ? `${best ? ';' : '. His'} worst miss was ${worst.pos} ${worst.name}` : ''}. Rating ${d > 0 ? '+' + d : d < 0 ? d : 'unchanged'}${d ? ` (${old} to ${c.r})` : ''}.`);
+    }
+  }
+}
 // Halfway through the season your rookies' true ratings show: how close was your scout?
 function rookieReveal(L) {
   const rk = roster(L, L.user).filter(p => p.reveal === L.year && !p.seen);
@@ -5054,7 +5077,7 @@ const HELP = [
 <li><b>Develop young starters.</b> Starters 26 and under who play most of the season get an extra development bump in the offseason.</li>
 <li><b>Staff and budget.</b> Five jobs: head coach, offensive and defensive coordinators, director of scouting and head of medical staff. Each offseason the owner sets a staff budget from your market size (New York, Los Angeles, Chicago and the like get the most; Green Bay, Buffalo and other small markets the least) and how much you've won over the last two seasons. Better staff cost more, and you can't hire anyone who doesn't fit what's left. If the budget shrinks below what you already pay, you keep your staff but can't hire until you're under it.</li>
 <li><b>Coordinators and head coach.</b> Their ratings add to your team. A coordinator whose preferred style matches your scheme gives his full boost. The head coach helps on game day and with young players. Coaches' ratings rise after good seasons and fall after bad ones.</li>
-<li><b>Director of scouting.</b> He grades every draft prospect: how good he is now (OVR) and how good he can become (POT). He starts from the league consensus (where the player was really drafted, his college) and sees part of the way past it: a 90 scout catches about 40% of what the consensus gets wrong, a 50 scout about 15%, and every scout adds blind spots of his own. So even a great scout sees a 6th-round Hall of Famer as a solid early-round prospect, not a future star. Good scouts cost about as much as a coordinator. Your rookies' true ratings show halfway through their first season, with a news item on how close your scout was.</li>
+<li><b>Director of scouting.</b> He grades every draft prospect: how good he is now (OVR) and how good he can become (POT). He starts from the league consensus (where the player was really drafted, his college) and sees part of the way past it: a 90 scout catches about 40% of what the consensus gets wrong, a 50 scout about 15%, and every scout adds blind spots of his own. So even a great scout sees a 6th-round Hall of Famer as a solid early-round prospect, not a future star. Good scouts cost about as much as a coordinator. Your rookies' true ratings show halfway through their first season. Then every scout in the league is reviewed on the players his team drafted: if his grades beat the consensus, his rating goes up (up to +4); if they were worse, it goes down. A lucky or unlucky class moves a scout as much as his skill does, as in real life. You get a news item with his average miss, the consensus's, his best call and his worst miss, and his record shows on the Coach tab. Scouts' ratings don't drift otherwise, and AI teams fire scouts who fall below 50 more often.</li>
 <li><b>Medical staff.</b> A good one means fewer injuries and quicker recoveries (up to about 25% better than average); a bad one, the reverse.</li>
 <li><b>Unit ratings.</b> Your offense, defense and every position group at a glance.</li>
 </ul>` },
@@ -5135,7 +5158,7 @@ const HELP = [
 <ul>
 <li><b>Real draft classes.</b> Every class from 1971 on is the real one, with real names, positions and colleges. How good each one turns out is based on his real career. Your director of scouting sees that only as well as his rating allows, so a weak scout still misses steals and busts.</li>
 <li><b>Draft class board</b> (League tab → Draft class). During the season, next year's class fills in as your scouts see more players each week, in random order. Sort it by position and grade.</li>
-<li><b>Your scout's grades.</b> Your director of scouting (Coach tab) grades every prospect for now (OVR) and his ceiling (POT). He starts from the consensus and corrects part of its misses (about 15% for a 50-rated scout, 40% for a 90), plus blind spots of his own. Other teams draft on their own scouts' boards. The true numbers show halfway through a player's rookie season.</li>
+<li><b>Your scout's grades.</b> Your director of scouting (Coach tab) grades every prospect for now (OVR) and his ceiling (POT). He starts from the consensus and corrects part of its misses (about 15% for a 50-rated scout, 40% for a 90), plus blind spots of his own. Next to his grade, <b>LEAGUE</b> shows the consensus grade (what most teams think), and the board flags players your scout likes or dislikes by 5 or more points more than the league. You can rank the board by either. Other teams draft on their own scouts' boards. The true numbers show halfway through a player's rookie season.</li>
 <li><b>Draft tracker.</b> On draft day, every pick shows up as it's made, newest first, with the round, team, college, your scouts' grade and where he really went. Filter by round or team. Past drafts (the last 15) are under League → Draft results.</li>
 <li><b>Draft day.</b> Draft when you're on the clock, sim to your next pick, let your scouts pick, or auto-draft the rest. AI teams may offer to trade up for your pick: accept or keep the pick. AI teams also trade picks with each other.</li>
 <li><b>Compensatory picks</b> (from 1994): teams that lose more good free agents than they sign get up to 4 extra picks in rounds 3–7, placed at the end of the round. They can't be traded until 2017, when the NFL started allowing it.</li>
@@ -5279,7 +5302,7 @@ const HELP_FOR_TAB = { home: 'office', roster: 'roster', stats: 'stats', league:
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-21b';
+const APP_VERSION = '2026-11-21d';
 let SLOT = (() => { try { return localStorage.getItem('gg-slot') === 'career' ? 'career' : 'league'; } catch (e) { return 'league'; } })();
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
@@ -5819,7 +5842,7 @@ function vDraft() {
   let h;
   if (!started) {
     h = `<section class="card hero"><div class="eyebrow">${D.year} draft · Draft board</div><h2>Your scouts' board is ready</h2>
-      <p>${visitTxt}. Every prospect has a grade for how good he is now (OVR) and how good he can become (POT). A better scout finds more of the real steals and busts, and every scout has his own blind spots.</p>
+      <p>${visitTxt}. Every prospect has a grade for how good he is now (OVR) and how good he can become (POT). A better scout finds more of the real steals and busts, and every scout has his own blind spots. <b>LEAGUE</b> is the consensus grade for his ceiling (what most teams think); where your scout disagrees by 5 or more, it's flagged. A weak scout's disagreements are often wrong; a strong one's are worth a gamble.</p>
       <p class="small">Your picks: ${ord}. Other teams draft on their own scouts' grades. Your rookies' true ratings show halfway through their first season.</p>
       <div class="row"><button class="btn primary" data-act="beginDraft">Begin the draft</button></div></section>`;
   } else {
@@ -5830,13 +5853,15 @@ function vDraft() {
       <div class="row">${mine ? '<button class="btn" data-act="autoPick">Let scouts pick</button>' : '<button class="btn primary" data-act="toMyPick">Sim to my pick</button>'}<button class="btn" data-act="draftRest">Auto-draft the rest</button></div></section>`;
   }
   const show = ui.draftShow || 60;
-  const all = D.pool.map(i => L.players[i]).filter(p => !ui.draftGrp || ui.draftGrp === 'ALL' || ui.draftGrp === 'SEEN' || p.grp === ui.draftGrp).sort((a, b) => G.shownPot(L, b) - G.shownPot(L, a) || G.shownOvr(L, b) - G.shownOvr(L, a));
+  const byLg = ui.dSort === 'lg';
+  const all = D.pool.map(i => L.players[i]).filter(p => !ui.draftGrp || ui.draftGrp === 'ALL' || ui.draftGrp === 'SEEN' || p.grp === ui.draftGrp).sort((a, b) => byLg ? b.scout - a.scout || G.shownPot(L, b) - G.shownPot(L, a) : G.shownPot(L, b) - G.shownPot(L, a) || G.shownOvr(L, b) - G.shownOvr(L, a));
   const pool = all.slice(0, show);
-  const chipRow = `<div class="chips">${['ALL'].concat(G.GRPS).map(g => `<button class="chip ${(ui.draftGrp || 'ALL') === g || (g === 'ALL' && ui.draftGrp === 'SEEN') ? 'on' : ''}" data-act="chip" data-key="draftGrp" data-id="${g}">${g === 'ALL' ? 'All' : g}</button>`).join('')}</div>`;
+  const chipRow = `<div class="sortrow"><span class="lbl">RANK BY</span><div class="seg mini"><button class="${byLg ? '' : 'on'}" data-act="sort" data-key="dSort" data-id="me">Your scout</button><button class="${byLg ? 'on' : ''}" data-act="sort" data-key="dSort" data-id="lg">League consensus</button></div></div><div class="chips">${['ALL'].concat(G.GRPS).map(g => `<button class="chip ${(ui.draftGrp || 'ALL') === g || (g === 'ALL' && ui.draftGrp === 'SEEN') ? 'on' : ''}" data-act="chip" data-key="draftGrp" data-id="${g}">${g === 'ALL' ? 'All' : g}</button>`).join('')}</div>`;
   h += draftTracker(D.log, D.year, D.rounds, n, true);
   h += `<section class="card"><div class="split"><h3>Draft board</h3><span class="small">${all.length} prospects</span></div>${chipRow}<div class="list">${pool.length ? pool.map(p => `
     <div class="pl"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">${esc(p.college || '')} · age ${p.age}${G.bodyText(p) ? ' · ' + G.bodyText(p) : ''}${p.realPick && p.realPick.rnd ? ` · real: R${p.realPick.rnd} #${p.realPick.pick} ${esc(p.realPick.tm)}` : ''}${strengthText(p) ? `<br>${strengthText(p)}` : ''}</div></div>
-    <div class="pl-r"><span class="lbl">OVR</span>${rating(G.shownOvr(L, p))}</div><div class="pl-r"><span class="lbl">POT</span>${rating(G.shownPot(L, p))}</div></div>
+    <div class="pl-r"><span class="lbl">OVR</span>${rating(G.shownOvr(L, p))}</div><div class="pl-r"><span class="lbl">POT</span>${rating(G.shownPot(L, p))}</div>${p.scout != null ? `<div class="pl-r cons"><span class="lbl">LEAGUE</span>${rating(p.scout)}</div>` : ''}</div>
+    ${(() => { const d = G.shownPot(L, p) - p.scout; return Math.abs(d) >= 5 ? `<div class="small ${d > 0 ? 'good' : 'bad'} scnote">Your scout ${d > 0 ? 'likes him more' : 'is lower on him'} than the league (${d > 0 ? '+' : ''}${d})</div>` : ''; })()}
     <div class="pl-btns">${mine ? `<button class="btn sm primary" data-act="draftPick" data-id="${p.id}">Draft</button>` : ''}</div></div>`).join('') : '<p>No prospects at this position.</p>'}</div>
     ${all.length > show ? `<div class="row"><button class="btn" data-act="draftMore">Show ${Math.min(60, all.length - show)} more</button></div>` : ''}</section>`;
   return h + myPicks();
@@ -6309,7 +6334,7 @@ function draftClassView() {
     <p class="small">${stage} ${C.real ? 'This is the real class you imported.' : `No ${C.year} class has been imported, so these prospects are generated.`} These are your director of scouting's grades${me().staff && me().staff.sc ? ` (${esc(me().staff.sc.name)}, sees through about ${Math.round(G.scoutSkill(me().staff.sc).skill * 100)}% of the consensus's misses)` : ' (no scout: basically the consensus)'}. True ratings show halfway through a player's rookie season.</p>
     ${chips('prGrp', g)}
     <div class="list">${show.map(p => `<div class="pl"><div class="pl-main"><span class="dc-n">${rankOf.get(p.id)}</span><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">${esc(p.college || '')} · age ${p.age}${p.realPick && p.realPick.rnd ? ` · real: R${p.realPick.rnd} #${p.realPick.pick}` : ''}</div></div>
-      <div class="pl-r"><span class="lbl">OVR</span>${rating(G.shownOvr(L, p))}</div><div class="pl-r"><span class="lbl">POT</span>${rating(G.shownPot(L, p))}</div></div></div>`).join('') || '<p class="small">No graded prospects at this position yet.</p>'}</div>
+      <div class="pl-r"><span class="lbl">OVR</span>${rating(G.shownOvr(L, p))}</div><div class="pl-r"><span class="lbl">POT</span>${rating(G.shownPot(L, p))}</div>${p.scout != null ? `<div class="pl-r cons"><span class="lbl">LEAGUE</span>${rating(p.scout)}</div>` : ''}</div></div>`).join('') || '<p class="small">No graded prospects at this position yet.</p>'}</div>
     ${list.length > show.length ? `<div class="row"><button class="btn" data-act="prMore">Show more (${list.length - show.length} left)</button></div>` : ''}</section>`;
 }
 
@@ -6469,7 +6494,7 @@ function vCoach() {
   const st = me().staff, win = G.coachWindow(L), sb = G.staffBonus(L, L.user);
   const medTxt = x => { const m = Math.round((1 - Math.max(0.75, Math.min(1.3, 1 - (x.r - 60) * 0.008))) * 100); return Math.abs(m) < 2 ? 'About average at preventing and treating injuries' : m > 0 ? `${m}% fewer injuries, ${m}% quicker recoveries than an average staff` : `${-m}% more injuries, ${-m}% slower recoveries than an average staff`; };
   const prefTxt = x => x.role === 'oc' ? ({ run: 'Prefers run-first schemes', bal: 'Prefers balanced schemes', pass: 'Prefers pass-first schemes' })[x.pref] : x.role === 'dc' ? ({ soft: "Prefers bend-don't-break schemes", bal: 'Prefers balanced schemes', blitz: 'Prefers pressure schemes' })[x.pref]
-    : x.role === 'sc' ? `Sees through about ${Math.round(G.scoutSkill(x).skill * 100)}% of the draft consensus's misses` : x.role === 'md' ? medTxt(x) : 'Game day and player development';
+    : x.role === 'sc' ? `Sees through about ${Math.round(G.scoutSkill(x).skill * 100)}% of the draft consensus's misses${(() => { const r = (x.rev || []).slice(-1)[0], all = x.rev || []; if (!r) return ''; const beat = all.filter(v => v.cons - v.miss >= 1).length; return `<br>Last review (${r.y} class): off by ${r.miss} vs ${r.cons} for the consensus, <span class="${r.d > 0 ? 'good' : r.d < 0 ? 'bad' : ''}">${r.d > 0 ? '+' + r.d : r.d < 0 ? r.d : '±0'} rating</span>${r.best ? `, best call ${esc(r.best)}` : ''}${all.length > 1 ? ` · beat the consensus in ${beat} of ${all.length} classes` : ''}`; })()}` : x.role === 'md' ? medTxt(x) : 'Game day and player development';
   const match = x => (x.role === 'oc' && x.pref === c.off) || (x.role === 'dc' && x.pref === c.def);
   const B = G.budgetInfo(L, L.user), spent = G.staffSpend(L, L.user), left = B.total - spent;
   const salTxt = x => x.interim ? 'interim' : G.money(G.staffSal(L, x)) + '/yr';
