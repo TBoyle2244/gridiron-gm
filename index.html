@@ -1642,7 +1642,7 @@ const STAFF_ROLES = ['hc', 'oc', 'dc', 'sc', 'md'];
 /* ---------- staff budget ----------
    The owner sets a yearly budget for the five staff jobs. Bigger markets and better teams get more.
    Salaries scale with the era (a share of the league's average player salary) and with rating. */
-const ROLE_PAY = { hc: 2.2, oc: 0.9, dc: 0.9, sc: 0.45, md: 0.35 };
+const ROLE_PAY = { hc: 2.2, oc: 0.9, dc: 0.9, sc: 0.9, md: 0.35 };
 const MARKET_BIG = ['New York', 'Los Angeles', 'Chicago', 'Dallas', 'Philadelphia', 'San Francisco', 'Washington', 'Houston', 'Boston', 'New England'];
 const MARKET_SMALL = ['Green Bay', 'Buffalo', 'Jacksonville', 'Cincinnati', 'New Orleans', 'Kansas City', 'Indianapolis', 'Tennessee', 'Cleveland', 'Pittsburgh', 'Nashville', 'Memphis'];
 function marketOf(t) { const c = t.city || ''; return MARKET_BIG.some(x => c.includes(x)) ? 'big' : MARKET_SMALL.some(x => c.includes(x)) ? 'small' : 'mid'; }
@@ -1655,13 +1655,15 @@ function budgetInfo(L, tid) {
   const t = L.teams[tid], h = t.hist || [], last = h.slice(-2);
   const wp = last.length ? last.reduce((a, x) => a + (x.w + x.t / 2) / Math.max(1, x.w + x.l + x.t), 0) / last.length : 0.5;
   const mk = marketOf(t), win = 0.9 + wp * 0.2;
-  const base = avgSalary(L.year) * Object.values(ROLE_PAY).reduce((a, x) => a + x, 0) * 0.9;
+  const base = avgSalary(L.year) * 5.1 * 0.9; // a bit less than an all-average staff costs: you have to choose
   const total = Math.round(base * MARKET_MUL[mk] * win / 10) * 10;
   return { total, market: mk, marketName: MARKET_NAME[mk], wp, mult: MARKET_MUL[mk] * win };
 }
 function staffSpend(L, tid) { const st = L.teams[tid].staff || {}; return STAFF_ROLES.reduce((a, r) => a + (st[r] && !st[r].interim ? staffSal(L, st[r]) : 0), 0); }
-// How far off your scout's grades usually are (one standard deviation, in rating points)
-function scoutErr(c) { return c ? clamp(9 - (c.r - 35) * 0.12, 2, 9) : 10; }
+// A scout starts from the league consensus (where a player was really drafted, his college) and sees part of
+// the way past it: skill = share of the consensus's miss he corrects; err = his own random misses on top.
+function scoutSkill(c) { return c ? { skill: clamp(0.15 + (c.r - 50) * 0.0065, 0.05, 0.45), err: clamp(6 - (c.r - 35) * 0.06, 2.5, 6.5) } : { skill: 0.03, err: 7 }; }
+function scoutErr(c) { return scoutSkill(c).err; }
 // Medical staff: fewer injuries and shorter ones with a good staff
 function medMul(L, tid) { const t = L.teams[tid], c = t && t.staff && t.staff.md; return c ? clamp(1 - (c.r - 60) * 0.008, 0.75, 1.3) : 1.3; }
 function genCoach(L, role, mean) {
@@ -4026,12 +4028,15 @@ function potKnown(L, p) {
 // What a team's scouting director thinks a prospect is now (ovr) and will become (pot).
 // Each scout has his own consistent misses; a better scout misses by less.
 function scoutRead(L, tid, p) {
-  const t = L.teams[tid], c = t && t.staff && t.staff.sc, e = scoutErr(c);
+  const t = L.teams[tid], c = t && t.staff && t.staff.sc, S = scoutSkill(c), e = S.err;
   let h = 2166136261 ^ ((c ? c.id : 7) * 7919) ^ (p.id * 104729);
   const rnd = () => { h += 0x6D2B79F5; let x = h; x = Math.imul(x ^ x >>> 15, x | 1); x ^= x + Math.imul(x ^ x >>> 7, x | 61); return ((x ^ x >>> 14) >>> 0) / 4294967296; };
   const nrm = () => Math.sqrt(-2 * Math.log(Math.max(1e-9, rnd()))) * Math.cos(2 * Math.PI * rnd());
-  const o = clamp(Math.round(p.ovr + nrm() * e * 0.7), 25, 99), pt = clamp(Math.round(p.pot + nrm() * e), 30, 99);
-  return { ovr: o, pot: Math.max(o, pt), err: e };
+  // consensus: the public grade for his ceiling, and his current level read the same way
+  const cPot = p.scout != null ? p.scout : p.pot, cOvr = p.ovr + (cPot - p.pot) * 0.6;
+  const o = clamp(Math.round(cOvr + Math.min(1, S.skill + 0.2) * (p.ovr - cOvr) + nrm() * e * 0.7), 25, 99);
+  const pt = clamp(Math.round(cPot + S.skill * (p.pot - cPot) + nrm() * e), 30, 99);
+  return { ovr: o, pot: Math.max(o, pt), err: e, skill: S.skill };
 }
 function hasScout(L) { return !!(L.teams[L.user] && L.teams[L.user].staff); }
 function shownPot(L, p) { return potKnown(L, p) ? p.pot : hasScout(L) ? scoutRead(L, L.user, p).pot : p.scout; }
@@ -4955,7 +4960,7 @@ function careerLegacy(L) {
   return { score: Math.round(s), line: line && Math.round(line), pct: line ? Math.round(s / line * 100) : null, rings, jerseys, hof: p.hof || 0, verdict: C.verdict || null };
 }
 
-const API = { STAFF_ROLES, budgetInfo, staffSpend, staffSal, staffAsk, scoutErr, medMul, scoutRead, shownOvr, revealWeek, marketOf, playerType, capPlan, minSalary, psPay, ensureAllAttrs, refreshAttrs, bodyText, careerAttrPreview, setCareerDrill, ATTR_SHORT, ATTR_KEYS, ATTR_NAME, attrs, attrOf, attrDelta, topAttr, attrSource, htText, ensureAttrs, attrFit, CAREER_STYLES, injText, injName, careerAgain, execTrade, setContract, SHAPES, contractTable, restructure, restructureInfo, june1Left, cashFor, baseFor, proLeft, careerScheme, careerStanding, careerAcceptRole, PB_SLOTS, proBowl, stadium, forecast, wxText, wxEffect, recordBook, REC_KEYS, careerSwitchOpts, careerSwitch, careerEarnings, careerCoachOpts, careerBecomeCoach, careerCoachNow, careerFrontOfficeOpts, careerToGM, NO_TEAM, CAREER_TIERS, CAREER_Q, CAREER_GRPS, CAREER_POS, CAREER_FOCUS, CAREER_PLANS, careerPreview, careerClass, startCareer, careerCreate, careerChooseReal, careerP, isCareer, careerRole, careerOffers, careerSign, careerHaggle, careerDiscount, careerRaiseInfo, careerAskRaise, careerHoldout, careerAskStart, careerRequestTrade, careerCancelTrade, careerTakeDeal, careerDeclineDeals, canTradeNow, setCareerFocus, setCareerPlan, careerGoalStatus, careerAwardRace, careerNext, careerSimYear, careerCanRetire, careerRetire, careerRanks, careerLegacy, careerTotal, hofLine, dismissAlert, STAT_NAME, COLLEGES, plog, practiceSquad, unsignedRights, psSize, psEligible, toPracticeSquad, promoteFromPS, signFromPS, signRefuserIfMoved, optionInfo, exerciseOption, declineOption, transitionTag, tagPrice, tradeablePick, rookieYears, playerFit, moraleReasons, holdoutInfo, marketFor, marketView, footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
+const API = { scoutSkill, STAFF_ROLES, budgetInfo, staffSpend, staffSal, staffAsk, scoutErr, medMul, scoutRead, shownOvr, revealWeek, marketOf, playerType, capPlan, minSalary, psPay, ensureAllAttrs, refreshAttrs, bodyText, careerAttrPreview, setCareerDrill, ATTR_SHORT, ATTR_KEYS, ATTR_NAME, attrs, attrOf, attrDelta, topAttr, attrSource, htText, ensureAttrs, attrFit, CAREER_STYLES, injText, injName, careerAgain, execTrade, setContract, SHAPES, contractTable, restructure, restructureInfo, june1Left, cashFor, baseFor, proLeft, careerScheme, careerStanding, careerAcceptRole, PB_SLOTS, proBowl, stadium, forecast, wxText, wxEffect, recordBook, REC_KEYS, careerSwitchOpts, careerSwitch, careerEarnings, careerCoachOpts, careerBecomeCoach, careerCoachNow, careerFrontOfficeOpts, careerToGM, NO_TEAM, CAREER_TIERS, CAREER_Q, CAREER_GRPS, CAREER_POS, CAREER_FOCUS, CAREER_PLANS, careerPreview, careerClass, startCareer, careerCreate, careerChooseReal, careerP, isCareer, careerRole, careerOffers, careerSign, careerHaggle, careerDiscount, careerRaiseInfo, careerAskRaise, careerHoldout, careerAskStart, careerRequestTrade, careerCancelTrade, careerTakeDeal, careerDeclineDeals, canTradeNow, setCareerFocus, setCareerPlan, careerGoalStatus, careerAwardRace, careerNext, careerSimYear, careerCanRetire, careerRetire, careerRanks, careerLegacy, careerTotal, hofLine, dismissAlert, STAT_NAME, COLLEGES, plog, practiceSquad, unsignedRights, psSize, psEligible, toPracticeSquad, promoteFromPS, signFromPS, signRefuserIfMoved, optionInfo, exerciseOption, declineOption, transitionTag, tagPrice, tradeablePick, rookieYears, playerFit, moraleReasons, holdoutInfo, marketFor, marketView, footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
   value, release, sign, proposeTrade, tradeVerdict, teamPicks, pickById, pickLabel, projectedOverall, pickWeight, playerWeight, ensurePicks, myDraftSlots, aiTrades, acceptOffer, rejectOffer, offerValid, cutTo, ratings, teamOverall, startRegular, canStartSeason, simWeek, simPlayoffRound, roundName,
   sortTeams, divisions, pct, startDraft, onClock, makePick, aiPick, draftUntilUser, draftAll, scoutPlayer, beginDraft, SCOUT_VISITS, endDraft, startNextSeason, leaders, potKnown, shownPot, roman, addNews };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.GG = API;
@@ -5049,7 +5054,7 @@ const HELP = [
 <li><b>Develop young starters.</b> Starters 26 and under who play most of the season get an extra development bump in the offseason.</li>
 <li><b>Staff and budget.</b> Five jobs: head coach, offensive and defensive coordinators, director of scouting and head of medical staff. Each offseason the owner sets a staff budget from your market size (New York, Los Angeles, Chicago and the like get the most; Green Bay, Buffalo and other small markets the least) and how much you've won over the last two seasons. Better staff cost more, and you can't hire anyone who doesn't fit what's left. If the budget shrinks below what you already pay, you keep your staff but can't hire until you're under it.</li>
 <li><b>Coordinators and head coach.</b> Their ratings add to your team. A coordinator whose preferred style matches your scheme gives his full boost. The head coach helps on game day and with young players. Coaches' ratings rise after good seasons and fall after bad ones.</li>
-<li><b>Director of scouting.</b> He grades every draft prospect: a rating for how good he is now and one for how good he can become. A 90 scout is usually within about 2 points; a 50 scout can be off by 7 or more, and each scout has his own blind spots. Other teams draft on their own scouts' grades. Your rookies' true ratings show halfway through their first season, along with a news item saying how close your scout was.</li>
+<li><b>Director of scouting.</b> He grades every draft prospect: how good he is now (OVR) and how good he can become (POT). He starts from the league consensus (where the player was really drafted, his college) and sees part of the way past it: a 90 scout catches about 40% of what the consensus gets wrong, a 50 scout about 15%, and every scout adds blind spots of his own. So even a great scout sees a 6th-round Hall of Famer as a solid early-round prospect, not a future star. Good scouts cost about as much as a coordinator. Your rookies' true ratings show halfway through their first season, with a news item on how close your scout was.</li>
 <li><b>Medical staff.</b> A good one means fewer injuries and quicker recoveries (up to about 25% better than average); a bad one, the reverse.</li>
 <li><b>Unit ratings.</b> Your offense, defense and every position group at a glance.</li>
 </ul>` },
@@ -5130,7 +5135,7 @@ const HELP = [
 <ul>
 <li><b>Real draft classes.</b> Every class from 1971 on is the real one, with real names, positions and colleges. How good each one turns out is based on his real career. Your director of scouting sees that only as well as his rating allows, so a weak scout still misses steals and busts.</li>
 <li><b>Draft class board</b> (League tab → Draft class). During the season, next year's class fills in as your scouts see more players each week, in random order. Sort it by position and grade.</li>
-<li><b>Your scout's grades.</b> Your director of scouting (Coach tab) grades every prospect for now (OVR) and his ceiling (POT). How close he gets depends on his rating: a top scout is usually within 2 points, a poor one can miss by 7 or more. Every team's scout has his own blind spots, so AI teams draft on different boards. The true numbers show halfway through a player's rookie season.</li>
+<li><b>Your scout's grades.</b> Your director of scouting (Coach tab) grades every prospect for now (OVR) and his ceiling (POT). He starts from the consensus and corrects part of its misses (about 15% for a 50-rated scout, 40% for a 90), plus blind spots of his own. Other teams draft on their own scouts' boards. The true numbers show halfway through a player's rookie season.</li>
 <li><b>Draft tracker.</b> On draft day, every pick shows up as it's made, newest first, with the round, team, college, your scouts' grade and where he really went. Filter by round or team. Past drafts (the last 15) are under League → Draft results.</li>
 <li><b>Draft day.</b> Draft when you're on the clock, sim to your next pick, let your scouts pick, or auto-draft the rest. AI teams may offer to trade up for your pick: accept or keep the pick. AI teams also trade picks with each other.</li>
 <li><b>Compensatory picks</b> (from 1994): teams that lose more good free agents than they sign get up to 4 extra picks in rounds 3–7, placed at the end of the round. They can't be traded until 2017, when the NFL started allowing it.</li>
@@ -5274,7 +5279,7 @@ const HELP_FOR_TAB = { home: 'office', roster: 'roster', stats: 'stats', league:
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-21a';
+const APP_VERSION = '2026-11-21b';
 let SLOT = (() => { try { return localStorage.getItem('gg-slot') === 'career' ? 'career' : 'league'; } catch (e) { return 'league'; } })();
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
@@ -5809,12 +5814,12 @@ function vDraft() {
   if (c === null) return `<section class="card hero"><div class="eyebrow">${D.year} draft</div><h2>All ${D.rounds} rounds are complete</h2><div class="row"><button class="btn primary" data-act="endDraft">Finish the draft</button></div></section>` + myPicks() + draftTracker(D.log, D.year, D.rounds, n, false);
   const rnd = Math.floor(D.pick / n) + 1, pk = D.pick % n + 1, mine = started && c === L.user;
   const slots = G.myDraftSlots(L), ord = slots.length ? 'at #' + slots.slice(0, 8).join(', #') + (slots.length > 8 ? ` and ${slots.length - 8} more` : '') : 'nowhere (you traded all your picks)';
-  const sc = me().staff && me().staff.sc, err = G.scoutErr(sc);
-  const visitTxt = sc ? `Grades from your director of scouting, <b>${esc(sc.name)}</b> (rating ${sc.r}): usually within <b>±${Math.round(err)}</b> points` : 'No director of scouting: your grades are rough guesses (±10 points)';
+  const sc = me().staff && me().staff.sc, SK = G.scoutSkill(sc);
+  const visitTxt = sc ? `Grades from your director of scouting, <b>${esc(sc.name)}</b> (rating ${sc.r}). He starts from the league's consensus and sees through about <b>${Math.round(SK.skill * 100)}%</b> of what it gets wrong` : 'No director of scouting: your board is basically the league consensus';
   let h;
   if (!started) {
     h = `<section class="card hero"><div class="eyebrow">${D.year} draft · Draft board</div><h2>Your scouts' board is ready</h2>
-      <p>${visitTxt}. Every prospect has a grade for how good he is now (OVR) and how good he can become (POT). A better scout misses by less, and every scout has his own blind spots.</p>
+      <p>${visitTxt}. Every prospect has a grade for how good he is now (OVR) and how good he can become (POT). A better scout finds more of the real steals and busts, and every scout has his own blind spots.</p>
       <p class="small">Your picks: ${ord}. Other teams draft on their own scouts' grades. Your rookies' true ratings show halfway through their first season.</p>
       <div class="row"><button class="btn primary" data-act="beginDraft">Begin the draft</button></div></section>`;
   } else {
@@ -6301,7 +6306,7 @@ function draftClassView() {
     : L.phase === 'regular' ? `Week ${L.week} of ${games}: scouts grade a random batch of prospects every week, not best-first, so a top player can turn up late.` : 'Every prospect has been graded.';
   const rankOf = new Map(seen.slice().sort((a, b) => G.shownPot(L, b) - G.shownPot(L, a)).map((p, i) => [p.id, i + 1]));
   return `<section class="card"><div class="split"><h3>${C.year} draft class</h3><span class="count">${seen.length} / ${all.length}</span></div>
-    <p class="small">${stage} ${C.real ? 'This is the real class you imported.' : `No ${C.year} class has been imported, so these prospects are generated.`} These are your director of scouting's grades${me().staff && me().staff.sc ? ` (${esc(me().staff.sc.name)}, usually within ±${Math.round(G.scoutErr(me().staff.sc))})` : ' (no scout: ±10)'}. True ratings show halfway through a player's rookie season.</p>
+    <p class="small">${stage} ${C.real ? 'This is the real class you imported.' : `No ${C.year} class has been imported, so these prospects are generated.`} These are your director of scouting's grades${me().staff && me().staff.sc ? ` (${esc(me().staff.sc.name)}, sees through about ${Math.round(G.scoutSkill(me().staff.sc).skill * 100)}% of the consensus's misses)` : ' (no scout: basically the consensus)'}. True ratings show halfway through a player's rookie season.</p>
     ${chips('prGrp', g)}
     <div class="list">${show.map(p => `<div class="pl"><div class="pl-main"><span class="dc-n">${rankOf.get(p.id)}</span><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">${esc(p.college || '')} · age ${p.age}${p.realPick && p.realPick.rnd ? ` · real: R${p.realPick.rnd} #${p.realPick.pick}` : ''}</div></div>
       <div class="pl-r"><span class="lbl">OVR</span>${rating(G.shownOvr(L, p))}</div><div class="pl-r"><span class="lbl">POT</span>${rating(G.shownPot(L, p))}</div></div></div>`).join('') || '<p class="small">No graded prospects at this position yet.</p>'}</div>
@@ -6464,7 +6469,7 @@ function vCoach() {
   const st = me().staff, win = G.coachWindow(L), sb = G.staffBonus(L, L.user);
   const medTxt = x => { const m = Math.round((1 - Math.max(0.75, Math.min(1.3, 1 - (x.r - 60) * 0.008))) * 100); return Math.abs(m) < 2 ? 'About average at preventing and treating injuries' : m > 0 ? `${m}% fewer injuries, ${m}% quicker recoveries than an average staff` : `${-m}% more injuries, ${-m}% slower recoveries than an average staff`; };
   const prefTxt = x => x.role === 'oc' ? ({ run: 'Prefers run-first schemes', bal: 'Prefers balanced schemes', pass: 'Prefers pass-first schemes' })[x.pref] : x.role === 'dc' ? ({ soft: "Prefers bend-don't-break schemes", bal: 'Prefers balanced schemes', blitz: 'Prefers pressure schemes' })[x.pref]
-    : x.role === 'sc' ? `Draft grades usually within ±${Math.round(G.scoutErr(x))} points` : x.role === 'md' ? medTxt(x) : 'Game day and player development';
+    : x.role === 'sc' ? `Sees through about ${Math.round(G.scoutSkill(x).skill * 100)}% of the draft consensus's misses` : x.role === 'md' ? medTxt(x) : 'Game day and player development';
   const match = x => (x.role === 'oc' && x.pref === c.off) || (x.role === 'dc' && x.pref === c.def);
   const B = G.budgetInfo(L, L.user), spent = G.staffSpend(L, L.user), left = B.total - spent;
   const salTxt = x => x.interim ? 'interim' : G.money(G.staffSal(L, x)) + '/yr';

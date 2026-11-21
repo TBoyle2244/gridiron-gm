@@ -2,7 +2,7 @@
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-21a';
+const APP_VERSION = '2026-11-21b';
 let SLOT = (() => { try { return localStorage.getItem('gg-slot') === 'career' ? 'career' : 'league'; } catch (e) { return 'league'; } })();
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
@@ -537,12 +537,12 @@ function vDraft() {
   if (c === null) return `<section class="card hero"><div class="eyebrow">${D.year} draft</div><h2>All ${D.rounds} rounds are complete</h2><div class="row"><button class="btn primary" data-act="endDraft">Finish the draft</button></div></section>` + myPicks() + draftTracker(D.log, D.year, D.rounds, n, false);
   const rnd = Math.floor(D.pick / n) + 1, pk = D.pick % n + 1, mine = started && c === L.user;
   const slots = G.myDraftSlots(L), ord = slots.length ? 'at #' + slots.slice(0, 8).join(', #') + (slots.length > 8 ? ` and ${slots.length - 8} more` : '') : 'nowhere (you traded all your picks)';
-  const sc = me().staff && me().staff.sc, err = G.scoutErr(sc);
-  const visitTxt = sc ? `Grades from your director of scouting, <b>${esc(sc.name)}</b> (rating ${sc.r}): usually within <b>±${Math.round(err)}</b> points` : 'No director of scouting: your grades are rough guesses (±10 points)';
+  const sc = me().staff && me().staff.sc, SK = G.scoutSkill(sc);
+  const visitTxt = sc ? `Grades from your director of scouting, <b>${esc(sc.name)}</b> (rating ${sc.r}). He starts from the league's consensus and sees through about <b>${Math.round(SK.skill * 100)}%</b> of what it gets wrong` : 'No director of scouting: your board is basically the league consensus';
   let h;
   if (!started) {
     h = `<section class="card hero"><div class="eyebrow">${D.year} draft · Draft board</div><h2>Your scouts' board is ready</h2>
-      <p>${visitTxt}. Every prospect has a grade for how good he is now (OVR) and how good he can become (POT). A better scout misses by less, and every scout has his own blind spots.</p>
+      <p>${visitTxt}. Every prospect has a grade for how good he is now (OVR) and how good he can become (POT). A better scout finds more of the real steals and busts, and every scout has his own blind spots.</p>
       <p class="small">Your picks: ${ord}. Other teams draft on their own scouts' grades. Your rookies' true ratings show halfway through their first season.</p>
       <div class="row"><button class="btn primary" data-act="beginDraft">Begin the draft</button></div></section>`;
   } else {
@@ -1029,7 +1029,7 @@ function draftClassView() {
     : L.phase === 'regular' ? `Week ${L.week} of ${games}: scouts grade a random batch of prospects every week, not best-first, so a top player can turn up late.` : 'Every prospect has been graded.';
   const rankOf = new Map(seen.slice().sort((a, b) => G.shownPot(L, b) - G.shownPot(L, a)).map((p, i) => [p.id, i + 1]));
   return `<section class="card"><div class="split"><h3>${C.year} draft class</h3><span class="count">${seen.length} / ${all.length}</span></div>
-    <p class="small">${stage} ${C.real ? 'This is the real class you imported.' : `No ${C.year} class has been imported, so these prospects are generated.`} These are your director of scouting's grades${me().staff && me().staff.sc ? ` (${esc(me().staff.sc.name)}, usually within ±${Math.round(G.scoutErr(me().staff.sc))})` : ' (no scout: ±10)'}. True ratings show halfway through a player's rookie season.</p>
+    <p class="small">${stage} ${C.real ? 'This is the real class you imported.' : `No ${C.year} class has been imported, so these prospects are generated.`} These are your director of scouting's grades${me().staff && me().staff.sc ? ` (${esc(me().staff.sc.name)}, sees through about ${Math.round(G.scoutSkill(me().staff.sc).skill * 100)}% of the consensus's misses)` : ' (no scout: basically the consensus)'}. True ratings show halfway through a player's rookie season.</p>
     ${chips('prGrp', g)}
     <div class="list">${show.map(p => `<div class="pl"><div class="pl-main"><span class="dc-n">${rankOf.get(p.id)}</span><span class="pos">${esc(p.pos)}</span><div class="pl-name">${esc(p.name)}<div class="pl-sub">${esc(p.college || '')} · age ${p.age}${p.realPick && p.realPick.rnd ? ` · real: R${p.realPick.rnd} #${p.realPick.pick}` : ''}</div></div>
       <div class="pl-r"><span class="lbl">OVR</span>${rating(G.shownOvr(L, p))}</div><div class="pl-r"><span class="lbl">POT</span>${rating(G.shownPot(L, p))}</div></div></div>`).join('') || '<p class="small">No graded prospects at this position yet.</p>'}</div>
@@ -1192,7 +1192,7 @@ function vCoach() {
   const st = me().staff, win = G.coachWindow(L), sb = G.staffBonus(L, L.user);
   const medTxt = x => { const m = Math.round((1 - Math.max(0.75, Math.min(1.3, 1 - (x.r - 60) * 0.008))) * 100); return Math.abs(m) < 2 ? 'About average at preventing and treating injuries' : m > 0 ? `${m}% fewer injuries, ${m}% quicker recoveries than an average staff` : `${-m}% more injuries, ${-m}% slower recoveries than an average staff`; };
   const prefTxt = x => x.role === 'oc' ? ({ run: 'Prefers run-first schemes', bal: 'Prefers balanced schemes', pass: 'Prefers pass-first schemes' })[x.pref] : x.role === 'dc' ? ({ soft: "Prefers bend-don't-break schemes", bal: 'Prefers balanced schemes', blitz: 'Prefers pressure schemes' })[x.pref]
-    : x.role === 'sc' ? `Draft grades usually within ±${Math.round(G.scoutErr(x))} points` : x.role === 'md' ? medTxt(x) : 'Game day and player development';
+    : x.role === 'sc' ? `Sees through about ${Math.round(G.scoutSkill(x).skill * 100)}% of the draft consensus's misses` : x.role === 'md' ? medTxt(x) : 'Game day and player development';
   const match = x => (x.role === 'oc' && x.pref === c.off) || (x.role === 'dc' && x.pref === c.def);
   const B = G.budgetInfo(L, L.user), spent = G.staffSpend(L, L.user), left = B.total - spent;
   const salTxt = x => x.interim ? 'interim' : G.money(G.staffSal(L, x)) + '/yr';
