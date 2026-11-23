@@ -5394,7 +5394,7 @@ const HELP_FOR_TAB = { home: 'office', roster: 'roster', stats: 'stats', league:
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-23a';
+const APP_VERSION = '2026-11-23b';
 let SLOT = (() => { try { return localStorage.getItem('gg-slot') === 'career' ? 'career' : 'league'; } catch (e) { return 'league'; } })();
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
@@ -6184,8 +6184,15 @@ function expDraftCard() {
   const X = L.exp; if (!X) return '';
   const R0 = G.expRules(X.y), clock = G.expOnClock(L), mineN = X.log.filter(e => e.tid === L.user).length, left = X.want[L.user];
   const others = X.teams.filter(id => id !== L.user);
-  const g = ui.expGrp || 'ALL';
-  const pool = X.avail.map(id => L.players[id]).filter(p => p && (g === 'ALL' || p.grp === g)).sort((a, b) => b.ovr - a.ovr || a.age - b.age).slice(0, ui.expShow || 60);
+  const g = ui.expGrp || 'ALL', ft = ui.expTeam == null ? -1 : +ui.expTeam, srt = ui.expSort || 'ovr';
+  const byTeam = {}; X.avail.forEach(id => { const p = L.players[id]; if (p) byTeam[p.team] = (byTeam[p.team] || 0) + 1; });
+  const tName = id => L.teams[id].abbr;
+  const sorter = srt === 'team' ? (a, b) => tName(a.team).localeCompare(tName(b.team)) || b.ovr - a.ovr
+    : srt === 'age' ? (a, b) => a.age - b.age || b.ovr - a.ovr : srt === 'pot' ? (a, b) => G.shownPot(L, b) - G.shownPot(L, a) || b.ovr - a.ovr : (a, b) => b.ovr - a.ovr || a.age - b.age;
+  const list = X.avail.map(id => L.players[id]).filter(p => p && (g === 'ALL' || p.grp === g) && (ft < 0 || p.team === ft)).sort(sorter);
+  const pool = list.slice(0, ui.expShow || 60);
+  const teamSel = `<label class="fld">Team<select id="expTeam"><option value="-1"${ft < 0 ? ' selected' : ''}>All teams</option>${L.teams.filter(t => byTeam[t.id]).sort((a, b) => a.abbr.localeCompare(b.abbr)).map(t => { const lost = X.lost[t.id] || 0, full = lost >= R0.perTeam; return `<option value="${t.id}"${ft === t.id ? ' selected' : ''}>${esc(t.abbr)} ${esc(t.name)}: ${byTeam[t.id]} available${full ? ' (limit reached)' : lost ? `, ${lost}/${R0.perTeam} taken` : ''}</option>`; }).join('')}</select></label>`;
+  const sortSegE = `<div class="sortrow"><span class="lbl">SORT</span><div class="seg mini">${[['ovr', 'Overall'], ['pot', 'Potential'], ['team', 'Team'], ['age', 'Age']].map(([k, n]) => `<button class="${srt === k ? 'on' : ''}" data-act="sort" data-key="expSort" data-id="${k}">${n}</button>`).join('')}</div></div>`;
   const have = {}; G.roster(L, L.user).forEach(p => have[p.grp] = (have[p.grp] || 0) + 1);
   const need = G.GRPS.map(x => `${x} ${have[x] || 0}/${G.STARTERS[x]}`).join(' · ');
   const row = p => { const ok = G.expCanTake(L, p); return `<div class="pl wide"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name"><button class="lnk" data-act="pl" data-id="${p.id}">${esc(p.name)}</button><div class="pl-sub">${esc(L.teams[p.team].abbr)} · Age <b>${p.age}</b> · ${conText(p)}${(() => { const ty = G.playerType(p); return ty ? ' · ' + esc(ty.name) : ''; })()}${ok ? '' : ` · <span class="bad">${esc(L.teams[p.team].abbr)} has lost ${R0.perTeam} already</span>`}</div></div>
@@ -6198,9 +6205,9 @@ function expDraftCard() {
     <p class="small">Starters you have: ${need}</p>
     <div class="row">${clock === L.user ? `<button class="btn" data-act="expAuto">Auto-pick for me</button>` : ''}<button class="btn" data-act="expAll">Auto-draft the rest</button>${confirmBtn('expStop', `Stop at ${mineN} players`)}</div>
     <p class="small">After this: the ${X.y} college draft (you pick first in every round), then free agency.</p></section>
-  <section class="card"><div class="split"><h3>Available</h3><span class="count">${X.avail.length}</span></div>${chips('expGrp', g)}
+  <section class="card"><div class="split"><h3>Available</h3><span class="count">${list.length}${list.length !== X.avail.length ? ' of ' + X.avail.length : ''}</span></div>${teamSel}${chips('expGrp', g)}${sortSegE}
     <div class="list">${pool.map(row).join('') || '<p class="small">Nobody left at this position.</p>'}</div>
-    ${X.avail.length > pool.length && g === 'ALL' ? `<div class="row"><button class="btn sm" data-act="expMore">Show more</button></div>` : ''}</section>
+    ${list.length > pool.length ? `<div class="row"><button class="btn sm" data-act="expMore">Show more</button></div>` : ''}</section>
   ${log ? `<section class="card"><h3>Latest picks</h3><ul class="clean">${log}</ul></section>` : ''}`;
 }
 function expansionCard() {
@@ -7296,6 +7303,7 @@ document.addEventListener('change', e => {
   else if (t.id === 'tradeTeam') { ui.tradeTeam = +t.value; ui.get = []; ui.getTeam = null; render(); }
   else if (t.id === 'aggr') { me().coach.aggr = +t.value; save(); render(); }
   else if (t.id === 'startYear') { ui.startYear = +t.value; ui.startTeam = $('#pickTeam') && $('#pickTeam').value; render(); }
+  else if (t.id === 'expTeam') { ui.expTeam = +t.value; ui.expShow = 60; render(); }
   else if (t.id === 'pickTeam') { ui.startTeam = t.value; render(); }
   else if (t.id === 'youth') { me().coach.youth = t.checked; save(); }
   else if (t.id === 'impTeam') ui.impTeam = t.value;
