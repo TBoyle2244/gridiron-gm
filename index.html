@@ -850,7 +850,17 @@ function newLeague(imports, userPfr, opts) {
   if (gen.length) addNews(L, 'Generated placeholder rosters for: ' + gen.join(', ') + '.');
   const Y = clamp(Math.round((opts && opts.startYear) || 1970), START_FIRST, START_LAST);
   L.realCareers = !(opts && opts.realCareers === false);
-  if (Y > 1970) {
+  // Picking an expansion team in its first season starts the league at its expansion draft, the
+  // spring before: real rosters from the year before, no season to play, and the team to build from nothing.
+  const expStart = Y > 1970 && !!REAL && (EVENTS[Y] || []).some(e => e.t === 'expand' && e.team[0] === userPfr);
+  if (expStart) {
+    const Yb = Y - 1;
+    const n = buildFromReal(L, Yb, imports);
+    fillRosters(L, Yb);
+    L.news = []; L.year = Yb; L.phase = 'season-over'; L.startYear = Y; L.expStart = Y;
+    addNews(L, `The league starts in the spring of ${Y}, before the expansion draft. Every other team has its real ${Yb} roster (${n} real players). Build your team in the expansion draft, the ${Y} college draft and free agency.`);
+    beginExpansion(L, Y, userPfr);
+  } else if (Y > 1970) {
     const viaReal = !!REAL;
     const n = viaReal ? buildFromReal(L, Y, imports) : fastForward(L, Y, imports);
     fillRosters(L, Y);
@@ -2998,6 +3008,17 @@ function finishSeason(L) {
 
 /* ---------- draft ---------- */
 function draftOrder(L) {
+  const dy = L.year + 1, exp = L.teams.filter(t => t.expY === dy).map(t => t.id);
+  const base = L.playoffs && L.playoffs.seeds ? seasonOrder(L) : realOrder(L, dy);
+  return exp.concat(base.filter(id => !exp.includes(id)));
+}
+// No season played (a league that starts at an expansion draft): use the real draft's order
+function realOrder(L, dy) {
+  const rows = (DRAFTS && DRAFTS[dy]) || [], first = {};
+  rows.forEach(r => { const c = pfrForTm(r.Tm, dy), t = c && L.teams.find(x => x.pfr === c), pk = num(r.Pick); if (t && pk && (first[t.id] == null || pk < first[t.id])) first[t.id] = pk; });
+  return L.teams.map(t => t.id).sort((a, b) => (first[a] != null ? first[a] : 999) - (first[b] != null ? first[b] : 999));
+}
+function seasonOrder(L) {
   const P = L.playoffs, all = P.seeds.AFC.concat(P.seeds.NFC);
   // elimination round index: higher = went further
   const went = {}; all.forEach(t => went[t] = 0);
@@ -3040,6 +3061,8 @@ function scoutedYet(L, p) {
   return (p.sw || 0) <= L.week;
 }
 function startDraft(L, imports) {
+  if (L.phase === 'expansion') return 'Finish the expansion draft first.';
+  if (pendingExpansion(L, L.year + 1).length && beginExpansion(L, L.year + 1)) return 'expansion';
   const dy = L.year + 1, rounds = rules(dy).draftRounds, order = draftOrder(L);
   const rows = imports && imports.drafts && imports.drafts[dy];
   let pool = [];
@@ -3319,6 +3342,7 @@ function applyEvents(L) {
       }
       addNews(L, 'The league realigns into eight four-team divisions: East, North, South and West in each conference.');
     } else if (e.t === 'expand') {
+      if (L.teams.some(x => x.pfr === e.team[0])) continue; // joined before the draft
       const t = mkTeam(L.teams.length, e.team); L.teams.push(t); newTeams.push(t.id);
       addNews(L, `Expansion: the ${t.city} ${t.name} join the ${t.conf} ${t.div}.`);
     }
@@ -3339,7 +3363,7 @@ const EXP_RULES = {
 function expRules(y) { return EXP_RULES[y] || { mode: 'expose', expose: 5, perTeam: 2, picks: {} }; }
 function upcomingExpansion(L) {
   const y = L.year + 1; if (L.phase !== 'offseason' && L.phase !== 'draft' && L.phase !== 'season-over') return null;
-  const ev = (EVENTS[y] || []).filter(e => e.t === 'expand'); if (!ev.length) return null;
+  const ev = pendingExpansion(L, y); if (!ev.length) return null;
   return { y, teams: ev.map(e => e.team), rules: expRules(y) };
 }
 function expEligible(L, tid, y) { return roster(L, tid).filter(p => !(p.draft && p.draft.year === y) && !(p.draft && p.draft.year === y - 1 && (p.yrs || 0) === 0)); }
@@ -3363,47 +3387,110 @@ function toggleExp(L, pid) {
   else { if (E.ids.length >= lim) return X.rules.mode === 'protect' ? `You can protect ${lim} players. Unprotect someone first.` : `You've already exposed ${lim} players. Remove one first.`; E.ids.push(pid); }
   return null;
 }
-function runExpansionDraft(L, newIds, y) {
-  const R0 = expRules(y), lost = {}, mine = [], taken = {};
-  const avail = [];
+// Expansion teams join before the draft ahead of their first season (as they really did): the expansion
+// draft comes first, then they pick first in every round of the college draft.
+function pendingExpansion(L, y) { return (EVENTS[y] || []).filter(e => e.t === 'expand' && !L.teams.some(t => t.pfr === e.team[0])); }
+function addExpansionTeams(L, y) {
+  const ids = [];
+  for (const e of pendingExpansion(L, y)) {
+    const t = mkTeam(L.teams.length, e.team); t.expY = y; L.teams.push(t); ids.push(t.id);
+    addNews(L, `Expansion: the ${t.city} ${t.name} join the ${t.conf} ${t.div} for the ${y} season.`);
+  }
+  return ids;
+}
+// Returns true when the user has an expansion draft to make (phase 'expansion').
+function beginExpansion(L, y, userPfr) {
+  const ids = addExpansionTeams(L, y); if (!ids.length) return false;
+  if (userPfr) { const t = L.teams.find(x => x.pfr === userPfr); if (t) L.user = t.id; }
+  ensureStaff(L); ensurePicks(L);
+  const R0 = expRules(y);
+  const avail = expPool(L, ids, y);
+  const want = {}; ids.forEach(id => { const t = L.teams[id]; want[id] = (R0.picks && R0.picks[t.pfr]) || 30; });
+  L.exp = { y, teams: ids, avail: avail.map(p => p.id), want, lost: {}, turn: 0, log: [], prev: L.phase };
+  if (!ids.includes(L.user)) { expRun(L, true); return false; }
+  L.phase = 'expansion';
+  addNews(L, `The ${y} expansion draft is open. You can take up to ${want[L.user]} players, no more than ${R0.perTeam} from any one team.`);
+  expRun(L, false);
+  return true;
+}
+// Who each existing team leaves available
+function expPool(L, newIds, y) {
+  const R0 = expRules(y), avail = [];
   for (const t of L.teams) {
     if (newIds.includes(t.id)) continue;
     const el = expEligible(L, t.id, y);
-    let ids;
-    if (t.id === L.user && L.expList && L.expList.y === y) ids = L.expList.ids;
-    else ids = defaultExpList(L, t.id, y);
+    const ids = t.id === L.user && L.expList && L.expList.y === y ? L.expList.ids : defaultExpList(L, t.id, y);
     const set = new Set(ids);
     el.forEach(p => { if (R0.mode === 'protect' ? !set.has(p.id) : set.has(p.id)) avail.push(p); });
   }
-  avail.sort((a, b) => value(b) - value(a));
-  const want = {}; newIds.forEach(id => { const t = L.teams[id]; want[id] = (R0.picks && R0.picks[t.pfr]) || 30; });
-  let turn = 0, guard = 0;
-  while (newIds.some(id => want[id] > 0) && guard++ < 500) {
-    const tid = newIds[turn % newIds.length]; turn++;
-    if (want[tid] <= 0) continue;
-    const counts = groupCounts(L, tid);
-    let best = null, bs = -1e9;
-    for (const p of avail) {
-      if (p.team < 0 || (lost[p.team] || 0) >= R0.perTeam) continue;
-      const sc = value(p) + (counts[p.grp] < STARTERS[p.grp] + 1 ? 6 : 0) - (counts[p.grp] >= STARTERS[p.grp] * 2 + 1 ? 8 : 0);
-      if (sc > bs) { bs = sc; best = p; }
-    }
-    if (!best) break;
-    const from = best.team; lost[from] = (lost[from] || 0) + 1;
-    if (from === L.user) mine.push(`${best.pos} ${best.name} (${L.teams[tid].abbr})`);
-    plog(L, best, `Taken by ${L.teams[tid].abbr} in the ${y} expansion draft.`);
-    best.team = tid; delete best.ir; delete best.holdout; want[tid]--; taken[tid] = (taken[tid] || 0) + 1;
-    avail.splice(avail.indexOf(best), 1);
+  return avail.sort((a, b) => value(b) - value(a));
+}
+function expCanTake(L, p) { const X = L.exp; return p && X.avail.includes(p.id) && p.team >= 0 && !X.teams.includes(p.team) && (X.lost[p.team] || 0) < expRules(X.y).perTeam; }
+function expBest(L, tid) {
+  const X = L.exp, counts = groupCounts(L, tid); let best = null, bs = -1e9;
+  for (const id of X.avail) {
+    const p = L.players[id]; if (!expCanTake(L, p)) continue;
+    const sc = value(p) + (counts[p.grp] < STARTERS[p.grp] + 1 ? 6 : 0) - (counts[p.grp] >= STARTERS[p.grp] * 2 + 1 ? 8 : 0);
+    if (sc > bs) { bs = sc; best = p; }
   }
-  // fill out the new rosters
-  for (const tid of newIds) {
-    const max = rules(L.year).rosterMax, have = groupCounts(L, tid);
+  return best;
+}
+function expOnClock(L) { const X = L.exp; if (!X) return null; const live = X.teams.filter(id => X.want[id] > 0); if (!live.length) return null; for (let i = 0; i < X.teams.length; i++) { const tid = X.teams[(X.turn + i) % X.teams.length]; if (X.want[tid] > 0) return tid; } return null; }
+function expTake(L, tid, p) {
+  const X = L.exp, from = p.team;
+  X.lost[from] = (X.lost[from] || 0) + 1;
+  X.log.push({ tid, pid: p.id, from });
+  plog(L, p, `Taken by ${L.teams[tid].abbr} from ${L.teams[from].abbr} in the ${X.y} expansion draft.`);
+  if (from === L.user) addNews(L, `${L.teams[tid].abbr} took ${p.pos} ${p.name} from you in the expansion draft.`);
+  p.team = tid; delete p.ir; delete p.holdout; delete p.ps; X.want[tid]--;
+  X.avail.splice(X.avail.indexOf(p.id), 1);
+  X.turn = (X.teams.indexOf(tid) + 1) % X.teams.length;
+}
+// AI expansion teams pick until it's the user's turn (or everyone is done); all = auto-pick for the user too
+function expRun(L, all) {
+  let guard = 0;
+  while (guard++ < 500) {
+    const tid = expOnClock(L); if (tid == null) return expFinish(L);
+    if (tid === L.user && !all) return null;
+    const p = expBest(L, tid); if (!p) { L.exp.want[tid] = 0; continue; }
+    expTake(L, tid, p);
+  }
+}
+function expPick(L, pid) {
+  const X = L.exp; if (!X || L.phase !== 'expansion') return 'No expansion draft is running.';
+  if (expOnClock(L) !== L.user) return 'It is not your pick.';
+  const p = L.players[pid]; if (!expCanTake(L, p)) return p && X.avail.includes(p.id) ? `You've already taken ${expRules(X.y).perTeam} from the ${L.teams[p.team].name}.` : 'He is not available.';
+  expTake(L, L.user, p); expRun(L, false); return null;
+}
+function expAutoPick(L) { if (expOnClock(L) !== L.user) return 'It is not your pick.'; const p = expBest(L, L.user); if (!p) { L.exp.want[L.user] = 0; expRun(L, false); return null; } return expPick(L, p.id); }
+function expAutoAll(L) { if (!L.exp) return 'No expansion draft is running.'; expRun(L, true); return null; }
+// Stop taking players: the rest of your roster comes from the college draft and free agency
+function expStop(L) { if (!L.exp) return 'No expansion draft is running.'; L.exp.want[L.user] = 0; expRun(L, false); return null; }
+function expFinish(L) {
+  const X = L.exp; if (!X) return null;
+  // AI expansion teams fill out their rosters; yours is left for you to build
+  for (const tid of X.teams) {
+    if (tid === L.user) continue;
+    const max = rules(L.year + 1).rosterMax, have = groupCounts(L, tid);
     let size = roster(L, tid).length;
-    for (const g of GRPS) while (have[g] < STARTERS[g] + 1 && size < max) { genPlayer(L, g, tid, 54, [22, 30]); have[g]++; size++; }
-    while (size < max) { genPlayer(L, R.pick(['OL','DL','LB','DB','WR','RB']), tid, 50, [22, 29]); size++; }
+    for (const g of GRPS) while (have[g] < STARTERS[g] + 1 && size < max - 10) { genPlayer(L, g, tid, 54, [22, 30]); have[g]++; size++; }
   }
-  addNews(L, `${y} expansion draft: ${newIds.map(id => `${L.teams[id].city} took ${taken[id] || 0} players`).join(', ')}.${mine.length ? ' You lost ' + mine.join(', ') + '.' : ' You lost no one.'}`);
-  L.expList = null;
+  const taken = {}; X.log.forEach(e => taken[e.tid] = (taken[e.tid] || 0) + 1);
+  addNews(L, `${X.y} expansion draft: ${X.teams.map(id => `${L.teams[id].city} took ${taken[id] || 0} players`).join(', ')}.`);
+  L.expDone = { y: X.y, log: X.log };
+  if (L.phase === 'expansion') L.phase = X.prev || 'season-over';
+  L.exp = null; L.expList = null;
+  return 'done';
+}
+// Old one-shot version (leagues that reach an expansion year mid-save without the new flow)
+function runExpansionDraft(L, newIds, y) {
+  const R0 = expRules(y), avail = expPool(L, newIds, y), want = {};
+  newIds.forEach(id => { const t = L.teams[id]; want[id] = (R0.picks && R0.picks[t.pfr]) || 30; });
+  L.exp = { y, teams: newIds, avail: avail.map(p => p.id), want, lost: {}, turn: 0, log: [], prev: L.phase };
+  const u = L.user; if (newIds.includes(u)) L.user = -99; expRun(L, true); L.user = u;
+  for (const tid of newIds) { const max = rules(L.year).rosterMax, have = groupCounts(L, tid); let size = roster(L, tid).length;
+    for (const g of GRPS) while (have[g] < STARTERS[g] + 1 && size < max) { genPlayer(L, g, tid, 54, [22, 30]); have[g]++; size++; }
+    while (size < max) { genPlayer(L, R.pick(['OL', 'DL', 'LB', 'DB', 'WR', 'RB']), tid, 50, [22, 29]); size++; } }
 }
 
 function startNextSeason(L) {
@@ -3415,6 +3502,8 @@ function startNextSeason(L) {
   L.phase = 'preseason';
   applyEvents(L);
   enterUndrafted(L, L.year);
+  // a new team that left positions empty gets free-agent fill-ins so it can line up
+  for (const t of L.teams) { if (t.expY !== L.year) continue; const have = groupCounts(L, t.id); for (const g of GRPS) while (have[g] < STARTERS[g]) { genPlayer(L, g, t.id, 50, [23, 30]); have[g]++; } }
   archiveBoxes(L);
   L.teams.forEach(t => { t.w = t.l = t.t = t.pf = t.pa = 0; });
   L.playoffs = null; L.schedule = []; L.week = 0;
@@ -4986,7 +5075,7 @@ function careerLegacy(L) {
   return { score: Math.round(s), line: line && Math.round(line), pct: line ? Math.round(s / line * 100) : null, rings, jerseys, hof: p.hof || 0, verdict: C.verdict || null };
 }
 
-const API = { scoutSkill, STAFF_ROLES, budgetInfo, staffSpend, staffSal, staffAsk, scoutErr, medMul, scoutRead, shownOvr, revealWeek, marketOf, playerType, capPlan, minSalary, psPay, ensureAllAttrs, refreshAttrs, bodyText, careerAttrPreview, setCareerDrill, ATTR_SHORT, ATTR_KEYS, ATTR_NAME, attrs, attrOf, attrDelta, topAttr, attrSource, htText, ensureAttrs, attrFit, CAREER_STYLES, injText, injName, careerAgain, execTrade, setContract, SHAPES, contractTable, restructure, restructureInfo, june1Left, cashFor, baseFor, proLeft, careerScheme, careerStanding, careerAcceptRole, PB_SLOTS, proBowl, stadium, forecast, wxText, wxEffect, recordBook, REC_KEYS, careerSwitchOpts, careerSwitch, careerEarnings, careerCoachOpts, careerBecomeCoach, careerCoachNow, careerFrontOfficeOpts, careerToGM, NO_TEAM, CAREER_TIERS, CAREER_Q, CAREER_GRPS, CAREER_POS, CAREER_FOCUS, CAREER_PLANS, careerPreview, careerClass, startCareer, careerCreate, careerChooseReal, careerP, isCareer, careerRole, careerOffers, careerSign, careerHaggle, careerDiscount, careerRaiseInfo, careerAskRaise, careerHoldout, careerAskStart, careerRequestTrade, careerCancelTrade, careerTakeDeal, careerDeclineDeals, canTradeNow, setCareerFocus, setCareerPlan, careerGoalStatus, careerAwardRace, careerNext, careerSimYear, careerCanRetire, careerRetire, careerRanks, careerLegacy, careerTotal, hofLine, dismissAlert, STAT_NAME, COLLEGES, plog, practiceSquad, unsignedRights, psSize, psEligible, toPracticeSquad, promoteFromPS, signFromPS, signRefuserIfMoved, optionInfo, exerciseOption, declineOption, transitionTag, tagPrice, tradeablePick, rookieYears, playerFit, moraleReasons, holdoutInfo, marketFor, marketView, footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
+const API = { expPick, expAutoPick, expAutoAll, expStop, expOnClock, expCanTake, expRules, scoutSkill, STAFF_ROLES, budgetInfo, staffSpend, staffSal, staffAsk, scoutErr, medMul, scoutRead, shownOvr, revealWeek, marketOf, playerType, capPlan, minSalary, psPay, ensureAllAttrs, refreshAttrs, bodyText, careerAttrPreview, setCareerDrill, ATTR_SHORT, ATTR_KEYS, ATTR_NAME, attrs, attrOf, attrDelta, topAttr, attrSource, htText, ensureAttrs, attrFit, CAREER_STYLES, injText, injName, careerAgain, execTrade, setContract, SHAPES, contractTable, restructure, restructureInfo, june1Left, cashFor, baseFor, proLeft, careerScheme, careerStanding, careerAcceptRole, PB_SLOTS, proBowl, stadium, forecast, wxText, wxEffect, recordBook, REC_KEYS, careerSwitchOpts, careerSwitch, careerEarnings, careerCoachOpts, careerBecomeCoach, careerCoachNow, careerFrontOfficeOpts, careerToGM, NO_TEAM, CAREER_TIERS, CAREER_Q, CAREER_GRPS, CAREER_POS, CAREER_FOCUS, CAREER_PLANS, careerPreview, careerClass, startCareer, careerCreate, careerChooseReal, careerP, isCareer, careerRole, careerOffers, careerSign, careerHaggle, careerDiscount, careerRaiseInfo, careerAskRaise, careerHoldout, careerAskStart, careerRequestTrade, careerCancelTrade, careerTakeDeal, careerDeclineDeals, canTradeNow, setCareerFocus, setCareerPlan, careerGoalStatus, careerAwardRace, careerNext, careerSimYear, careerCanRetire, careerRetire, careerRanks, careerLegacy, careerTotal, hofLine, dismissAlert, STAT_NAME, COLLEGES, plog, practiceSquad, unsignedRights, psSize, psEligible, toPracticeSquad, promoteFromPS, signFromPS, signRefuserIfMoved, optionInfo, exerciseOption, declineOption, transitionTag, tagPrice, tradeablePick, rookieYears, playerFit, moraleReasons, holdoutInfo, marketFor, marketView, footballIQ, teamFit, roleTag, chemistry, gradeLetter, schemeSince, offPers, defPers, formation, startersFor, persLabel, shopBlock, setDrafts, setRealData, hasReal, rcRating, teamsAt, START_FIRST, START_LAST, DATA_LAST, committedPay, tradeVerdict, receiverWeight, pkgWeight, playerWeight, value, makeOffer, budgetFor, limitFor, deadFor, deadCharge, OFF_SCHEMES, DEF_SCHEMES, SCHEME, schemesFor, schemeFit, schemeTrend, schemeShare, schemeEdge, trendWord, setScheme, findTrades, ringEligible, retireNumber, seasonsWith, upcomingExpansion, userExpList, toggleExp, expRules, active, canIR, placeIR, irReturnInfo, activateIR, irRules, acceptDraftOffer, declineDraftOffer, slotNo, AP_SLOTS, ensureNextClass, scoutedYet, tradeLocked, lockText, ROLE_NAME, ensureStaff, staffBonus, fireCoach, hireCoach, coachAcceptP, coachWindow, takeJob, careerScore, mor, moraleWord, underpaid, renegotiate, renegotiatePrice, DEADLINE_WEEK, pastDeadline, boxLine, boxStar, salFor, fitFor, priceFor, resignPrice, offerScore, baseAsk, placeBid, withdrawBid, bidOutlook, advanceFA, interestedTeams, extInfo, extend, FA_ROUNDS, getP, allPlayers, capFor, avgSalary, capYear, faEra, ERA_INFO, money, payroll, capSpace, expiring, askPrice, tenderPrice, isRestricted, compPicks, resign, franchiseTag, letGo, matchSheet, declineSheet, sheetTargets, sendSheet, toggleProtect, planBPool, signFA, onBooks, ensureFA, marketValue, era, AWARD_NAMES, DIFF, diff, setDifficulty, DEF_VS, HURT_PENALTY, eff, canPlayHurt, depthChart, setDepth, moveDepth, resetDepth, setStarterQB, setPlayHurt, gamePlan, setGamePlan, clearGamePlan, coachFor, nextGame, ensureLeague, R, clamp, rules, EVENTS, TEAMS_1970, GRPS, STARTERS, grpOf, parseCSV, parsePFR, newLeague, roster, freeAgents, depth,
   value, release, sign, proposeTrade, tradeVerdict, teamPicks, pickById, pickLabel, projectedOverall, pickWeight, playerWeight, ensurePicks, myDraftSlots, aiTrades, acceptOffer, rejectOffer, offerValid, cutTo, ratings, teamOverall, startRegular, canStartSeason, simWeek, simPlayoffRound, roundName,
   sortTeams, divisions, pct, startDraft, onClock, makePick, aiPick, draftUntilUser, draftAll, scoutPlayer, beginDraft, SCOUT_VISITS, endDraft, startNextSeason, leaders, potKnown, shownPot, roman, addNews };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.GG = API;
@@ -5190,7 +5279,7 @@ const HELP = [
 
 { id: 'history', title: 'NFL history in the game', body: `
 <ul>
-<li><b>Expansion:</b> Seattle and Tampa Bay (1976), Carolina and Jacksonville (1995), Cleveland returns (1999), Houston (2002). Each has a real expansion draft: you protect or expose players on the Moves tab the offseason before.</li>
+<li><b>Expansion:</b> Seattle and Tampa Bay (1976), Carolina and Jacksonville (1995), Cleveland returns (1999), Houston (2002). Each has a real expansion draft: you protect or expose players on the Moves tab the offseason before. Expansion teams now join before the draft, as they really did: the expansion draft comes first, then they pick first in every round of the college draft. <b>Start a new league with one of these teams in its first season</b> (Seattle or Tampa Bay in 1976, Carolina or Jacksonville in 1995, Cleveland in 1999, Houston in 2002) and you start that spring with no players: you make the expansion picks yourself (up to the number the real team took, never more than the real limit from any one team, or stop early), then the college draft, then free agency.</li>
 <li><b>Moves and names:</b> the Raiders, Colts, Cardinals, Rams, Oilers/Titans, Browns/Ravens, Chargers and Washington all move or change names when they really did. The league realigns in 2002.</li>
 <li><b>Strikes:</b> 1982 (a 9-game season and 16-team playoff) and 1987 (replacement players for three weeks).</li>
 <li><b>Rules by era:</b> overtime from 1974, season length, playoff format, roster size, draft rounds, free agency rules and the salary cap all change when they really did.</li>
@@ -5305,7 +5394,7 @@ const HELP_FOR_TAB = { home: 'office', roster: 'roster', stats: 'stats', league:
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-21e';
+const APP_VERSION = '2026-11-23a';
 let SLOT = (() => { try { return localStorage.getItem('gg-slot') === 'career' ? 'career' : 'league'; } catch (e) { return 'league'; } })();
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
@@ -5437,8 +5526,9 @@ function phaseLabel() {
     case 'preseason': return `${L.year} Training Camp`;
     case 'regular': return `${L.year} · Week ${Math.min(L.week + 1, L.schedule.length)} of ${L.schedule.length}`;
     case 'playoffs': return `${L.year} Playoffs · ${G.roundName(L)}`;
-    case 'season-over': return `${L.year} Season Complete`;
+    case 'season-over': return L.champs.length ? `${L.year} Season Complete` : `Spring ${L.year + 1}`;
     case 'draft': return `${L.draft ? L.draft.year : ''} Draft`;
+    case 'expansion': return `${L.exp ? L.exp.y : L.year + 1} Expansion Draft`;
     default: return `${L.year + 1} Offseason`;
   }
 }
@@ -5702,7 +5792,14 @@ function vHome() {
     h += planCard();
     h += playoffResults();
   }
-  if (L.phase === 'season-over') {
+  if (L.phase === 'expansion') h += expDraftCard();
+  if (L.phase === 'season-over' && !L.champs.length) {
+    const n = G.roster(L, L.user).length;
+    h += `<section class="card hero"><div class="eyebrow">Spring ${L.year + 1}</div><h2>Next: the ${L.year + 1} college draft</h2>
+      <p>The ${esc(me().name)} have ${n} player${n === 1 ? '' : 's'} so far. As an expansion team you pick first in every round. After the draft comes free agency, then training camp.</p>
+      <div class="row"><button class="btn primary" data-act="startDraft">Open the ${L.year + 1} draft</button></div></section>`;
+  }
+  if (L.phase === 'season-over' && L.champs.length) {
     const c = L.champs[0];
     h += `<section class="card hero"><div class="eyebrow">Super Bowl ${G.roman(c.sb)}</div><h2>${esc(tname(L.teams[c.champ]))}</h2>
       <p>Beat the ${esc(L.teams[c.loser].name)} ${c.score}. Your ${esc(me().name)} finished ${rec(me())}: ${esc(me().hist[me().hist.length - 1].res.toLowerCase())}.</p>
@@ -5738,9 +5835,11 @@ function vSetup() {
     : real
       ? `Every team starts with its real ${Y} roster, undrafted players included. Ratings come from each player's real career. Expansion, moves and rule changes up to ${Y} are already in place. League history (records, awards, Hall of Fame) starts in ${Y}.`
       : `Real rosters for ${Y} haven't loaded (rosters.json), so the league is built from the draft classes: <b>every drafted player is on the team that drafted him and undrafted players are generated</b>. League history starts in ${Y}.`;
+  const expT = real && (G.EVENTS[Y] || []).find(e => e.t === 'expand' && e.team[0] === pick);
+  const expNote = expT ? `<p class="small good"><b>${esc(expT.team[2])}'s first season.</b> You'll start in the spring of ${Y}, before the expansion draft, with no players: build the team yourself from other teams' unprotected players, then pick first in every round of the ${Y} draft, then free agency.</p>` : '';
   return modeSeg() + `<section class="card hero"><div class="eyebrow">New league · ${Y}</div><h2>Take over a franchise</h2>
     <label class="fld">First season<select id="startYear">${years.map(y => `<option value="${y}"${y === Y ? ' selected' : ''}>${y}</option>`).join('')}</select></label>
-    <p>${blurb}</p>
+    <p>${blurb}</p>${expNote}
     <p class="small"><b>${have}</b> of 26 rosters from 1970 · draft classes ${dy.length ? `${dy[0]}–${dy[dy.length - 1]} (${dy.length})` : 'none'}${missing.length && Y > 1970 ? ` · <span class="warn">missing ${missing.length > 6 ? missing.length + ' years' : missing.join(', ')}: those teams get more generated players</span>` : ''}</p>
     <div class="fld">Difficulty<div class="seg">${Object.keys(G.DIFF).map(k => `<button class="${(ui.newDiff || 'pro') === k ? 'on' : ''}" data-act="newDiff" data-id="${k}">${G.DIFF[k].name}</button>`).join('')}</div></div>
     <p class="small">${diffBlurb(ui.newDiff || 'pro')}</p>
@@ -6079,6 +6178,30 @@ function campCard() {
     <div><div class="eyebrow">Biggest drops</div><div class="list">${down.slice(0, show).map(line).join('') || '<p class="small">None.</p>'}</div></div></div>
     ${C.league.length ? `<h3 class="sub">Around the league</h3><div class="list">${C.league.slice(0, ui.campAll ? 40 : 5).map(r => { const d = r.a - r.b; return `<div class="pl"><div class="pl-main"><span class="pos">${esc(r.pos)}</span><div class="pl-name">${esc(r.name)}<div class="pl-sub">${esc(L.teams[r.tid].abbr)} · age ${r.age}</div></div><div class="pl-r"><span class="lbl">WAS</span>${rating(r.b)}</div><div class="pl-r"><span class="lbl">NOW</span>${rating(r.a)}</div><span class="delta ${d > 0 ? 'good' : 'bad'}">${d > 0 ? '▲' + d : '▼' + (-d)}</span></div></div>`; }).join('')}</div>` : ''}
     <div class="row"><button class="btn sm" data-act="campAll">${ui.campAll ? 'Show less' : 'Show full report'}</button></div></section>`;
+}
+// Your own expansion draft: pick players other teams left unprotected
+function expDraftCard() {
+  const X = L.exp; if (!X) return '';
+  const R0 = G.expRules(X.y), clock = G.expOnClock(L), mineN = X.log.filter(e => e.tid === L.user).length, left = X.want[L.user];
+  const others = X.teams.filter(id => id !== L.user);
+  const g = ui.expGrp || 'ALL';
+  const pool = X.avail.map(id => L.players[id]).filter(p => p && (g === 'ALL' || p.grp === g)).sort((a, b) => b.ovr - a.ovr || a.age - b.age).slice(0, ui.expShow || 60);
+  const have = {}; G.roster(L, L.user).forEach(p => have[p.grp] = (have[p.grp] || 0) + 1);
+  const need = G.GRPS.map(x => `${x} ${have[x] || 0}/${G.STARTERS[x]}`).join(' · ');
+  const row = p => { const ok = G.expCanTake(L, p); return `<div class="pl wide"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name"><button class="lnk" data-act="pl" data-id="${p.id}">${esc(p.name)}</button><div class="pl-sub">${esc(L.teams[p.team].abbr)} · Age <b>${p.age}</b> · ${conText(p)}${(() => { const ty = G.playerType(p); return ty ? ' · ' + esc(ty.name) : ''; })()}${ok ? '' : ` · <span class="bad">${esc(L.teams[p.team].abbr)} has lost ${R0.perTeam} already</span>`}</div></div>
+    <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">POT</span>${rating(G.shownPot(L, p))}</div></div>
+    <div class="pl-btns">${clock === L.user && ok && left > 0 ? `<button class="btn sm primary" data-act="expPick" data-id="${p.id}">Take him</button>` : ''}</div></div>`; };
+  const log = X.log.slice(-8).reverse().map(e => { const p = L.players[e.pid]; return `<li>${esc(L.teams[e.tid].abbr)}: ${esc(p.pos)} ${esc(p.name)} <span class="small">(from ${esc(L.teams[e.from].abbr)}, ${p.ovr} ovr, age ${p.age})</span></li>`; }).join('');
+  return `<section class="card hero"><div class="eyebrow">${X.y} expansion draft</div><h2>Build the ${esc(me().name)}</h2>
+    <p>Every other team has ${R0.mode === 'protect' ? `protected ${R0.protect} players; you can take anyone else` : `left ${R0.expose} players unprotected`}. You can take up to <b>${X.want[L.user] + mineN}</b> (the real ${esc(me().city)} took ${(R0.picks && R0.picks[me().pfr]) || 30}), no more than <b>${R0.perTeam}</b> from any one team${others.length ? `, alternating picks with ${others.map(id => esc(L.teams[id].city)).join(' and ')}` : ''}. Their contracts come with them.</p>
+    <p><b>Taken: ${mineN}</b> · ${left > 0 ? `${left} pick${left === 1 ? '' : 's'} left` : 'done'} · Payroll ${G.money(G.payroll(L, L.user, L.year + 1))}</p>
+    <p class="small">Starters you have: ${need}</p>
+    <div class="row">${clock === L.user ? `<button class="btn" data-act="expAuto">Auto-pick for me</button>` : ''}<button class="btn" data-act="expAll">Auto-draft the rest</button>${confirmBtn('expStop', `Stop at ${mineN} players`)}</div>
+    <p class="small">After this: the ${X.y} college draft (you pick first in every round), then free agency.</p></section>
+  <section class="card"><div class="split"><h3>Available</h3><span class="count">${X.avail.length}</span></div>${chips('expGrp', g)}
+    <div class="list">${pool.map(row).join('') || '<p class="small">Nobody left at this position.</p>'}</div>
+    ${X.avail.length > pool.length && g === 'ALL' ? `<div class="row"><button class="btn sm" data-act="expMore">Show more</button></div>` : ''}</section>
+  ${log ? `<section class="card"><h3>Latest picks</h3><ul class="clean">${log}</ul></section>` : ''}`;
 }
 function expansionCard() {
   const X = G.upcomingExpansion(L); if (!X) return '';
@@ -7004,6 +7127,7 @@ function act(a, el) {
       else if (id === 'cCamp') { const e = G.careerNext(L, IM); if (e) flash(e); toTop(); }
       else if (id === 'cAgain') { flash('Playing on to the next draft…'); render(); setTimeout(() => { const e = G.careerAgain(L, IM); if (e) flash(e); else { ui.cNew = null; ui.cWay = null; ui.tab = 'home'; toTop(); } save(); render(); }, 30); return; }
       else if (id === 'cFresh') { L = null; DB.set('career', null).catch(() => {}); SLOT = 'career'; try { localStorage.setItem('gg-slot', 'career'); } catch (e2) { /* private mode */ } ui.cNew = null; ui.cWay = null; ui.tab = 'home'; toTop(); }
+      else if (id === 'expStop') { G.expStop(L); flash('Expansion draft done. Next: the college draft.'); toTop(); }
       else if (id === 'cRetire') { const e = G.careerRetire(L); flash(e || 'You have retired.'); toTop(); }
       else if (id.startsWith('fire')) { const e = G.fireCoach(L, id.slice(4)); flash(e || 'Coach fired. Hire a replacement before kickoff.'); }
       else if (id.startsWith('rst')) { const e = G.restructure(L, +id.slice(3)); flash(e || 'Restructured.'); }
@@ -7029,6 +7153,10 @@ function act(a, el) {
     case 'simSeason': while (L.phase === 'regular') G.simWeek(L); break;
     case 'simRound': G.simPlayoffRound(L); break;
     case 'startDraft': if (L.fired) break; G.startDraft(L, IM); ui.draftGrp = 'ALL'; ui.draftShow = 60; break;
+    case 'expPick': { const e = G.expPick(L, +id); if (e) flash(e); break; }
+    case 'expAuto': { const e = G.expAutoPick(L); if (e) flash(e); break; }
+    case 'expAll': G.expAutoAll(L); break;
+    case 'expMore': ui.expShow = (ui.expShow || 60) + 60; break;
     case 'beginDraft': G.beginDraft(L); break;
     case 'scout': { const e = G.scoutPlayer(L, +id); if (e) flash(e); break; }
     case 'draftMore': ui.draftShow = (ui.draftShow || 60) + 60; break;
@@ -7168,7 +7296,7 @@ document.addEventListener('change', e => {
   else if (t.id === 'tradeTeam') { ui.tradeTeam = +t.value; ui.get = []; ui.getTeam = null; render(); }
   else if (t.id === 'aggr') { me().coach.aggr = +t.value; save(); render(); }
   else if (t.id === 'startYear') { ui.startYear = +t.value; ui.startTeam = $('#pickTeam') && $('#pickTeam').value; render(); }
-  else if (t.id === 'pickTeam') { ui.startTeam = t.value; }
+  else if (t.id === 'pickTeam') { ui.startTeam = t.value; render(); }
   else if (t.id === 'youth') { me().coach.youth = t.checked; save(); }
   else if (t.id === 'impTeam') ui.impTeam = t.value;
   else if (t.id === 'impYear') ui.impYear = t.value.trim();

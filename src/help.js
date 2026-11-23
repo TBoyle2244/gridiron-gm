@@ -194,7 +194,7 @@ const HELP = [
 
 { id: 'history', title: 'NFL history in the game', body: `
 <ul>
-<li><b>Expansion:</b> Seattle and Tampa Bay (1976), Carolina and Jacksonville (1995), Cleveland returns (1999), Houston (2002). Each has a real expansion draft: you protect or expose players on the Moves tab the offseason before.</li>
+<li><b>Expansion:</b> Seattle and Tampa Bay (1976), Carolina and Jacksonville (1995), Cleveland returns (1999), Houston (2002). Each has a real expansion draft: you protect or expose players on the Moves tab the offseason before. Expansion teams now join before the draft, as they really did: the expansion draft comes first, then they pick first in every round of the college draft. <b>Start a new league with one of these teams in its first season</b> (Seattle or Tampa Bay in 1976, Carolina or Jacksonville in 1995, Cleveland in 1999, Houston in 2002) and you start that spring with no players: you make the expansion picks yourself (up to the number the real team took, never more than the real limit from any one team, or stop early), then the college draft, then free agency.</li>
 <li><b>Moves and names:</b> the Raiders, Colts, Cardinals, Rams, Oilers/Titans, Browns/Ravens, Chargers and Washington all move or change names when they really did. The league realigns in 2002.</li>
 <li><b>Strikes:</b> 1982 (a 9-game season and 16-team playoff) and 1987 (replacement players for three weeks).</li>
 <li><b>Rules by era:</b> overtime from 1974, season length, playoff format, roster size, draft rounds, free agency rules and the salary cap all change when they really did.</li>

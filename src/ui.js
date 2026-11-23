@@ -2,7 +2,7 @@
 (function () {
 'use strict';
 const G = window.GG;
-const APP_VERSION = '2026-11-21e';
+const APP_VERSION = '2026-11-23a';
 let SLOT = (() => { try { return localStorage.getItem('gg-slot') === 'career' ? 'career' : 'league'; } catch (e) { return 'league'; } })();
 let L = null;                       // league
 let IM = { rosters: {}, drafts: {} }; // imported PFR data
@@ -134,8 +134,9 @@ function phaseLabel() {
     case 'preseason': return `${L.year} Training Camp`;
     case 'regular': return `${L.year} · Week ${Math.min(L.week + 1, L.schedule.length)} of ${L.schedule.length}`;
     case 'playoffs': return `${L.year} Playoffs · ${G.roundName(L)}`;
-    case 'season-over': return `${L.year} Season Complete`;
+    case 'season-over': return L.champs.length ? `${L.year} Season Complete` : `Spring ${L.year + 1}`;
     case 'draft': return `${L.draft ? L.draft.year : ''} Draft`;
+    case 'expansion': return `${L.exp ? L.exp.y : L.year + 1} Expansion Draft`;
     default: return `${L.year + 1} Offseason`;
   }
 }
@@ -399,7 +400,14 @@ function vHome() {
     h += planCard();
     h += playoffResults();
   }
-  if (L.phase === 'season-over') {
+  if (L.phase === 'expansion') h += expDraftCard();
+  if (L.phase === 'season-over' && !L.champs.length) {
+    const n = G.roster(L, L.user).length;
+    h += `<section class="card hero"><div class="eyebrow">Spring ${L.year + 1}</div><h2>Next: the ${L.year + 1} college draft</h2>
+      <p>The ${esc(me().name)} have ${n} player${n === 1 ? '' : 's'} so far. As an expansion team you pick first in every round. After the draft comes free agency, then training camp.</p>
+      <div class="row"><button class="btn primary" data-act="startDraft">Open the ${L.year + 1} draft</button></div></section>`;
+  }
+  if (L.phase === 'season-over' && L.champs.length) {
     const c = L.champs[0];
     h += `<section class="card hero"><div class="eyebrow">Super Bowl ${G.roman(c.sb)}</div><h2>${esc(tname(L.teams[c.champ]))}</h2>
       <p>Beat the ${esc(L.teams[c.loser].name)} ${c.score}. Your ${esc(me().name)} finished ${rec(me())}: ${esc(me().hist[me().hist.length - 1].res.toLowerCase())}.</p>
@@ -435,9 +443,11 @@ function vSetup() {
     : real
       ? `Every team starts with its real ${Y} roster, undrafted players included. Ratings come from each player's real career. Expansion, moves and rule changes up to ${Y} are already in place. League history (records, awards, Hall of Fame) starts in ${Y}.`
       : `Real rosters for ${Y} haven't loaded (rosters.json), so the league is built from the draft classes: <b>every drafted player is on the team that drafted him and undrafted players are generated</b>. League history starts in ${Y}.`;
+  const expT = real && (G.EVENTS[Y] || []).find(e => e.t === 'expand' && e.team[0] === pick);
+  const expNote = expT ? `<p class="small good"><b>${esc(expT.team[2])}'s first season.</b> You'll start in the spring of ${Y}, before the expansion draft, with no players: build the team yourself from other teams' unprotected players, then pick first in every round of the ${Y} draft, then free agency.</p>` : '';
   return modeSeg() + `<section class="card hero"><div class="eyebrow">New league · ${Y}</div><h2>Take over a franchise</h2>
     <label class="fld">First season<select id="startYear">${years.map(y => `<option value="${y}"${y === Y ? ' selected' : ''}>${y}</option>`).join('')}</select></label>
-    <p>${blurb}</p>
+    <p>${blurb}</p>${expNote}
     <p class="small"><b>${have}</b> of 26 rosters from 1970 · draft classes ${dy.length ? `${dy[0]}–${dy[dy.length - 1]} (${dy.length})` : 'none'}${missing.length && Y > 1970 ? ` · <span class="warn">missing ${missing.length > 6 ? missing.length + ' years' : missing.join(', ')}: those teams get more generated players</span>` : ''}</p>
     <div class="fld">Difficulty<div class="seg">${Object.keys(G.DIFF).map(k => `<button class="${(ui.newDiff || 'pro') === k ? 'on' : ''}" data-act="newDiff" data-id="${k}">${G.DIFF[k].name}</button>`).join('')}</div></div>
     <p class="small">${diffBlurb(ui.newDiff || 'pro')}</p>
@@ -776,6 +786,30 @@ function campCard() {
     <div><div class="eyebrow">Biggest drops</div><div class="list">${down.slice(0, show).map(line).join('') || '<p class="small">None.</p>'}</div></div></div>
     ${C.league.length ? `<h3 class="sub">Around the league</h3><div class="list">${C.league.slice(0, ui.campAll ? 40 : 5).map(r => { const d = r.a - r.b; return `<div class="pl"><div class="pl-main"><span class="pos">${esc(r.pos)}</span><div class="pl-name">${esc(r.name)}<div class="pl-sub">${esc(L.teams[r.tid].abbr)} · age ${r.age}</div></div><div class="pl-r"><span class="lbl">WAS</span>${rating(r.b)}</div><div class="pl-r"><span class="lbl">NOW</span>${rating(r.a)}</div><span class="delta ${d > 0 ? 'good' : 'bad'}">${d > 0 ? '▲' + d : '▼' + (-d)}</span></div></div>`; }).join('')}</div>` : ''}
     <div class="row"><button class="btn sm" data-act="campAll">${ui.campAll ? 'Show less' : 'Show full report'}</button></div></section>`;
+}
+// Your own expansion draft: pick players other teams left unprotected
+function expDraftCard() {
+  const X = L.exp; if (!X) return '';
+  const R0 = G.expRules(X.y), clock = G.expOnClock(L), mineN = X.log.filter(e => e.tid === L.user).length, left = X.want[L.user];
+  const others = X.teams.filter(id => id !== L.user);
+  const g = ui.expGrp || 'ALL';
+  const pool = X.avail.map(id => L.players[id]).filter(p => p && (g === 'ALL' || p.grp === g)).sort((a, b) => b.ovr - a.ovr || a.age - b.age).slice(0, ui.expShow || 60);
+  const have = {}; G.roster(L, L.user).forEach(p => have[p.grp] = (have[p.grp] || 0) + 1);
+  const need = G.GRPS.map(x => `${x} ${have[x] || 0}/${G.STARTERS[x]}`).join(' · ');
+  const row = p => { const ok = G.expCanTake(L, p); return `<div class="pl wide"><div class="pl-main"><span class="pos">${esc(p.pos)}</span><div class="pl-name"><button class="lnk" data-act="pl" data-id="${p.id}">${esc(p.name)}</button><div class="pl-sub">${esc(L.teams[p.team].abbr)} · Age <b>${p.age}</b> · ${conText(p)}${(() => { const ty = G.playerType(p); return ty ? ' · ' + esc(ty.name) : ''; })()}${ok ? '' : ` · <span class="bad">${esc(L.teams[p.team].abbr)} has lost ${R0.perTeam} already</span>`}</div></div>
+    <div class="pl-r"><span class="lbl">OVR</span>${rating(p.ovr)}</div><div class="pl-r"><span class="lbl">POT</span>${rating(G.shownPot(L, p))}</div></div>
+    <div class="pl-btns">${clock === L.user && ok && left > 0 ? `<button class="btn sm primary" data-act="expPick" data-id="${p.id}">Take him</button>` : ''}</div></div>`; };
+  const log = X.log.slice(-8).reverse().map(e => { const p = L.players[e.pid]; return `<li>${esc(L.teams[e.tid].abbr)}: ${esc(p.pos)} ${esc(p.name)} <span class="small">(from ${esc(L.teams[e.from].abbr)}, ${p.ovr} ovr, age ${p.age})</span></li>`; }).join('');
+  return `<section class="card hero"><div class="eyebrow">${X.y} expansion draft</div><h2>Build the ${esc(me().name)}</h2>
+    <p>Every other team has ${R0.mode === 'protect' ? `protected ${R0.protect} players; you can take anyone else` : `left ${R0.expose} players unprotected`}. You can take up to <b>${X.want[L.user] + mineN}</b> (the real ${esc(me().city)} took ${(R0.picks && R0.picks[me().pfr]) || 30}), no more than <b>${R0.perTeam}</b> from any one team${others.length ? `, alternating picks with ${others.map(id => esc(L.teams[id].city)).join(' and ')}` : ''}. Their contracts come with them.</p>
+    <p><b>Taken: ${mineN}</b> · ${left > 0 ? `${left} pick${left === 1 ? '' : 's'} left` : 'done'} · Payroll ${G.money(G.payroll(L, L.user, L.year + 1))}</p>
+    <p class="small">Starters you have: ${need}</p>
+    <div class="row">${clock === L.user ? `<button class="btn" data-act="expAuto">Auto-pick for me</button>` : ''}<button class="btn" data-act="expAll">Auto-draft the rest</button>${confirmBtn('expStop', `Stop at ${mineN} players`)}</div>
+    <p class="small">After this: the ${X.y} college draft (you pick first in every round), then free agency.</p></section>
+  <section class="card"><div class="split"><h3>Available</h3><span class="count">${X.avail.length}</span></div>${chips('expGrp', g)}
+    <div class="list">${pool.map(row).join('') || '<p class="small">Nobody left at this position.</p>'}</div>
+    ${X.avail.length > pool.length && g === 'ALL' ? `<div class="row"><button class="btn sm" data-act="expMore">Show more</button></div>` : ''}</section>
+  ${log ? `<section class="card"><h3>Latest picks</h3><ul class="clean">${log}</ul></section>` : ''}`;
 }
 function expansionCard() {
   const X = G.upcomingExpansion(L); if (!X) return '';
@@ -1701,6 +1735,7 @@ function act(a, el) {
       else if (id === 'cCamp') { const e = G.careerNext(L, IM); if (e) flash(e); toTop(); }
       else if (id === 'cAgain') { flash('Playing on to the next draft…'); render(); setTimeout(() => { const e = G.careerAgain(L, IM); if (e) flash(e); else { ui.cNew = null; ui.cWay = null; ui.tab = 'home'; toTop(); } save(); render(); }, 30); return; }
       else if (id === 'cFresh') { L = null; DB.set('career', null).catch(() => {}); SLOT = 'career'; try { localStorage.setItem('gg-slot', 'career'); } catch (e2) { /* private mode */ } ui.cNew = null; ui.cWay = null; ui.tab = 'home'; toTop(); }
+      else if (id === 'expStop') { G.expStop(L); flash('Expansion draft done. Next: the college draft.'); toTop(); }
       else if (id === 'cRetire') { const e = G.careerRetire(L); flash(e || 'You have retired.'); toTop(); }
       else if (id.startsWith('fire')) { const e = G.fireCoach(L, id.slice(4)); flash(e || 'Coach fired. Hire a replacement before kickoff.'); }
       else if (id.startsWith('rst')) { const e = G.restructure(L, +id.slice(3)); flash(e || 'Restructured.'); }
@@ -1726,6 +1761,10 @@ function act(a, el) {
     case 'simSeason': while (L.phase === 'regular') G.simWeek(L); break;
     case 'simRound': G.simPlayoffRound(L); break;
     case 'startDraft': if (L.fired) break; G.startDraft(L, IM); ui.draftGrp = 'ALL'; ui.draftShow = 60; break;
+    case 'expPick': { const e = G.expPick(L, +id); if (e) flash(e); break; }
+    case 'expAuto': { const e = G.expAutoPick(L); if (e) flash(e); break; }
+    case 'expAll': G.expAutoAll(L); break;
+    case 'expMore': ui.expShow = (ui.expShow || 60) + 60; break;
     case 'beginDraft': G.beginDraft(L); break;
     case 'scout': { const e = G.scoutPlayer(L, +id); if (e) flash(e); break; }
     case 'draftMore': ui.draftShow = (ui.draftShow || 60) + 60; break;
@@ -1865,7 +1904,7 @@ document.addEventListener('change', e => {
   else if (t.id === 'tradeTeam') { ui.tradeTeam = +t.value; ui.get = []; ui.getTeam = null; render(); }
   else if (t.id === 'aggr') { me().coach.aggr = +t.value; save(); render(); }
   else if (t.id === 'startYear') { ui.startYear = +t.value; ui.startTeam = $('#pickTeam') && $('#pickTeam').value; render(); }
-  else if (t.id === 'pickTeam') { ui.startTeam = t.value; }
+  else if (t.id === 'pickTeam') { ui.startTeam = t.value; render(); }
   else if (t.id === 'youth') { me().coach.youth = t.checked; save(); }
   else if (t.id === 'impTeam') ui.impTeam = t.value;
   else if (t.id === 'impYear') ui.impYear = t.value.trim();
