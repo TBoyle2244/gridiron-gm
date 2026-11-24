@@ -23,5 +23,5 @@ json.dump({"name":"Gridiron GM","short_name":"Gridiron GM","start_url":"./","sco
 shutil.copy('sw.js','dist/gridiron-gm/sw.js')
 if os.path.exists('rosters.json'): shutil.copy('rosters.json', 'dist/gridiron-gm/rosters.json')
 if os.path.exists('drive-src.html'):
-    d=open('drive-src.html').read().replace('/*ENGINE*/', eng)
+    d=open('drive-src.html').read().replace('/*ENGINE*/', eng).replace('/*PIXELKIT*/', open('pixel-arcade-kit.js').read())
     open('dist/gridiron-gm/drive.html','w').write(d); open('dist/drive.html','w').write(d)
