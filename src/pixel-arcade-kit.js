@@ -46,18 +46,39 @@
   const microW = (str, sc) => { let w = 0; for (const ch of String(str)) w += (ch === ':' || ch === ' ' || ch === '.' ? 2 : 4) * sc; return w - sc; };
   // Any text with hard pixel edges: drawn small in a real font, then every pixel forced fully on or off. Centered on (x, y).
   const ptCache = {};
+  // 5x7 bitmap font: every letter is drawn from this table, so text looks the same on every device (no system font involved)
+  const F57 = { A:'0111010001100011111110001100011000110001', B:'1111010001100011111010001100011111000000', C:'0111010001100001000010000100010111000000',
+    D:'1111010001100011000110001100011111000000', E:'1111110000100001111010000100001111100000', F:'1111110000100001111010000100001000000000',
+    G:'0111010001100001011110001100010111100000', H:'1000110001100011111110001100011000100000', I:'0111000100001000010000100001000111000000',
+    J:'0011100010000100001000010100100110000000', K:'1000110010101001100010100100101000100000', L:'1000010000100001000010000100001111100000',
+    M:'1000111011101011010110001100011000100000', N:'1000111001101011001110001100011000100000', O:'0111010001100011000110001100010111000000',
+    P:'1111010001100011111010000100001000000000', Q:'0111010001100011000110101100100110100000', R:'1111010001100011111010100100101000100000',
+    S:'0111110000100000111000001000011111000000', T:'1111100100001000010000100001000010000000', U:'1000110001100011000110001100010111000000',
+    V:'1000110001100011000110001010100010000000', W:'1000110001100011010110101101010101000000', X:'1000110001010100010001010100011000100000',
+    Y:'1000110001010100010000100001000010000000', Z:'1111100001000100010001000100001111100000',
+    0:'0111010001100111010111001100010111000000', 1:'0010001100001000010000100001000111000000', 2:'0111010001000010001000100010001111100000',
+    3:'1111100010001000001000001100010111000000', 4:'0001000110010101001011111000100001000000', 5:'1111110000111100000100001100010111000000',
+    6:'0011001000100001111010001100010111000000', 7:'1111100001000100010001000010000100000000', 8:'0111010001100010111010001100010111000000',
+    9:'0111010001100010111100001000100110000000', '&':'0110010010101000100010101100100110100000', '-':'0000000000000001111100000000000000000000',
+    '.':'0000000000000000000000000000000010000000', ':':'0000000100000000000000000001000000000000', '!':'0010000100001000010000100000000010000000',
+    "'":'0010000100010000000000000000000000000000', '/':'0000100010000100010001000010001000000000', ',':'0000000000000000000000000001000100000000',
+    '?':'0111010001000010001000100000000010000000', '·':'0000000000000000010000000000000000000000', '#':'0101011111010101111101010000000000000000',
+    '(':'0001000100010000100001000001000001000000', ')':'0100000100000100001000010001000100000000', '+':'0000000100001001111100100001000000000000' };
+  const glyphW = ch => ch === ' ' ? 3 : ch === '·' || ch === '.' || ch === ':' || ch === '!' || ch === "'" || ch === ',' ? 3 : 5;
+  const normText = t => String(t).normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
+  const textScale = size => Math.max(1, Math.round(size / 7));
+  function textW(text, size) { const s = textScale(size), t = normText(text); let w = 0; for (const ch of t) w += (glyphW(ch) + 1) * s; return Math.max(0, w - s); }
   function pixText(c, text, x, y, size, col, rot, outline) {
     const ck = text + '|' + size + '|' + col + '|' + (outline || '');
     let o = ptCache[ck];
     if (!o) {
-      const t = mk(1, 1), tc = t.getContext('2d'); tc.font = `900 ${size}px "Arial Black", Impact, sans-serif`;
-      const tw = Math.ceil(tc.measureText(text).width) + 4, th = Math.ceil(size * 1.3) + 4; t.width = tw; t.height = th;
-      tc.font = `900 ${size}px "Arial Black", Impact, sans-serif`; tc.textBaseline = 'top'; tc.fillStyle = '#fff'; tc.fillText(text, 2, 2);
-      const d = tc.getImageData(0, 0, tw, th).data, on = new Uint8Array(tw * th);
-      for (let i = 0; i < tw * th; i++) on[i] = d[i * 4 + 3] > 110 ? 1 : 0;
-      o = mk(tw + 2, th + 2); const oc = o.getContext('2d');
-      const put = (col2, dx, dy) => { oc.fillStyle = col2; for (let yy = 0; yy < th; yy++) for (let xx = 0; xx < tw; xx++) if (on[yy * tw + xx]) oc.fillRect(xx + 1 + dx, yy + 1 + dy, 1, 1); };
-      if (outline) { put(outline, -1, 0); put(outline, 1, 0); put(outline, 0, -1); put(outline, 0, 1); }
+      const s = textScale(size), t = normText(text), tw = textW(text, size), th = 7 * s, pad = s;
+      o = mk(tw + pad * 2, th + pad * 2); const oc = o.getContext('2d');
+      const put = (col2, dx, dy) => { oc.fillStyle = col2; let cx = pad;
+        for (const ch of t) { const g = F57[ch], gw = glyphW(ch), off = gw === 3 && g ? -1 : 0;
+          if (g) for (let i = 0; i < 35; i++) if (g[i] === '1') { const gx = (i % 5) + off; if (gx >= 0 && gx < gw) oc.fillRect(cx + gx * s + dx, pad + Math.floor(i / 5) * s + dy, s, s); }
+          cx += (gw + 1) * s; } };
+      if (outline) { put(outline, -s, 0); put(outline, s, 0); put(outline, 0, -s); put(outline, 0, s); put(outline, s, s); }
       put(col, 0, 0); ptCache[ck] = o;
     }
     c.save(); c.translate(Math.round(x), Math.round(y)); if (rot) c.rotate(rot); c.drawImage(o, Math.round(-o.width / 2), Math.round(-o.height / 2)); c.restore();
@@ -250,7 +271,7 @@
 .arc-match .kits button.on { border-color: #6ff3ff; } .arc-match .kits .go { margin-left: auto; background: #1a8f4a; border-color: #4ade80; padding: 12px 22px; font-size: 16px; }`;
   function injectCSS() { if (typeof document === 'undefined' || document.getElementById('pk-css')) return; const st = document.createElement('style'); st.id = 'pk-css'; st.textContent = CSS; document.head.appendChild(st); }
 
-  const PK = { clamp, hash, shade, MF, micro, microW, pixText, SKIN, HAIRC, LOOKS, lookOf, toonHead, helmetHead, frontHead, faceDetail, edgeShade, outlined, flipped, portrait, fan, buildStands, scoreboard, CSS, injectCSS };
+  const PK = { clamp, hash, shade, MF, micro, microW, pixText, textW, SKIN, HAIRC, LOOKS, lookOf, toonHead, helmetHead, frontHead, faceDetail, edgeShade, outlined, flipped, portrait, fan, buildStands, scoreboard, CSS, injectCSS };
   if (typeof window !== 'undefined') window.PK = PK;
   if (typeof module !== 'undefined') module.exports = PK;
 })();

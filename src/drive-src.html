@@ -33,7 +33,7 @@ body { position:fixed; inset:0; overflow:hidden; background:#17482b; }
 #rot small { font-family:var(--body); font-size:14px; color:#93a596; max-width:300px; }
 body.portrait #rot { display:flex; }
 canvas { display:block; width:100%; height:100%; touch-action:none; -webkit-user-select:none; user-select:none; }
-#hud { position:absolute; left:0; right:0; top:42px; z-index:2; display:flex; justify-content:center; pointer-events:none; }
+#hud { position:absolute; left:0; right:0; top:calc(env(safe-area-inset-top,0px) + 30%); z-index:2; display:flex; justify-content:center; pointer-events:none; }
 #msg { background:rgba(10,20,14,.82); color:#fff; font-family:var(--cond); font-size:20px; letter-spacing:.05em; text-transform:uppercase; padding:6px 14px; border-radius:8px; opacity:0; transition:opacity .2s; }
 #msg.on { opacity:1; }
 #tip { position:absolute; left:0; right:0; bottom:calc(8px + env(safe-area-inset-bottom,0px)); text-align:center; color:#fff; font-family:var(--cond); font-size:15px; letter-spacing:.04em; text-shadow:0 1px 2px #000; pointer-events:none; }
@@ -352,7 +352,7 @@ function throwBall(tx, ty) {
 function juke() {
   const c = P.carrier; if (!c || c.jk > 0 || (c.jcd || 0) > 0) return;
   let near = null, nd = 99; P.def.forEach(u => { const d = Math.hypot(u.x - c.x, u.y - c.y); if (d < nd) { nd = d; near = u; } });
-  c.jk = 0.38; c.jcd = 1.4; c.jx = near ? (c.x >= near.x ? 1 : -1) : (Math.random() < 0.5 ? -1 : 1);
+  c.jk = 0.38; c.jcd = 1.4; puff(c.y, c.x, 10, ['#c9b48a', '#a89468', '#e6dcc0'], 22, 0.45); c.jx = near ? (c.x >= near.x ? 1 : -1) : (Math.random() < 0.5 ? -1 : 1);
   flash('Juke!', 500);
 }
 function scramble() { if (P.ball.st !== 'held' || P.play.run) return; P.carrier = P.qb; P.ball.st = 'run'; P.qb.scr = true; tip('Slide up/down to change lanes · tap to juke · swipe right to dive, left to slide'); btns(); }
@@ -553,10 +553,10 @@ function resolveCatch() {
   if (!r || dR > 2.6) { endPlay({ kind: 'inc', text: B.ly > 100 + 10 || B.lx < 0 || B.lx > W ? 'Out of bounds' : 'Incomplete' }); return; }
   const contest = dD < 1.0 ? 0.25 : dD < 2 ? 0.12 : dD < 3 ? 0.05 : 0;
   if (Math.random() < clamp(hands - contest - (dR > 1.4 ? 0.12 : 0), 0.15, 0.97)) {
-    if (B.ly >= 100 && B.ly <= 110 && B.lx >= 0 && B.lx <= W) { r.x = B.lx; r.y = B.ly; st(me.QB, 'pc', 1); P.caught = r; endPlay({ kind: 'td', y: 100, x: B.lx, who: r, rec: true }); return; }
+    if (B.ly >= 100 && B.ly <= 110 && B.lx >= 0 && B.lx <= W) { r.x = B.lx; r.y = B.ly; st(me.QB, 'pc', 1); P.caught = r; r.catchAt = performance.now(); puff(B.ly, B.lx, 10, ['#ffffff', '#ffd34d'], 30, 0.35, -40); endPlay({ kind: 'td', y: 100, x: B.lx, who: r, rec: true }); return; }
     if (B.ly > 110 || B.lx < -0.6 || B.lx > W + 0.6) { endPlay({ kind: 'inc', text: 'Out of bounds' }); return; }
     B.lx = clamp(B.lx, 0.2, W - 0.2);
-    st(me.QB, 'pc', 1); P.caught = r; P.catchY = B.ly;
+    st(me.QB, 'pc', 1); P.caught = r; P.catchY = B.ly; r.catchAt = performance.now(); puff(B.ly, B.lx, 10, ['#ffffff', '#ffd34d'], 30, 0.35, -40);
     r.x = B.lx; r.y = B.ly; P.carrier = r; B.st = 'run'; tip('Slide up/down to change lanes · tap to juke · swipe right to dive, left to slide'); btns();
     flash('Caught!', 450);
   } else endPlay({ kind: 'inc', text: contest ? 'Broken up' : 'Dropped' });
@@ -565,6 +565,7 @@ function resolveCatch() {
 /* ---------- ending a play ---------- */
 function endPlay(r) {
   if (P.done) return; P.done = true; P.result = r; touch = null; btns();
+  if (r.kind === 'td') startTD(r.who || P.carrier || P.qb, GS.goal2 ? '2 POINTS!' : 'TOUCHDOWN!');
   if (P.play.kr) return endReturn(r);
   const pass = !P.play.run, c = r.who, startY = GS.y;
   let gain = 0;
@@ -818,7 +819,7 @@ let KH = null, KA = null;
    - the field, stands, aprons and photographers are prerendered once into a "world" canvas and blitted with the camera;
    - 3/4 top-down: depth across the field squashed to 0.66.
    Units: YD = pixels per yard (1x), so 2.75 px per foot. World yard y (downfield) is screen x; across the field (x) is screen y. */
-const RS = 2, YD = 6, DEP = 0.66, FT = YD / 3;
+const RS = 3, SK = 2, YD = 6, DEP = 0.66, FT = YD / 3;
 const MARGIN = 26;                 // yards of stadium past each goal line (end zone + stands): the world runs from y = -26 to 126
 const APR = 6, CROWD_H = 72;       // sideline apron (yards) and stand depth (px) on each side
 const TOPF = CROWD_H + APR * YD * DEP;                       // world px of the far sideline
@@ -829,9 +830,11 @@ function artResize() {
   PH = clamp(Math.round(CH / 2.7), 140, 320); PW = Math.max(160, Math.round(PH * CW / Math.max(1, CH)));
   if (!pc) { pc = document.createElement('canvas'); px = pc.getContext('2d'); }
   pc.width = PW * RS; pc.height = PH * RS;
-  S = YD * CW / PW; SQ = DEP;   // CSS px per yard, for the game logic's camera and touch math
+  S = YD * CW / PW; SQ = DEP;
+  { const d = document.createElement('div'); d.style.cssText = 'position:fixed;top:0;height:env(safe-area-inset-top,0px);visibility:hidden'; document.body.appendChild(d); SAT = Math.ceil(d.offsetHeight * PW / CW); d.remove(); }   // CSS px per yard, for the game logic's camera and touch math
 }
 // camera (world px of the view's top-left), from the game's camera in yards
+let SAT = 0;
 const camPx = () => Math.round(wxp(camY)), camPy = () => Math.round(wyp(camX));
 const toScr = (y, x, z) => [Math.round(wxp(y) - camPx()), Math.round(wyp(x, z) - camPy())];
 const PKs = window.PK;
@@ -911,20 +914,21 @@ function spriteFor(u, k, pose, frame) {
   const id = u.who.id || hash(u.who.name), num = u.who.num === '' ? '' : String(u.who.num);
   const key = id + '|' + k.j + k.h + '|' + pose + '|' + frame + '|' + num + '|' + u.role;
   if (SPR[key]) return SPR[key];
-  const lk = PKs.lookOf(id), sk = lk.sk, LK = lk.L, K = RS;
+  const lk = PKs.lookOf(id), sk = lk.sk, LK = lk.L, K = SK;
   const hin = u.who.hin || ({ QB: 75, RB: 70, WR: 72, TE: 76, OL: 77, DL: 76, LB: 74, DB: 71, K: 72, P: 74 })[u.who.grp || u.role] || 73;
   const tall = hin - 74, big = BIGS[u.role] || BIGS[u.who.grp] ? 1 : 0;
   const leg = clamp(Math.round(tall * 0.55), -3, 4), tor = clamp(Math.round(tall * 0.3), -2, 3) + big;
-  const st = pose === 'stance', blk = pose === 'block';
+  const st = pose === 'stance', blk = pose === 'block', jk = pose === 'juke';
   const crouch = st ? 5 : blk ? 2 : 0;
   const H = 32 + leg + tor, Wd = 22, c = document.createElement('canvas'); c.width = Wd * K; c.height = (H + 2) * K;
   const g = c.getContext('2d'), R = (x, y, a, b, col) => { g.fillStyle = col; g.fillRect(Math.round(x * K), Math.round(y * K), Math.round(a * K), Math.round(b * K)); }, P = (x, y, a, b, col) => { g.fillStyle = col; g.fillRect(x, y, a, b); };
   const jer = k.j, trim = k.t, pants = k.p, sock = k.sl, shoe = '#1d1d1f';
-  const o = 7, top = 7 + crouch, lean = st ? 3 : blk ? 2 : 0;
+  const o = 7, top = 7 + crouch, lean = st ? 3 : blk ? 2 : jk ? 2 : 0;
   // legs: pants to the knee, socks, cleats; three run frames (stand, stride, other stride)
   const ly = top + 16 + tor, ll = Math.max(3, 6 + leg - Math.round(crouch * 0.6)), s1 = frame === 1 ? 2 : frame === 2 ? -2 : 0;
   const legAt = (lx, back) => { const kh = Math.ceil(ll / 2); R(lx, ly, 2, kh, back ? sh(pants, -0.15) : pants); R(lx, ly + kh, 2, ll - kh, back ? sh(sock, -0.15) : sock); R(lx - (back ? 0 : 0), ly + ll, 3, 2, shoe); };
   if (st) { legAt(o - 1, true); legAt(o + 5, false); }
+  else if (jk) { legAt(o - 3, true); legAt(o + 9, false); }   // the plant step: legs wide
   else { legAt(o + 1 - s1, true); legAt(o + 5 + s1, false); }
   // pants with a stripe in the trim color
   R(o + lean * 0.3, top + 12 + tor, 8, 5, pants); R(o + 7 + lean * 0.3, top + 12 + tor, 1, 5, trim);
@@ -945,17 +949,25 @@ function spriteFor(u, k, pose, frame) {
   else if (pose === 'up') { arm(jx - 1, aT - 7, 2, 8, false); arm(jx + 7, aT - 7, 2, 8, false); }
   else if (blk) { arm(jx + 7, aT + 1, 5, 2, true); arm(jx + 6, aT + 3, 5, 2, true); }
   else if (st) { arm(jx + 6, aT + 1, 2, ly + ll - aT + 1, true); arm(jx - 1, aT + 1, 2, 5, true); }
-  else if (pose === 'carry') { arm(jx - 1, aT, 2, 6 + tor, true); arm(jx + 6, aT, 2, 4, true); R(jx + 5, aT + 4, 4, 2, sk); }
+  else if (pose === 'grab') { arm(jx + 7, aT - 1, 5, 2, true); arm(jx + 6, aT + 2, 6, 2, true); }
+  else if (pose === 'upball') { arm(jx - 1, aT - 8, 2, 9, false); arm(jx + 7, aT - 8, 2, 9, false); }
+  else if (pose === 'carry' || jk) { arm(jx - 1, aT, 2, 6 + tor, true); arm(jx + 6, aT, 2, 4, true); R(jx + 5, aT + 4, 4, 2, sk); }
   else { const sw = frame === 1 ? 1 : frame === 2 ? -1 : 0; arm(jx - 1 - sw, aT, 2, 6 + tor, true); arm(jx + 7 + sw, aT, 2, 6 + tor, true); }
   if (lk.bands) { R(jx - 1, aT + 5 + tor, 2, 1, '#f4f4f4'); }
-  // helmet over a full-detail face; linemen get the cage, quarterbacks and kickers a single bar
-  const hx = jx, hy = top - 2;
-  PKs.helmetHead(g, hx, hy, lk, { shell: k.h, stripe: trim === k.h ? '#ffffff' : trim, mask: '#9aa0a8' }, false, K);
-  if (big) R(hx + 7, hy + 4, 2, 1, '#9aa0a8');
-  if (u.role === 'QB' || u.who.grp === 'K') R(hx + 6, hy + 6, 3, 1, 'rgba(0,0,0,0)');
+  // a small helmet drawn pixel by pixel (facing right; flipped copies face left)
+  { const HM = ['....HHHHHH....', '..HhHHTTHHHH..', '.HhHHHTTHHHHH.', 'HHHHHHTTHHHHHH', 'HHHHHHHTTHHHHH', 'HHHHHHHHHSSSSH', 'HHHHOHHHSWES..',
+      'DHHHHHHHSSSSM.', 'DHHHHHHHSMMMMM', '.DHHHHHHSSSSM.', '..DHHHHHSMMMMM', '...DDDCCSSSM..', '......NNNN....'];
+    const vis = LK.acc === 2, beard = LK.fac === 1, X0 = jx * K + 1, Y0 = jy * K - 12;
+    const col = { H: k.h, h: sh(k.h, 0.35), D: sh(k.h, -0.25), T: trim === k.h ? '#ffffff' : trim, O: sh(k.h, -0.55), S: sk, W: '#ffffff', E: '#20140c',
+      M: big ? '#c8ccd2' : '#9aa0a8', C: '#e8e8e8', N: sh(sk, -0.2) };
+    HM.forEach((row, y) => { for (let x = 0; x < row.length; x++) { let ch = row[x]; if (ch === '.') continue;
+      if (vis && y === 6 && 'SWE'.includes(ch)) { g.fillStyle = x === 9 ? '#8fc8e8' : '#262626'; g.fillRect(X0 + x, Y0 + y, 1, 1); continue; }
+      let c2 = col[ch]; if (beard && ch === 'S' && y >= 9) c2 = lk.hc || '#1b1209'; g.fillStyle = c2; g.fillRect(X0 + x, Y0 + y, 1, 1); } }); }
   // the ball in hand
   if (pose === 'cock') { R(jx - 5, aT - 9, 4, 3, '#7a3f17'); R(jx - 4, aT - 8, 2, 1, '#f4f1ea'); }
-  if (pose === 'carry' || pose === 'hold') { R(jx + 6, aT + 2, 4, 3, '#7a3f17'); R(jx + 7, aT + 3, 2, 1, '#f4f1ea'); }
+  if (pose === 'grab') { R(jx + 11, aT - 1, 4, 3, '#7a3f17'); R(jx + 12, aT, 2, 1, '#f4f1ea'); }
+  if (pose === 'upball') { R(jx + 2, aT - 11, 4, 3, '#7a3f17'); R(jx + 3, aT - 10, 2, 1, '#f4f1ea'); }
+  if (pose === 'carry' || pose === 'hold' || jk) { R(jx + 6, aT + 2, 4, 3, '#7a3f17'); R(jx + 7, aT + 3, 2, 1, '#f4f1ea'); }
   PKs.edgeShade(c);
   const out = PKs.outlined(c);
   SPR[key] = { c: out, cf: PKs.flipped(out), foot: (ly + ll + 2) * K };
@@ -980,25 +992,25 @@ function drawBoard() {
   const s = boardData();
   const [cxb] = toScr(50, 0, 0), dims = PKs.scoreboard({ fillRect() {}, set fillStyle(v) {}, drawImage() {}, save() {}, restore() {}, translate() {}, rotate() {} }, 0, 0, 2, s);
   let z = 2, bx = Math.round(cxb - dims.w / 2), by = Math.round(CROWD_H - 30 - dims.h - camPy());
-  const hung = bx >= 0 && bx + dims.w <= PW && by >= 2;
+  const hung = bx >= 0 && bx + dims.w <= PW && by >= 2 + SAT;
   if (hung) {   // two posts down to the wall
     const pl = bx + Math.round(dims.w * 0.2), pr = bx + Math.round(dims.w * 0.8) - 3, wall = Math.round(CROWD_H - 6 - camPy());
     R1(pl, by + dims.h, 3, wall - by - dims.h, '#5a5f6b'); R1(pr, by + dims.h, 3, wall - by - dims.h, '#5a5f6b');
     R1(pl, by + dims.h, 1, wall - by - dims.h, '#9aa0ad'); R1(pr, by + dims.h, 1, wall - by - dims.h, '#9aa0ad');
-  } else { z = 1; const d1 = PKs.scoreboard({ fillRect() {}, set fillStyle(v) {}, drawImage() {}, save() {}, restore() {}, translate() {}, rotate() {} }, 0, 0, 1, s); bx = Math.round(PW / 2 - d1.w / 2); by = 3; }
+  } else { z = 1; const d1 = PKs.scoreboard({ fillRect() {}, set fillStyle(v) {}, drawImage() {}, save() {}, restore() {}, translate() {}, rotate() {} }, 0, 0, 1, s); bx = Math.round(PW / 2 - d1.w / 2); by = 3 + SAT; }
   const d = PKs.scoreboard(px, bx, by, z, s);
   // down and distance on a small board under it
   const t = downText(); if (!t) return;
-  const tw = t.length * 5 + 10, tx = Math.round(bx + d.w / 2 - tw / 2), ty = by + d.h + 3;
-  R1(tx - 1, ty - 1, tw + 2, 12, '#0b0c12'); R1(tx, ty, tw, 10, '#1c1f2e'); R1(tx, ty, tw, 1, '#3d8bff');
-  PKs.pixText(px, t, tx + tw / 2, ty + 5, 7, '#ffd34d');
+  const tw = PKs.textW(t, 7) + 10, tx = Math.round(bx + d.w / 2 - tw / 2), ty = by + d.h + 3;
+  R1(tx - 1, ty - 1, tw + 2, 13, '#0b0c12'); R1(tx, ty, tw, 11, '#1c1f2e'); R1(tx, ty, tw, 1, '#3d8bff');
+  PKs.pixText(px, t, tx + tw / 2, ty + 6, 7, '#ffd34d');
 }
 
 /* ---------- referee: the umpire behind the defensive line ---------- */
 function drawRef(y, x) {
   const [sx, sy] = toScr(y, x, 0);
-  px.fillStyle = 'rgba(0,0,0,.28)'; px.beginPath(); px.ellipse(sx, sy, 5, 2, 0, 0, Math.PI * 2); px.fill();
-  const R = (a, b, w, h, c) => R1(sx + a, sy + b, w, h, c);
+  px.fillStyle = 'rgba(0,0,0,.28)'; px.beginPath(); px.ellipse(sx, sy, 4, 1.5, 0, 0, Math.PI * 2); px.fill();
+  const k = SK / RS, R = (a, b, w, h, c) => { px.fillStyle = c; px.fillRect(Math.round(sx * RS) / RS + a * k, Math.round(sy * RS) / RS + b * k, w * k, h * k); };
   R(-4, -27, 8, 28, 'rgba(20,14,10,.85)');
   R(-3, -2, 2, 2, '#111'); R(1, -2, 2, 2, '#111'); R(-3, -10, 2, 8, '#f4f4f4'); R(1, -10, 2, 8, '#f4f4f4');
   R(-3, -17, 6, 7, '#f4f4f4'); R(-2, -17, 1, 7, '#111'); R(0, -17, 1, 7, '#111'); R(2, -17, 1, 7, '#111');
@@ -1009,6 +1021,27 @@ function drawRef(y, x) {
 /* ---------- the ball ---------- */
 const FB = ['..####..', '.#oooo#.', '#ohwwoo#', '.#oooo#.', '..####..'], FBC = { '#': '#2a1206', o: '#8b4a1c', h: '#c0803f', w: '#f4f1ea' };
 function drawFootball(x, y) { x = Math.round(x); y = Math.round(y); for (let r = 0; r < 5; r++) for (let q = 0; q < 8; q++) { const ch = FB[r][q]; if (ch !== '.') { px.fillStyle = FBC[ch]; px.fillRect(x - 4 + q, y - 2 + r, 1, 1); } } }
+
+/* ---------- effects: dust, catch sparks, touchdown confetti and banner ---------- */
+let FX = [];
+function puff(y, x, n, cols, sp, life, g) { const wx = wxp(y), wy = wyp(x); for (let i = 0; i < n; i++) { const a = Math.random() * Math.PI * 2, v = sp * (0.4 + Math.random() * 0.6);
+  FX.push({ x: wx, y: wy, vx: Math.cos(a) * v, vy: Math.sin(a) * v * 0.6 - (g ? sp * 0.5 : 0), g: g || 0, life: life * (0.6 + Math.random() * 0.4), c: cols[i % cols.length], z: 1 }); } }
+function startTD(who, txt) {
+  if (!P) return; P.td = { at: performance.now(), who, txt: txt || 'TOUCHDOWN!' };
+  const cols = [KH.pri, KH.sec, '#ffffff', '#ffd34d'];
+  for (let i = 0; i < 120; i++) FX.push({ scr: true, x: Math.random() * PW, y: Math.random() * PH * 0.45 - 10, vx: (Math.random() - 0.5) * 20, vy: 30 + Math.random() * 40, g: 0, life: 1.4 + Math.random() * 0.3, c: cols[i % 4], z: Math.random() < 0.4 ? 3 : 2, fl: Math.random() * 6 });
+}
+function stepFX(dt) { FX.forEach(p => { p.x += p.vx * dt + (p.fl != null ? Math.sin(performance.now() / 160 + p.fl) * 0.4 : 0); p.y += p.vy * dt; p.vy += p.g * dt; p.life -= dt; }); FX = FX.filter(p => p.life > 0); }
+function drawFX() { FX.forEach(p => { px.fillStyle = p.c; px.globalAlpha = Math.min(1, p.life * 3); px.fillRect(Math.round(p.scr ? p.x : p.x - camPx()), Math.round(p.scr ? p.y : p.y - camPy()), p.z, p.z); }); px.globalAlpha = 1; }
+function drawTD() {   // full-resolution pass: the banner sweeps in across the field
+  if (!P || !P.td) return; const age = (performance.now() - P.td.at) / 1000; if (age > 1.55) return;
+  const sc = CW / (PW * RS), ts = Math.max(2, Math.round(44 / (7 * sc))) * 7, bw = PW * RS, bh = Math.round(ts * 1.9), by = Math.round(PH * RS * 0.4 - bh / 2);
+  const slide = age < 0.22 ? (1 - age / 0.22) * bw : age > 1.35 ? -((age - 1.35) / 0.2) * bw : 0;
+  px.fillStyle = 'rgba(6,8,16,.6)'; px.fillRect(Math.round(slide), by - 6, bw, bh + 12);
+  px.fillStyle = KH.pri; px.fillRect(Math.round(slide), by, bw, bh);
+  px.fillStyle = KH.sec; px.fillRect(Math.round(slide), by, bw, Math.round(ts / 7)); px.fillRect(Math.round(slide), by + bh - Math.round(ts / 7), bw, Math.round(ts / 7));
+  PKs.pixText(px, P.td.txt, Math.round(bw / 2 + slide), by + bh / 2, ts, Math.floor(age * 8) % 2 ? '#ffd34d' : '#ffffff', 0, '#0b0c12');
+}
 
 /* ---------- each frame ---------- */
 let LABELS = [];
@@ -1022,13 +1055,15 @@ function draw() {
   drawBoard();
   // name tags and other text at full resolution so they stay crisp
   px.save(); px.setTransform(1, 0, 0, 1, 0, 0);
-  for (const l of LABELS) { const tw = Math.round(l.t.length * 7.2) + 10, lx = Math.round(l.x * RS), ly = Math.round(l.y * RS); px.fillStyle = 'rgba(6,8,16,.75)'; px.fillRect(lx - Math.round(tw / 2), ly - 8, tw, 16); PKs.pixText(px, l.t, lx, ly, 11, l.c || '#ffffff'); }
+  const ts = Math.max(1, Math.round(17 / (7 * CW / (PW * RS)))) * 7;   // text size in canvas px for ~15 css px letters
+  for (const l of LABELS) { const tw = PKs.textW(l.t, ts) + ts, th = ts * 1.5, lx = Math.round(l.x * RS), ly = Math.round(l.y * RS + th / 2); px.fillStyle = 'rgba(6,8,16,.85)'; px.fillRect(lx - Math.round(tw / 2), Math.round(ly - th / 2), tw, Math.round(th)); PKs.pixText(px, l.t, lx, ly, ts, l.c || '#ffffff'); }
+  drawTD();
   px.restore(); LABELS = [];
   cx.setTransform(1, 0, 0, 1, 0, 0); cx.imageSmoothingEnabled = false;
   cx.drawImage(pc, 0, 0, PW * RS, PH * RS, 0, 0, cv.width, cv.height);
 }
 function poseOf(u, o) {
-  if (o.stance) return 'stance'; if (o.block) return 'block'; if (o.cock) return 'cock'; if (o.carry) return 'carry'; if (o.hold) return 'hold'; if (o.up) return 'up';
+  if (o.pose) return o.pose; if (o.stance) return 'stance'; if (o.block) return 'block'; if (o.cock) return 'cock'; if (o.carry) return 'carry'; if (o.hold) return 'hold'; if (o.up) return 'up';
   return 'run';
 }
 function drawPlayer(u, k, o) {
@@ -1038,13 +1073,15 @@ function drawPlayer(u, k, o) {
   const moving = Math.hypot(u.vx, u.vy) > 1.2, ph = Math.floor(((u.ph || 0) * 1.6) / (Math.PI / 2)) & 3;
   const frame = moving && !o.stance ? (ph === 1 ? 1 : ph === 3 ? 2 : 0) : 0;
   const sp = spriteFor(u, k, poseOf(u, o), frame), img = f < 0 ? sp.cf : sp.c;
-  px.fillStyle = 'rgba(0,0,0,.28)'; px.beginPath(); px.ellipse(fx, fy, o.fall ? 11 : 6, 2, 0, 0, Math.PI * 2); px.fill();
-  if (o.ring) { px.fillStyle = o.ring; px.fillRect(fx - 5, fy + 2, 11, 1); px.fillRect(fx - 6, fy + 1, 1, 1); px.fillRect(fx + 6, fy + 1, 1, 1); }
+  px.fillStyle = 'rgba(0,0,0,.28)'; px.beginPath(); px.ellipse(fx, fy, o.fall ? 8 : 4, 1.5, 0, 0, Math.PI * 2); px.fill();
+  if (o.ring) { px.fillStyle = o.ring; px.fillRect(fx - 4, fy + 2, 9, 1); px.fillRect(fx - 5, fy + 1, 1, 1); px.fillRect(fx + 5, fy + 1, 1, 1); }
   px.save(); px.setTransform(1, 0, 0, 1, 0, 0);
+  if (o.ghosts) o.ghosts.forEach((gp, i) => { const [gx, gy] = toScr(gp[0], gp[1], 0); px.globalAlpha = 0.18 + i * 0.12; px.drawImage(img, Math.round(gx * RS - img.width / 2), Math.round(gy * RS - sp.foot)); });
+  px.globalAlpha = 1; const lift = Math.round((o.lift || 0) * RS);
   if (o.fall) {   // knocked down: the sprite tips over in 45-degree steps (keeps the pixels square-ish)
     const ang = Math.round(o.fall * 2) / 2 * Math.PI / 2 * f;
     px.translate(Math.round(fx * RS), Math.round(fy * RS)); px.rotate(ang); px.drawImage(img, -Math.round(img.width / 2), -sp.foot);
-  } else px.drawImage(img, Math.round(fx * RS - img.width / 2), Math.round(fy * RS - sp.foot));
+  } else px.drawImage(img, Math.round(fx * RS - img.width / 2), Math.round(fy * RS - sp.foot) - lift);
   px.restore();
   return { x: fx, y: fy, top: fy - sp.foot / RS };
 }
@@ -1077,7 +1114,7 @@ function drawPlay() {
   }
   if (B.st === 'air' || B.st === 'kick') { const [lx, ly] = toScr(B.ly, B.lx, 0); px.strokeStyle = 'rgba(255,255,255,.6)'; px.lineWidth = 1; px.beginPath(); px.ellipse(lx, ly, 6, 2.5, 0, 0, Math.PI * 2); px.stroke(); }
   // everyone and the umpire, sorted by depth (farther across the field = drawn first)
-  const Rz = P.result, post = P.post || 0, snap = P.preview || P.t < 0.3;
+  const Rz = P.result, post = P.post || 0, snap = P.preview || P.t < 0.3, now = performance.now();
   const items = P.off.concat(P.def).map(u => ({ d: u.x, u }));
   if (!kr) items.push({ d: W / 2 + 0.2, ref: true });
   const spots = new Map();
@@ -1096,6 +1133,11 @@ function drawPlay() {
     if (B.st === 'air' && B.tgt === u && P.t - B.t0 > B.tof - 0.35) o.up = true;
     if (Rz && post > 0.05 && (u === Rz.who && /tackle|sack|safety/.test(Rz.kind) || u === Rz.by && Rz.kind !== 'int')) o.fall = clamp((post - 0.05) / 0.3, 0, 1) * (Rz.slide && u === Rz.who ? -1 : 1);
     if (u === P.carrier) o.ring = '#ffd34d'; else if (B.st === 'air' && B.tgt === u) o.ring = '#7fb7ff';
+    if (u.catchAt && now - u.catchAt < 330) o.pose = 'grab';
+    if (u === P.carrier && u.jk > 0 && !P.done) { (u.gst = u.gst || []).push([u.y, u.x]); if (u.gst.length > 7) u.gst.shift(); o.pose = 'juke'; o.ghosts = [u.gst[0], u.gst[3]].filter(Boolean); } else if (u.gst) u.gst = null;
+    if (P.td) { const age = (now - P.td.at) / 1000;
+      if (u === P.td.who) { o.pose = 'upball'; o.fall = 0; o.lift = age > 0.15 ? Math.abs(Math.sin((age - 0.15) * 7)) * 6 : 0; }
+      else if (u.side === 'o' && age > 0.3 && Math.hypot(u.x - P.td.who.x, u.y - P.td.who.y) < 4.5) { o.pose = 'up'; o.lift = Math.abs(Math.sin(age * 7 + u.x)) * 3; } }
     spots.set(u, drawPlayer(u, u.side === 'o' ? KH : KA, o));
   });
   // name tag under the man with the ball (or your QB), colored by the completion chance while you aim
@@ -1106,6 +1148,7 @@ function drawPlay() {
     const [sx, sy] = toScr(B.y, B.x, 0), hgt = Math.round(14 + B.z * 6);
     px.fillStyle = 'rgba(0,0,0,.3)'; px.fillRect(sx - 3, sy, 7, 2); drawFootball(sx, sy - hgt);
   }
+  drawFX();
 }
 
 /* ---------- loop ---------- */
@@ -1113,8 +1156,10 @@ let last = 0;
 function frame(t) {
   const dt = Math.min(0.05, (t - last) / 1000 || 0); last = t;
   if (P && !P.done) { step(dt / 2); step(dt / 2); }
-  else if (P && P.result && !P.preview) { P.post = (P.post || 0) + dt; P.off.concat(P.def).forEach(u => { u.vx *= 0.9; u.vy *= 0.9; u.x += u.vx * dt; u.y += u.vy * dt; u.ph = (u.ph || 0) + Math.hypot(u.vx, u.vy) * dt * 1.25; }); }
-  else if (P && !P.result) { const sh = sheetH(); camT = P.los - viewLen() * 0.38; camXT = aimCamX(W / 2, sh); }
+  stepFX(dt);
+  if (P && P.td && P.done) { const w = P.td.who; P.off.forEach(u => { if (u === w) return; const d = Math.hypot(w.x - u.x, w.y - u.y); if (d < 16 && d > 1.8) { u.vx = (w.x - u.x) / d * 7; u.vy = (w.y - u.y) / d * 7; } }); }
+  if (P && P.result && !P.preview) { P.post = (P.post || 0) + dt; P.off.concat(P.def).forEach(u => { u.vx *= 0.9; u.vy *= 0.9; u.x += u.vx * dt; u.y += u.vy * dt; u.ph = (u.ph || 0) + Math.hypot(u.vx, u.vy) * dt * 1.25; }); }
+  else if (P && P.done && !P.result) { const sh = sheetH(); camT = P.los - viewLen() * 0.38; camXT = aimCamX(W / 2, sh); }
   camY += (camT - camY) * Math.min(1, dt * 5); camX += (camXT - camX) * Math.min(1, dt * 5);
   if (window.__camLock) { camY = camT = window.__camLock[0]; camX = camXT = window.__camLock[1]; }
   if (KICK) { const m = document.getElementById('kmark'); if (m) m.style.left = `calc(${kickPos() * 100}% - 7px)`; }
@@ -1169,7 +1214,7 @@ function setup() {
   setup();
 })();
 // test hooks
-window.__drive = { get P() { return P; }, cam(y, x) { window.__camLock = [y, x]; }, get GS() { return GS; }, throwBall: (x, y) => throwBall(x, y), juke, scramble,
+window.__drive = { get P() { return P; }, td: () => startTD(P.qb),  cam(y, x) { window.__camLock = [y, x]; }, get GS() { return GS; }, throwBall: (x, y) => throwBall(x, y), juke, scramble,
   // testing: run one play instantly with a scripted player; returns the result
   testReturn(kind, ai) {
     const keep = window.setTimeout; window.setTimeout = () => 0;
