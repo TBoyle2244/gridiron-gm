@@ -923,15 +923,32 @@ function spriteFor(u, k, pose, frame) {
   const H = 32 + leg + tor, Wd = 22, c = document.createElement('canvas'); c.width = Wd * K; c.height = (H + 2) * K;
   const g = c.getContext('2d'), R = (x, y, a, b, col) => { g.fillStyle = col; g.fillRect(Math.round(x * K), Math.round(y * K), Math.round(a * K), Math.round(b * K)); }, P = (x, y, a, b, col) => { g.fillStyle = col; g.fillRect(x, y, a, b); };
   const jer = k.j, trim = k.t, pants = k.p, sock = k.sl, shoe = '#1d1d1f';
-  const o = 7, top = 7 + crouch, lean = st ? 3 : blk ? 2 : jk ? 2 : 0;
+  const run = frame > 0 && !st && !jk, rp = run ? (frame - 1) % 6 : 0;   // six-frame run cycle
+  const o = 7, top = 7 + crouch, lean = st ? 3 : blk ? 2 : jk ? 2 : run ? 1 : 0;
+  const bob = run ? [0, 1, 0, 0, 1, 0][rp] : 0; g.translate(0, bob * K);
+  // a thick segment drawn with square stamps (for bent knees and elbows)
+  const seg = (x0, y0, x1, y1, col, w) => { w = (w || 2) * K; const n = Math.max(1, Math.ceil(Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)) * K)); g.fillStyle = col;
+    for (let i = 0; i <= n; i++) g.fillRect(Math.round((x0 + (x1 - x0) * i / n) * K), Math.round((y0 + (y1 - y0) * i / n) * K), w, w); };
   // legs: pants to the knee, socks, cleats; three run frames (stand, stride, other stride)
   const ly = top + 16 + tor, ll = Math.max(3, 6 + leg - Math.round(crouch * 0.6)), s1 = frame === 1 ? 2 : frame === 2 ? -2 : 0;
   const legAt = (lx, back) => { const kh = Math.ceil(ll / 2); R(lx, ly, 2, kh, back ? sh(pants, -0.15) : pants); R(lx, ly + kh, 2, ll - kh, back ? sh(sock, -0.15) : sock); R(lx - (back ? 0 : 0), ly + ll, 3, 2, shoe); };
   if (st) { legAt(o - 1, true); legAt(o + 5, false); }
   else if (jk) { legAt(o - 3, true); legAt(o + 9, false); }   // the plant step: legs wide
-  else { legAt(o + 1 - s1, true); legAt(o + 5 + s1, false); }
+  else if (!run) { legAt(o + 1 - s1, true); legAt(o + 5 + s1, false); }
+  else {   // [knee forward, foot forward, foot lift] through the stride: plant, load, pass, push off, heel kick, knee drive
+    const LEG = [[3, 5, 0], [1, 2, 0], [0, -1, 0], [-2, -4, 1], [-2, -6, 4], [3, 2, 4]], hy = ly - 2, kh = Math.ceil((ll + 2) / 2), hx = o + 3 + lean * 0.3;
+    const runLeg = (ph, back) => { const [kx, fx, lift] = LEG[ph], ky = hy + kh - (ph === 5 ? 3 : lift > 2 ? 1 : 0), fy = ly + ll - lift - bob;
+      const pc = back ? sh(pants, -0.18) : pants, sc = back ? sh(sock, -0.18) : sock;
+      seg(hx, hy, hx + kx, ky, pc); seg(hx + kx, ky, hx + fx, fy, sc); R(hx + fx, fy + 1, 3, 2, shoe); };
+    runLeg((rp + 3) % 6, true); runLeg(rp, false);
+  }
+  const SW = [-1, -0.5, 0.5, 1, 0.5, -0.5];
+  const runArm = (swg, far) => { const ax = far ? o + lean - 1 : o + lean + 7, ay = top + 7, skc = far ? sh(sk, -0.2) : sk, slv = sh(jer, far ? -0.25 : -0.05);
+    if (swg > 0.2) { R(ax, ay, 2, 4, skc); R(ax + (far ? 0 : 1), ay + 3, 3, 2, skc); R(ax, ay, 2, 2, slv); }          // forward: elbow bent, hand out front
+    else if (swg < -0.2) { R(ax - 1, ay + 1, 2, 6 + tor, skc); R(ax - 1, ay + 1, 2, 2, slv); }                       // back: straight and behind
+    else { R(ax, ay, 2, 5 + tor, skc); R(ax, ay, 2, 2, slv); } };
   // pants with a stripe in the trim color
-  R(o + lean * 0.3, top + 12 + tor, 8, 5, pants); R(o + 7 + lean * 0.3, top + 12 + tor, 1, 5, trim);
+  { const ph2 = run ? 3 : 5; R(o + lean * 0.3, top + 12 + tor, 8, ph2, pants); R(o + 7 + lean * 0.3, top + 12 + tor, 1, ph2, trim); }
   // jersey and shoulder pads (wider on linemen)
   const jx = o + lean, jy = top + 5;
   R(jx, jy + 1, 8, 7 + tor, jer); R(jx - 1 - big, jy, 10 + big * 2, 3, jer); R(jx - 1 - big, jy + 2, 10 + big * 2, 1, sh(jer, -0.15));
@@ -951,7 +968,8 @@ function spriteFor(u, k, pose, frame) {
   else if (st) { arm(jx + 6, aT + 1, 2, ly + ll - aT + 1, true); arm(jx - 1, aT + 1, 2, 5, true); }
   else if (pose === 'grab') { arm(jx + 7, aT - 1, 5, 2, true); arm(jx + 6, aT + 2, 6, 2, true); }
   else if (pose === 'upball') { arm(jx - 1, aT - 8, 2, 9, false); arm(jx + 7, aT - 8, 2, 9, false); }
-  else if (pose === 'carry' || jk) { arm(jx - 1, aT, 2, 6 + tor, true); arm(jx + 6, aT, 2, 4, true); R(jx + 5, aT + 4, 4, 2, sk); }
+  else if (pose === 'carry' || jk) { if (!run) arm(jx - 1, aT, 2, 6 + tor, true); else runArm(-SW[rp], true); arm(jx + 6, aT, 2, 4, true); R(jx + 5, aT + 4, 4, 2, sk); }
+  else if (run) { runArm(-SW[rp], true); runArm(SW[rp], false); }
   else { const sw = frame === 1 ? 1 : frame === 2 ? -1 : 0; arm(jx - 1 - sw, aT, 2, 6 + tor, true); arm(jx + 7 + sw, aT, 2, 6 + tor, true); }
   if (lk.bands) { R(jx - 1, aT + 5 + tor, 2, 1, '#f4f4f4'); }
   // a small helmet drawn pixel by pixel (facing right; flipped copies face left)
@@ -1055,12 +1073,15 @@ function draw() {
   drawBoard();
   // name tags and other text at full resolution so they stay crisp
   px.save(); px.setTransform(1, 0, 0, 1, 0, 0);
-  const ts = Math.max(1, Math.round(17 / (7 * CW / (PW * RS)))) * 7;   // text size in canvas px for ~15 css px letters
-  for (const l of LABELS) { const tw = PKs.textW(l.t, ts) + ts, th = ts * 1.5, lx = Math.round(l.x * RS), ly = Math.round(l.y * RS + th / 2); px.fillStyle = 'rgba(6,8,16,.85)'; px.fillRect(lx - Math.round(tw / 2), Math.round(ly - th / 2), tw, Math.round(th)); PKs.pixText(px, l.t, lx, ly, ts, l.c || '#ffffff'); }
   drawTD();
-  px.restore(); LABELS = [];
+  px.restore();
   cx.setTransform(1, 0, 0, 1, 0, 0); cx.imageSmoothingEnabled = false;
   cx.drawImage(pc, 0, 0, PW * RS, PH * RS, 0, 0, cv.width, cv.height);
+  // name tags on the screen canvas itself, so they can be small and still sharp (about 10 css px tall)
+  { const ds = cv.width / PW, ts = Math.max(1, Math.round(10 * cv.width / CW / 7)) * 7;
+    for (const l of LABELS) { const tw = PKs.textW(l.t, ts) + ts, th = Math.round(ts * 1.5), lx = Math.round(l.x * ds), ly = Math.round(l.y * ds - 6 * ds + th / 2);
+      cx.fillStyle = 'rgba(6,8,16,.8)'; cx.fillRect(lx - Math.round(tw / 2), Math.round(ly - th / 2), tw, th); PKs.pixText(cx, l.t, lx, ly, ts, l.c || '#ffffff'); }
+    LABELS = []; }
 }
 function poseOf(u, o) {
   if (o.pose) return o.pose; if (o.stance) return 'stance'; if (o.block) return 'block'; if (o.cock) return 'cock'; if (o.carry) return 'carry'; if (o.hold) return 'hold'; if (o.up) return 'up';
@@ -1071,7 +1092,7 @@ function drawPlayer(u, k, o) {
   const f = u.side === 'o' ? (u.vy < -3.5 && (u === P.carrier || u.role === 'RB' || u.role === 'WR' || u.role === 'TE') ? -1 : 1) : (u.vy > 3.5 ? 1 : -1);
   u.face = f;
   const moving = Math.hypot(u.vx, u.vy) > 1.2, ph = Math.floor(((u.ph || 0) * 1.6) / (Math.PI / 2)) & 3;
-  const frame = moving && !o.stance ? (ph === 1 ? 1 : ph === 3 ? 2 : 0) : 0;
+  const frame = moving && !o.stance ? 1 + Math.floor((u.ph || 0) * 1.6 / (Math.PI / 3)) % 6 : 0;
   const sp = spriteFor(u, k, poseOf(u, o), frame), img = f < 0 ? sp.cf : sp.c;
   px.fillStyle = 'rgba(0,0,0,.28)'; px.beginPath(); px.ellipse(fx, fy, o.fall ? 8 : 4, 1.5, 0, 0, Math.PI * 2); px.fill();
   if (o.ring) { px.fillStyle = o.ring; px.fillRect(fx - 4, fy + 2, 9, 1); px.fillRect(fx - 5, fy + 1, 1, 1); px.fillRect(fx + 5, fy + 1, 1, 1); }
@@ -1214,7 +1235,7 @@ function setup() {
   setup();
 })();
 // test hooks
-window.__drive = { get P() { return P; }, td: () => startTD(P.qb),  cam(y, x) { window.__camLock = [y, x]; }, get GS() { return GS; }, throwBall: (x, y) => throwBall(x, y), juke, scramble,
+window.__drive = { get P() { return P; }, td: () => startTD(P.qb), spr: (u, pose, f) => spriteFor(u, KH, pose, f).c.toDataURL(),  cam(y, x) { window.__camLock = [y, x]; }, get GS() { return GS; }, throwBall: (x, y) => throwBall(x, y), juke, scramble,
   // testing: run one play instantly with a scripted player; returns the result
   testReturn(kind, ai) {
     const keep = window.setTimeout; window.setTimeout = () => 0;
