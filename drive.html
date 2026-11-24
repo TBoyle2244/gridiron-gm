@@ -37,6 +37,11 @@ canvas { display:block; width:100%; height:100%; touch-action:none; -webkit-user
 #msg { background:rgba(10,20,14,.82); color:#fff; font-family:var(--cond); font-size:20px; letter-spacing:.05em; text-transform:uppercase; padding:6px 14px; border-radius:8px; opacity:0; transition:opacity .2s; }
 #msg.on { opacity:1; }
 #tip { position:absolute; left:0; right:0; bottom:calc(8px + env(safe-area-inset-bottom,0px)); text-align:center; color:#fff; font-family:var(--cond); font-size:15px; letter-spacing:.04em; text-shadow:0 1px 2px #000; pointer-events:none; }
+#pcard { display:none; position:absolute; z-index:3; left:max(10px, env(safe-area-inset-left,0px)); top:calc(8px + env(safe-area-inset-top,0px)); max-width:min(300px, 30vw); background:#0f3f8f; border:3px solid #36a3ff; box-shadow:0 0 0 2px #08214d; color:#fff; padding:7px 9px; font:700 13px/1.2 system-ui, sans-serif; }
+#pcard .pk-top { display:flex; align-items:center; gap:8px; } #pcard b { font-size:15px; } #pcard small { display:block; color:#bfe0ff; font-weight:600; margin:2px 0 6px; }
+#pcard .pk-dots { display:flex; gap:3px; } #pcard .pk-dots i { width:7px; height:7px; background:#08214d; border:1px solid #36a3ff; } #pcard .pk-dots i.on { background:#6ff3ff; }
+#pcard .pk-row { display:flex; gap:6px; } #pcard button { background:#1659b8; border:2px solid #6ff3ff; color:#fff; font:800 13px/1 system-ui, sans-serif; padding:8px 10px; } #pcard .pk-sim { border-color:#2b7fe0; font-weight:700; opacity:.85; }
+@media (max-height:520px) { #pcard { padding:5px 7px; max-width:31vw; font-size:11px; } #pcard b { font-size:13px; } #pcard small { margin:1px 0 4px; } #pcard button { padding:6px 8px; font-size:12px; } }
 #btns { position:absolute; right:calc(12px + env(safe-area-inset-right,0px)); bottom:calc(36px + env(safe-area-inset-bottom,0px)); display:flex; flex-direction:column; gap:8px; }
 .big { font-family:var(--cond); font-weight:700; font-size:17px; letter-spacing:.05em; text-transform:uppercase; border:0; border-radius:12px; padding:12px 16px; background:var(--gold); color:#14110a; box-shadow:0 2px 0 rgba(0,0,0,.35); cursor:pointer; min-width:96px; }
 .big.alt { background:#f2f4ef; color:#15211a; }
@@ -71,7 +76,7 @@ label.f { display:block; font-family:var(--cond); font-size:13px; letter-spacing
 <body>
 <div id="bar"><div class="tm" id="tA">GM</div><div class="mid" id="mid"><b>Play the Game</b>preview</div><div class="tm r" id="tB"></div></div>
 <div id="rot"><div class="ph"></div><b>Turn your phone sideways</b><small>Play the Game runs in landscape. Rotate your phone (and turn off rotation lock if it's on).</small></div>
-<div id="stage"><canvas id="cv"></canvas><div id="hud"><div id="msg"></div></div><div id="tip"></div><div id="btns"></div><div id="sheet"></div></div>
+<div id="stage"><canvas id="cv"></canvas><div id="hud"><div id="msg"></div></div><div id="tip"></div><div id="btns"></div><div id="pcard"></div><div id="sheet"></div></div>
 <script>
 /* Gridiron GM — simulation engine (no DOM). Works in browser and Node. */
 (function (root) {
@@ -5215,22 +5220,60 @@ const shedOf = (who, run) => who.grp === 'DL' ? rt(who, run ? 'rdf' : 'prs') : w
 // Routes are waypoints relative to the player's start: [dx (toward the middle +), dy downfield].
 const ROUTES = {
   slant: [[0, 2], [5, 6], [11, 9]], go: [[0, 40]], curl: [[0, 12], [-0.5, 10.5]], out: [[0, 9], [-9, 9]], post: [[0, 12], [7, 28]], corner: [[0, 12], [-7, 26]],
-  dig: [[0, 11], [14, 11]], seam: [[0, 30]], flat: [[-7, 1.5], [-10, 2.5]], wheel: [[-6, 1], [-8, 6], [-8, 30]], drag: [[2, 3], [16, 4]], hitch: [[0, 6], [0, 5]], block: null, check: [[-4, 3], [-5, 5]]
+  dig: [[0, 11], [14, 11]], seam: [[0, 30]], flat: [[-7, 1.5], [-10, 2.5]], wheel: [[-6, 1], [-8, 6], [-8, 30]], drag: [[2, 3], [16, 4]], hitch: [[0, 6], [0, 5]], block: null, check: [[-4, 3], [-5, 5]],
+  cross: [[0, 5], [8, 9], [20, 12]], comeback: [[0, 16], [-2.5, 13.5]], deepout: [[0, 15], [-9, 15]], bubble: [[-2, -1.5], [-4, -1], [-4, 6]], stick: [[0, 6], [-1.5, 5]]
 };
+// The playbook. t = how much each play leans on what a scheme likes (run, deep, quick, qbRun, misd = misdirection).
+// rp = the running back's path on a run; rpo = a pass play where the QB can hand off on that path instead.
 const PLAYS = [
-  { id: 'quick', name: 'Quick slants', sub: 'Beat the blitz', run: false, wr: ['slant', 'slant', 'hitch', 'slant', 'hitch'], te: ['flat', 'drag'], rb: ['check', 'block'], drop: 3 },
-  { id: 'curl', name: 'Curl / flat', sub: 'Underneath', run: false, wr: ['curl', 'curl', 'drag', 'out', 'hitch'], te: ['seam', 'flat'], rb: ['flat', 'block'], drop: 5 },
-  { id: 'verts', name: 'Four verticals', sub: 'Stretch them deep', run: false, wr: ['go', 'go', 'seam', 'go', 'post'], te: ['seam', 'block'], rb: ['check', 'block'], drop: 7 },
-  { id: 'deep', name: 'Play-action shot', sub: 'Post and corner', run: false, pa: true, wr: ['post', 'corner', 'dig', 'go', 'out'], te: ['drag', 'block'], rb: ['block', 'block'], drop: 7 },
-  { id: 'inside', name: 'Inside run', sub: 'Between the tackles', run: 'in' },
-  { id: 'outside', name: 'Outside run', sub: 'Toss to the edge', run: 'out' }
+  { id: 'quick', name: 'Quick slants', sub: 'Beat the blitz', run: false, t: { quick: 1 }, wr: ['slant', 'slant', 'hitch', 'slant', 'hitch'], te: ['flat', 'drag'], rb: ['check', 'block'], drop: 3 },
+  { id: 'curl', name: 'Curl / flat', sub: 'Underneath', run: false, t: { quick: 0.8 }, wr: ['curl', 'curl', 'drag', 'out', 'hitch'], te: ['seam', 'flat'], rb: ['flat', 'block'], drop: 5 },
+  { id: 'mesh', name: 'Mesh', sub: 'Drags cross underneath', run: false, t: { quick: 0.9 }, wr: ['drag', 'drag', 'hitch', 'corner', 'hitch'], te: ['seam', 'flat'], rb: ['check', 'block'], drop: 3 },
+  { id: 'smash', name: 'Smash', sub: 'Hitch under a corner', run: false, t: { quick: 0.5, deep: 0.5 }, wr: ['hitch', 'hitch', 'corner', 'corner', 'out'], te: ['corner', 'flat'], rb: ['flat', 'block'], drop: 5 },
+  { id: 'flood', name: 'Flood', sub: 'Three levels to one side', run: false, t: { deep: 0.6, quick: 0.2 }, wr: ['go', 'deepout', 'flat', 'out', 'go'], te: ['deepout', 'block'], rb: ['flat', 'block'], drop: 5 },
+  { id: 'ycross', name: 'Y-Cross', sub: 'Dig and post', run: false, t: { deep: 0.6, quick: 0.2 }, wr: ['post', 'dig', 'cross', 'go', 'dig'], te: ['cross', 'block'], rb: ['check', 'block'], drop: 7 },
+  { id: 'comeback', name: 'Comebacks', sub: 'Outside the numbers', run: false, t: { deep: 0.4, quick: 0.3 }, wr: ['comeback', 'comeback', 'curl', 'comeback', 'hitch'], te: ['flat', 'block'], rb: ['check', 'block'], drop: 7 },
+  { id: 'verts', name: 'Four verticals', sub: 'Stretch them deep', run: false, t: { deep: 1 }, wr: ['go', 'go', 'seam', 'go', 'post'], te: ['seam', 'block'], rb: ['check', 'block'], drop: 7 },
+  { id: 'deep', name: 'Play-action shot', sub: 'Post and corner', run: false, pa: true, t: { deep: 0.9, misd: 0.6 }, wr: ['post', 'corner', 'dig', 'go', 'out'], te: ['drag', 'block'], rb: ['block', 'block'], drop: 7 },
+  { id: 'inside', name: 'Inside zone', sub: 'Find the crease', run: 'in', rp: 'zone', t: { run: 1 } },
+  { id: 'power', name: 'Power', sub: 'Off the guard', run: 'in', rp: 'power', t: { run: 1 } },
+  { id: 'outside', name: 'Toss sweep', sub: 'Get to the edge', run: 'out', rp: 'toss', t: { run: 0.8 } },
+  { id: 'stretch', name: 'Stretch', sub: 'Wide zone, then cut', run: 'out', rp: 'stretch', t: { run: 0.6, misd: 0.4 } },
+  { id: 'counter', name: 'Counter', sub: 'Step one way, run the other', run: 'in', rp: 'counter', t: { misd: 1, run: 0.4 } },
+  { id: 'draw', name: 'Draw', sub: 'Look pass, hand off late', run: 'in', rp: 'draw', t: { misd: 0.7, run: 0.3, quick: 0.2 } },
+  { id: 'keep', name: 'Read option', sub: 'QB keeps it outside', run: 'out', rp: 'keep', t: { qbRun: 1.3 }, min: 2008 },
+  { id: 'rpobub', name: 'RPO bubble', sub: 'Hand off or throw the bubble', run: false, rpo: 'zone', t: { quick: 0.6, misd: 0.5, qbRun: 0.4 }, min: 2008, wr: ['bubble', 'slant', 'hitch', 'bubble', 'hitch'], te: ['flat', 'block'], rb: ['block', 'block'], drop: 1 },
+  { id: 'rpoglance', name: 'RPO glance', sub: 'Hand off or hit the post', run: false, rpo: 'zone', t: { deep: 0.4, misd: 0.5, qbRun: 0.4 }, min: 2008, wr: ['post', 'hitch', 'slant', 'post', 'hitch'], te: ['seam', 'block'], rb: ['block', 'block'], drop: 1 },
+  { id: 'rpostick', name: 'RPO stick', sub: 'Hand off or throw the stick', run: false, rpo: 'power', t: { quick: 0.5, run: 0.4, misd: 0.3 }, min: 2005, wr: ['hitch', 'stick', 'stick', 'out', 'slant'], te: ['stick', 'block'], rb: ['block', 'block'], drop: 1 }
 ];
-function playOrder(fam) {
-  const p = PLAYS.slice();
-  if (fam === 'run') return [p[4], p[5], p[1], p[3], p[0], p[2]];
-  if (fam === 'pass') return [p[0], p[1], p[2], p[3], p[4], p[5]];
-  return [p[1], p[4], p[0], p[3], p[5], p[2]];
+const isRun = p => !!p.run || !!p.rpo, isDeep = p => (p.t.deep || 0) >= 0.6;
+// three plays for this down: what your coach's scheme likes, nudged by down, distance and field position
+function pickOptions() {
+  const A = Object.assign({ run: 0.5, deep: 0.5, quick: 0.5, qbRun: 0, misd: 0.3 }, (me.os && me.os.a) || {});
+  const sid = me.os && me.os.id, long = GS.togo >= 7 && GS.down >= 2, short = GS.togo <= 2, goal = GS.y >= 88 || GS.goal2;
+  const pool = PLAYS.filter(p => !p.min || GS.year >= p.min || sid === 'rpo' || sid === 'readopt')
+    .filter(p => !(p.rp === 'keep' && A.qbRun < 0.25) && !(p.rpo && A.qbRun < 0.15 && A.misd < 0.4) && !(p.run && !p.rp));
+  const w = p => { let v = 0.05; for (const k in p.t) v += p.t[k] * (A[k] || 0); if (!p.run && !p.rpo) v *= long ? 2.2 : short ? 0.6 : 1; if (p.run) v *= long ? 0.3 : short ? 2.2 : 1; if (goal && isDeep(p)) v *= 0.25; return v * (0.75 + Math.random() * 0.5); };
+  const left = pool.map(p => ({ p, w: w(p) })), out = [];
+  while (out.length < 3 && left.length) { let r = Math.random() * left.reduce((a, b) => a + b.w, 0), i = 0; while (i < left.length - 1 && (r -= left[i].w) > 0) i++; out.push(left.splice(i, 1)[0].p); }
+  const swap = f => { const best = left.filter(o => f(o.p)).sort((a, b) => b.w - a.w)[0]; if (best) out[2] = best.p; };
+  if (!out.some(isRun) && !(long && GS.down >= 3)) swap(isRun);
+  else if (!out.some(p => !p.run) && GS.togo >= 4) swap(p => !p.run);
+  return out.map(p => ({ p, s: Math.random() < 0.5 ? -1 : 1 }));
 }
+// the path a ball carrier follows after the snap (until you take over by sliding)
+function runPath(rp, u, s, mid, los) {
+  switch (rp) {
+    case 'power': return [[mid + s * 3.4, los - 1], [mid + s * 3.4, los + 4]];
+    case 'toss': return [[mid + s * 9, los - 3], [mid + s * 12.5, los], [mid + s * 12.5, los + 5]];
+    case 'stretch': return [[mid + s * 6.5, los - 1.8], [mid + s * 8, los + 0.5], [mid + s * 8, los + 5]];
+    case 'counter': return [[u.x - s * 1.8, u.y + 0.4], [mid + s * 3.2, los - 1.2], [mid + s * 3.2, los + 4]];
+    case 'draw': return [[mid + s * 0.8, los - 1], [mid + s * 0.8, los + 4]];
+    case 'keep': return [[mid + s * 5, los - 2.5], [mid + s * 8, los + 0.5], [mid + s * 8, los + 5]];
+    default: return [[mid + s * 1.6, los - 1.2], [mid + s * 1.6, los + 4]];
+  }
+}
+function followPath(u, sp, dt) { const [tx, ty] = u.rpath[u.rpi]; steer(u, tx, ty, sp, dt, 20); if (Math.hypot(tx - u.x, ty - u.y) < 1) u.rpi++; }
 
 /* ---------- game state ---------- */
 let me = null, op = null, GS = null;
@@ -5277,7 +5320,7 @@ function sheetH() { const s = $('#sheet'); return s && s.style.display !== 'none
 /* ---------- play setup ---------- */
 let P = null; // the live play
 function makeUnit(role, who, x, y, side) { return { role, who, x, y, vx: 0, vy: 0, side, sp: spd(role, speedOf(who)), route: null, ri: 0, sx: x, sy: y, block: 0, stun: 0, trail: [] }; }
-function setupPlay(play) {
+function setupPlay(play, side) {
   const los = GS.y, F = me.F, off = [], def = [], mid = W / 2;
   [-6.2, -3.1, 0, 3.1, 6.2].forEach((dx, i) => off.push(makeUnit('OL', me.OL[i], mid + dx, los - 0.7, 'o')));
   const gun = me.fam === 'pass' || F.WR >= 3;
@@ -5313,19 +5356,23 @@ function setupPlay(play) {
   dl.forEach(u => u.rush = true);
   P = { play, t: 0, off, def, qb, rbs, tes, wrs, dl, lb, db, elig, ball: { x: mid, y: los, z: 0, st: 'snap' }, carrier: null, thrown: null, aim: null, done: false, los, result: null, blitz: !!blitz, locks: [] };
   // routes
+  const s = side || 1; P.side = s;
   if (!play.run) {
-    const assign = (u, name) => { if (!name || name === 'block') { u.blocker = true; return; } const R = ROUTES[name]; const dir = u.x < mid ? 1 : -1; u.route = R.map(([dx, dy]) => [u.x + dx * dir, u.y + dy]); u.rname = name; };
+    const assign = (u, name) => { if (!name || name === 'block') { u.blocker = true; return; } const R = ROUTES[name]; const dir = u.x < mid ? 1 : -1; u.route = R.map(([dx, dy]) => [clamp(u.x + dx * dir, 1, W - 1), u.y + dy]); u.rname = name; };
     wrs.forEach((u, i) => assign(u, play.wr[i % play.wr.length]));
     tes.forEach((u, i) => assign(u, play.te[i] || 'block'));
     rbs.forEach((u, i) => assign(u, play.rb[i] || 'block'));
+    if (play.rpo && rbs[0]) { const r = rbs[0]; r.blocker = false; r.route = runPath(play.rpo, r, s, mid, los); r.rname = 'rpo'; P.rpoRB = r; }
     const pressure = rushers().length;
     const ol = me.avg('OL'), dlv = op.avg('DL');
     P.pocket = clamp(2.9 + (ol - dlv) * 0.05 - (pressure - 4) * 0.4 + rnd(-0.4, 0.5), 1.5, 5.5);
     dl.concat(lb).filter(u => u.rush).forEach((u, i) => u.shed = Math.max(1, P.pocket * rnd(0.82, 1.08) - (u.role === 'LB' ? 0.5 : 0) + i * 0.05 - (rt(u.who, 'prs') - u.who.ovr) * 0.05));
   } else {
-    P.runner = rbs[0] || qb;
-    P.dir = play.run === 'out' ? (Math.random() < 0.5 ? -1 : 1) : 0;
+    P.runner = play.rp === 'keep' || !rbs[0] ? qb : rbs[0];
+    P.dir = play.rp ? 0 : play.run === 'out' ? s : 0;
     off.forEach(u => { if (u !== P.runner && u !== qb) u.blocker = true; });
+    if (play.rp) { P.runner.rpath = runPath(play.rp, P.runner, s, mid, los); P.runner.rpi = 0; }
+    if (play.rp === 'keep' && rbs[0]) { const f = rbs[0]; f.blocker = false; f.route = runPath('zone', f, -s, mid, los); f.rname = 'fake'; }
   }
   pairLine();
   camXT = aimCamX(mid); camX = camXT;
@@ -5381,6 +5428,7 @@ function lineStep(dt) {
 let touch = null, lastTap = 0, AUTO = null;
 function pt(e) { const r = cv.getBoundingClientRect(); const t = e.touches ? e.touches[0] || e.changedTouches[0] : e; return { px: t.clientX - r.left, py: t.clientY - r.top }; }
 function down(e) {
+  if (P && P.pick) { e.preventDefault(); snapPlay(); return; }
   if (!P || P.done) return; e.preventDefault();
   const q = pt(e); touch = { sx: q.px, sy: q.py, px: q.px, py: q.py, t0: performance.now() };
   if (P.carrier) touch.lane0 = P.carrier.lane != null ? P.carrier.lane : P.carrier.x;
@@ -5434,6 +5482,7 @@ function juke() {
   c.jk = 0.38; c.jcd = 1.4; puff(c.y, c.x, 10, ['#c9b48a', '#a89468', '#e6dcc0'], 22, 0.45); c.jx = near ? (c.x >= near.x ? 1 : -1) : (Math.random() < 0.5 ? -1 : 1);
   flash('Juke!', 500);
 }
+function handOff() { const r = P && P.rpoRB; if (!r || P.done || P.ball.st !== 'held' || P.rpoGone) return; P.carrier = r; P.ball.st = 'run'; r.rpath = r.route.slice(r.ri); r.rpi = 0; r.route = null; P.rpoGone = true; tip('Slide up/down to change lanes · tap to juke · swipe right to dive, left to slide'); btns(); }
 function scramble() { if (P.ball.st !== 'held' || P.play.run) return; P.carrier = P.qb; P.ball.st = 'run'; P.qb.scr = true; tip('Slide up/down to change lanes · tap to juke · swipe right to dive, left to slide'); btns(); }
 function dive() { const c = P.carrier; if (!c) return; endPlay({ kind: 'tackle', y: c.y + 1.4, x: c.x, who: c, text: 'Dive', dive: true }); }
 // Feet first: down where he is, no extra yards, no hit
@@ -5452,17 +5501,20 @@ function step(dt) {
   P.t += dt;
   const q = P.qb, B = P.ball;
   // snap and dropback
-  if (B.st === 'snap') { if (P.t > 0.25) { if (P.play.run) { B.st = 'hand'; } else { B.st = 'held'; tip(P.play.pa ? 'Play action… pull back and let go to throw' : 'Pull back (left) and let go to throw'); btns(); } } }
+  if (B.st === 'snap') { if (P.t > 0.25) { if (P.play.run) { B.st = 'hand'; } else { B.st = 'held'; tip(P.play.rpo ? 'Tap Hand off to run it, or pull back and let go to throw' : P.play.pa ? 'Play action… pull back and let go to throw' : 'Pull back (left) and let go to throw'); btns(); } } }
   if (!P.play.run && !q.scr && B.st !== 'run') {
-    const depth = P.los - (P.play.drop === 3 ? 4 : P.play.drop === 5 ? 6 : 8);
+    const depth = P.los - (P.play.drop === 1 ? 2.5 : P.play.drop === 3 ? 4 : P.play.drop === 5 ? 6 : 8);
     if (q.y > depth + 0.2 && P.t < 1.6) steer(q, q.x, depth, 5, dt); else { q.vx *= 0.8; q.vy *= 0.8; }
   }
   // run plays: handoff then the runner is yours
   if (P.play.run && B.st === 'hand') {
-    const r = P.runner; steer(q, r.x + 0.5, r.y + 0.6, 4, dt);
-    steer(r, q.x + P.dir * 1.5, q.y - 0.4, r.sp * 0.6, dt);
-    if (P.t > 0.6 || Math.hypot(r.x - q.x, r.y - q.y) < 1.2) { B.st = 'run'; P.carrier = r; tip('Slide up/down to change lanes · tap to juke · swipe right to dive, left to slide'); btns(); }
+    const r = P.runner, rp = P.play.rp, give = () => { B.st = 'run'; P.carrier = r; tip('Slide up/down to change lanes · tap to juke · swipe right to dive, left to slide'); btns(); };
+    if (r === q || (rp === 'toss' && P.t > 0.4)) give();
+    else if (rp === 'draw' && P.t < 0.9) { steer(q, q.x, P.los - 4, 4.5, dt); r.vx *= 0.8; r.vy *= 0.8; }
+    else if (r.rpath) { followPath(r, r.sp * 0.7, dt); steer(q, r.x + 0.4, r.y + 0.4, 4, dt); if (P.t > (rp === 'draw' ? 1.4 : 0.65) || Math.hypot(r.x - q.x, r.y - q.y) < 1.2) give(); }
+    else { steer(q, r.x + 0.5, r.y + 0.6, 4, dt); steer(r, q.x + P.dir * 1.5, q.y - 0.4, r.sp * 0.6, dt); if (P.t > 0.6 || Math.hypot(r.x - q.x, r.y - q.y) < 1.2) give(); }
   }
+  if (P.play.rpo && !P.rpoGone && P.t > 1.2) { P.rpoGone = true; btns(); }
   // receivers run routes (until the ball is in the air)
   P.elig.forEach(u => {
     if (u === P.carrier) return;
@@ -5514,11 +5566,13 @@ function step(dt) {
     let tx = c.x, ty = c.y + 12;
     if (AUTO) { tx = AUTO[0]; ty = AUTO[1]; }
     else if (touch && touch.lane0 != null) {
+      c.rpath = null;
       // he always runs straight ahead at full speed; sliding your finger up or down moves him across the field with it
       c.lane = clamp(touch.lane0 + (touch.py - touch.sy) / (S * SQ) * 1.3, 0.5, W - 0.5);
       tx = c.lane; ty = c.y + 3;
     }
     else if (c.lane != null) { tx = c.lane; ty = c.y + 3; }
+    else if (c.rpath && c.rpi < c.rpath.length) { [tx, ty] = c.rpath[c.rpi]; if (Math.hypot(tx - c.x, ty - c.y) < 1) c.rpi++; }
     else if (P.play.run && P.t < 1.4 && P.dir) { tx = c.x + P.dir * 8; ty = c.y + 3; }
     let sp = c.sp * 0.93;
     if (c.jk > 0) { c.jk -= dt; tx = c.x + c.jx * 6; ty = c.y + 2; sp *= 1.2; }
@@ -5674,11 +5728,11 @@ function endPlay(r) {
   GS.togo -= gain;
   if (GS.togo <= 0) { GS.down = 1; GS.togo = 10; text += ' · First down!'; }
   else GS.down++;
-  flash(text, 1000);
+  flash(text, 800);
   setTimeout(() => {
     if (GS.down > 4) { flash('Turnover on downs', 1300); setTimeout(() => endDrive('downs', GS.y), 1300); return; }
     scoreBar(); callPlay();
-  }, 1000);
+  }, 800);
 }
 
 /* ---------- between plays ---------- */
@@ -5733,22 +5787,16 @@ function callPlay() {
   if (GS.down === 4 && !GS.goal2) return fourthDown();
   showPlays();
 }
-function showPlays() {
-  const order = playOrder(me.fam);
-  const lp = GS.lastPlay && PLAYS.find(x => x.id === GS.lastPlay);
-  sheet(`<div class="hd"><h3>${esc(me.city)} on offense · ${esc(me.os ? me.os.name : '')}</h3><span>${lp ? `<button class="mini" data-play="${lp.id}">Again: ${esc(lp.name)}</button> ` : ''}<button class="mini" data-act="simdrive">Sim this drive</button></span></div>
-    <div class="plays">${order.map(p => `<button class="play" data-play="${p.id}">${routeSvg(p)}${esc(p.name)}<small>${esc(p.sub)}</small></button>`).join('')}</div>`);
+// Retro style: the play is lined up on the field with its routes drawn; change it or tap to snap
+function showPlays() { GS.opts = pickOptions(); GS.oi = 0; previewOpt(); }
+function previewOpt() {
+  const o = GS.opts[GS.oi]; setupPlay(o.p, o.s); P.done = true; P.preview = true; P.pick = true; sheet('');
+  const c = $('#pcard'); c.innerHTML = `<div class="pk-top"><span class="pk-dots">${GS.opts.map((x, i) => `<i class="${i === GS.oi ? 'on' : ''}"></i>`).join('')}</span><b>${esc(o.p.name)}</b></div><small>${esc(o.p.sub)}</small>
+    <div class="pk-row"><button data-act="chg">Change play</button><button class="pk-sim" data-act="simdrive">Sim drive</button></div>`; c.style.display = 'block';
+  tip('Tap the field to snap'); btns();
 }
-function routeSvg(p) {
-  const w = 100, h = 54, los = 34;
-  if (p.run) {
-    const d = p.run === 'out' ? 'M24 27 C 34 27, 38 8, 80 6' : 'M24 27 L 40 27 L 82 31';
-    return `<svg viewBox="0 0 ${w} ${h}"><line x1="${los}" y1="4" x2="${los}" y2="50" stroke="currentColor" stroke-opacity=".25"/><path d="${d}" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><circle cx="24" cy="27" r="4" fill="currentColor"/></svg>`;
-  }
-  const ys = [8, 46, 17, 37, 27], out = [];
-  p.wr.slice(0, Math.min(me.F.WR, 4)).forEach((r, i) => { const y0 = ys[i], dir = y0 < 27 ? 1 : -1; const R = ROUTES[r]; if (!R) return; let path = `M${los} ${y0}`; R.forEach(([dx, dy]) => { path += ` L${los + Math.min(dy, 30) * 2.1} ${y0 + dx * dir * 1.6}`; }); out.push(`<path d="${path}" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>`); });
-  return `<svg viewBox="0 0 ${w} ${h}"><line x1="${los}" y1="2" x2="${los}" y2="52" stroke="currentColor" stroke-opacity=".25"/>${out.join('')}</svg>`;
-}
+function snapPlay() { if (!P || !P.pick) return; P.pick = false; P.preview = false; P.done = false; P.t = 0; GS.lastPlay = P.play.id; $('#pcard').style.display = 'none'; tip(''); btns(); }
+function routeSvg() { return ''; }
 function fourthDown() {
   const dist = 100 - GS.y + 17, fg = dist <= 58;
   const pFG = clamp(1.04 - (dist - 20) * 0.019 * clamp(1 - (rt(me.K, 'kpw') - 70) * 0.006, 0.8, 1.2) + (rt(me.K, 'kac') - 70) * 0.005 - (GS.year < 1990 ? 0.08 : 0), 0.05, 0.99);
@@ -5840,6 +5888,8 @@ function tip(t) { $('#tip').textContent = t; }
 function sheet(h) { const s = $('#sheet'); s.innerHTML = h; s.style.display = h ? 'block' : 'none'; }
 function btns() {
   const b = $('#btns'); let h = '';
+  if (P && P.pick) h += '<button class="big" data-act="snap">Snap</button>';
+  if (P && !P.done && P.play.rpo && P.ball.st === 'held' && !P.rpoGone) h += '<button class="big" data-act="hand">Hand off</button>';
   if (P && !P.done && !P.play.run && P.ball.st === 'held') h += '<button class="big alt" data-act="scr">QB run</button>';
   if (P && !P.done && P.play.kr && P.ball.st === 'kick' && !P.call) h += P.play.kr === 'ko' && P.land < 0 ? '<button class="big alt" data-act="fair">Take a knee</button>' : P.play.kr === 'pr' ? '<button class="big alt" data-act="fair">Fair catch</button>' : '';
   if (P && !P.done && P.carrier) h += '<button class="big alt" data-act="dive">Dive</button>';
@@ -5847,14 +5897,17 @@ function btns() {
 }
 document.addEventListener('click', e => {
   const pl = e.target.closest('[data-play]');
-  if (pl) { const p = PLAYS.find(x => x.id === pl.dataset.play); GS.lastPlay = p.id; sheet(''); setupPlay(p); tip(''); btns(); return; }
+  if (pl) { const p = PLAYS.find(x => x.id === pl.dataset.play); GS.opts = [{ p, s: 1 }]; GS.oi = 0; previewOpt(); snapPlay(); return; }
   const a = e.target.closest('[data-act]'); if (!a) return;
   const k = a.dataset.act;
   if (k === 'scr') scramble();
+  else if (k === 'snap') snapPlay();
+  else if (k === 'hand') handOff();
+  else if (k === 'chg') { GS.oi = (GS.oi + 1) % GS.opts.length; previewOpt(); }
   else if (k === 'fair') fairCatch();
   else if (k === 'kick') kickNow();
   else if (k === 'dive') dive();
-  else if (k === 'simdrive') { sheet(''); simDrive(); }
+  else if (k === 'simdrive') { sheet(''); $('#pcard').style.display = 'none'; if (P) P.pick = false; simDrive(); }
   else if (k === 'gofor') { sheet(''); showPlays(); }
   else if (k === 'punt') { sheet(''); const gross = Math.round(rnd(38, 52)), land = GS.y + gross; let txt, spot; if (land >= 100) { spot = 20; txt = `Punt ${gross} yards into the end zone: touchback`; } else { const fc = land > 88 || Math.random() < 0.3, ret = fc ? 0 : Math.max(0, Math.round(rnd(-2, 14) + (op.avg('DB') - 65) * 0.1)); spot = clamp(100 - land + ret, 1, 60); txt = fc ? `Punt ${gross} yards, fair catch at the ${Math.round(100 - land)}` : `Punt ${gross} yards, returned ${ret}`; } flash(txt, 1500); setTimeout(() => endDrive('punt', spot), 1500); }
   else if (k === 'fg') { sheet(''); kickMeter(`${Math.round(GS.fgDist)}-yard field goal · ${esc(me.K.name)}`, GS.pFG, GS.fgDist, (good, m) => { flash(good ? `${Math.round(GS.fgDist)}-yard field goal is good!` : `Field goal no good: wide ${m < 0.5 ? 'left' : 'right'}`, 1400); if (good) GS.my += 3; scoreBar(); setTimeout(() => endDrive(good ? 'score' : 'downs', good ? 0 : GS.y), 1400); }); }
@@ -5911,7 +5964,7 @@ const WORLD_W = Math.ceil((100 + MARGIN * 2) * YD), WORLD_H = Math.ceil(TOPF * 2
 const wxp = y => (y + MARGIN) * YD, wyp = (x, z) => TOPF + x * YD * DEP - (z || 0) * FT * 0.8;
 let pc = null, px = null, PW = 320, PH = 240, WORLD = null, KIT = 'home';
 function artResize() {
-  PH = clamp(Math.round(CH / 2.7), 140, 320); PW = Math.max(160, Math.round(PH * CW / Math.max(1, CH)));
+  PH = clamp(Math.max(270, Math.round(CH / 2.7)), 140, 320); PW = Math.max(160, Math.round(PH * CW / Math.max(1, CH)));
   if (!pc) { pc = document.createElement('canvas'); px = pc.getContext('2d'); }
   pc.width = PW * RS; pc.height = PH * RS;
   S = YD * CW / PW; SQ = DEP;
@@ -5919,7 +5972,7 @@ function artResize() {
 }
 // camera (world px of the view's top-left), from the game's camera in yards
 let SAT = 0;
-const camPx = () => Math.round(wxp(camY)), camPy = () => Math.round(wyp(camX));
+const camPx = () => clamp(Math.round(wxp(camY)), 0, Math.max(0, WORLD_W - PW)), camPy = () => clamp(Math.round(wyp(camX)), 0, Math.max(0, WORLD_H - PH));
 const toScr = (y, x, z) => [Math.round(wxp(y) - camPx()), Math.round(wyp(x, z) - camPy())];
 const PKs = window.PK;
 const sh = (hex, f) => PKs.shade(hex, f);
@@ -6204,6 +6257,7 @@ function drawPlay() {
   if (!kr && GS.y + GS.togo < 100 && !GS.goal2) R1(wxp(los + GS.togo) - camPx(), f0, 1, f1 - f0, '#ffd34d');
   if (!P) return;
   const B = P.ball, q = P.qb;
+  if (P.pick) drawRoutes();
   // routes until the ball is thrown
   if (!P.preview && B.st !== 'air' && !P.carrier && !P.done) {
     px.fillStyle = 'rgba(255,255,255,.55)';
@@ -6256,12 +6310,23 @@ function drawPlay() {
   }
   drawFX();
 }
+function drawRoutes() {
+  const line = (pts, col, dash) => { if (pts.length < 2) return; px.strokeStyle = col; px.lineWidth = 0.9; px.lineJoin = 'round'; px.setLineDash(dash || []); px.beginPath(); pts.forEach(([x, y], i) => { const [a, b] = toScr(y, x, 0); i ? px.lineTo(a, b) : px.moveTo(a, b); }); px.stroke(); px.setLineDash([]);
+    const [x1, y1] = pts[pts.length - 2], [x2, y2] = pts[pts.length - 1], [a1, b1] = toScr(y1, x1, 0), [a2, b2] = toScr(y2, x2, 0), g = Math.atan2(b2 - b1, a2 - a1);
+    px.fillStyle = col; px.beginPath(); px.moveTo(a2 + Math.cos(g) * 2, b2 + Math.sin(g) * 2); px.lineTo(a2 - 4 * Math.cos(g - 0.6), b2 - 4 * Math.sin(g - 0.6)); px.lineTo(a2 - 4 * Math.cos(g + 0.6), b2 - 4 * Math.sin(g + 0.6)); px.fill(); };
+  const cap = y => Math.min(y, P.los + 26);
+  P.off.forEach(u => {
+    if (u.rpath) line([[u.x, u.y]].concat(u.rpath), '#ffd34d');
+    else if (u.route) line([[u.x, u.y]].concat(u.route.map(([x, y]) => [x, cap(y)])), u === P.rpoRB || u.rname === 'fake' ? '#ffd34d' : '#6ff3ff', u === P.rpoRB || u.rname === 'fake' ? [2, 2] : null);
+  });
+}
 
 /* ---------- loop ---------- */
+const PACE = 1.2;   // game speed: a touch quicker than real time, like Retro Bowl
 let last = 0;
 function frame(t) {
   const dt = Math.min(0.05, (t - last) / 1000 || 0); last = t;
-  if (P && !P.done) { step(dt / 2); step(dt / 2); }
+  if (P && !P.done) { const g = dt * PACE; step(g / 2); step(g / 2); }
   stepFX(dt);
   if (P && P.td && P.done) { const w = P.td.who; P.off.forEach(u => { if (u === w) return; const d = Math.hypot(w.x - u.x, w.y - u.y); if (d < 16 && d > 1.8) { u.vx = (w.x - u.x) / d * 7; u.vy = (w.y - u.y) / d * 7; } }); }
   if (P && P.result && !P.preview) { P.post = (P.post || 0) + dt; P.off.concat(P.def).forEach(u => { u.vx *= 0.9; u.vy *= 0.9; u.x += u.vx * dt; u.y += u.vy * dt; u.ph = (u.ph || 0) + Math.hypot(u.vx, u.vy) * dt * 1.25; }); }
@@ -6320,7 +6385,7 @@ function setup() {
   setup();
 })();
 // test hooks
-window.__drive = { get P() { return P; }, td: () => startTD(P.qb), ret: k => startReturn(k), spr: (u, pose, f) => spriteFor(u, KH, pose, f).c.toDataURL(),  cam(y, x) { window.__camLock = [y, x]; }, get GS() { return GS; }, throwBall: (x, y) => throwBall(x, y), juke, scramble,
+window.__drive = { get P() { return P; }, call: () => callPlay(), preview: (id, s) => { GS.opts = [{ p: PLAYS.find(x => x.id === id), s }]; GS.oi = 0; previewOpt(); }, td: () => startTD(P.qb), ret: k => startReturn(k), spr: (u, pose, f) => spriteFor(u, KH, pose, f).c.toDataURL(),  cam(y, x) { window.__camLock = [y, x]; }, get GS() { return GS; }, throwBall: (x, y) => throwBall(x, y), juke, scramble,
   // testing: run one play instantly with a scripted player; returns the result
   testReturn(kind, ai) {
     const keep = window.setTimeout; window.setTimeout = () => 0;
