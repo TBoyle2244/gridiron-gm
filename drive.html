@@ -6002,6 +6002,57 @@ function kitFor(t, k) {
 }
 function setKits(k) { KIT = k; KH = kitFor(me, k); KA = kitFor(op, k === 'away' ? 'home' : 'away'); SPR = {}; WORLD = null; }
 
+// Original pixel emblems, one idea per team name (none of them copies a real logo). 13 x 13 cells:
+// W = white, A = the team's trim color, . = empty. Some are drawn by code (star, moon, stripes...).
+const EMB = {
+  paw: ['.............', '...WW...WW...', '..WWWW.WWWW..', '..WWWW.WWWW..', '...WW...WW...', 'WW.........WW', 'WWW.......WWW', '.W..WWWWW..W.', '...WWWWWWW...', '..WWWWWWWWW..', '..WWWWWWWWW..', '...WWWWWWW...', '....WW.WW....'],
+  mountain: ['.............', '.............', '.............', '......A......', '.....AAA.....', '....AAAAA....', '...WAAWAAW...', '..WWWWWWWWW..', '.WWWWWWWWWWW.', 'WWWWWWWWWWWWW', '.............'],
+  crown: ['.............', '.............', 'W.....W.....W', 'WW...WWW...WW', 'WWW.WWWWW.WWW', 'WWWWWWWWWWWWW', 'WAWWWAWAWWWAW', 'WWWWWWWWWWWWW', 'AAAAAAAAAAAAA'],
+  horse: ['.............', '........WW...', '.......WWWW..', '......WWWWWW.', '.....WWW..WW.', 'WWWWWWWW.....', 'WWWWWWWWW....', '.WWWWWWWW....', '.W..W..W.W...', 'W...W..W..W..', 'W....W.W...W.'],
+  flame: ['......W......', '.....WW......', '.....WWW.....', '....WWWW..W..', '...WWWAWW.WW.', '..WWWAAWWWWW.', '..WWAAAAWWWW.', '.WWWAAAAAWWW.', '.WWAAAAAAAWW.', '.WWWAAAAAWWW.', '..WWWAAAWWW..', '...WWWWWWW...'],
+  ship: ['......W......', '......WAAA...', '......WAAAA..', '......WAAAA..', '......WAAA...', '......W......', 'W.....W.....W', 'WW.WWWWWWW.WW', '.WWWWWWWWWWW.', '..WWWWWWWWW..'],
+  plane: ['......W......', '.....WWW.....', '.....WWW.....', '.....WWW.....', '...WWWWWWW...', '.WWWWWWWWWWW.', 'WWWW.WWW.WWWW', '.....WWW.....', '.....WWW.....', '....WWWWW....', '...WW.W.WW...'],
+  anvil: ['.............', 'WWWWWWWWWWW..', '.WWWWWWWWWWWW', '..WWWWWWWWWW.', '....WWWWW....', '....WWWWW....', '...WWWWWWW...', '..WWWWWWWWW..', '..AAAAAAAAA..'],
+  pick: ['..WWWWWWWWW..', '.WW...A...WW.', 'WW....A....WW', 'W.....A.....W', '......A......', '......A......', '......A......', '......A......', '......A......', '......A......'],
+  anchor: ['.....WWW.....', '.....W.W.....', '.....WWW.....', '...WWWWWWW...', '......W......', '......W......', '......W......', 'W.....W.....W', 'WW....W....WW', '.WW...W...WW.', '..WWWWWWWWW..', '....WWWWW....'],
+  skull: ['.............', '...WWWWWWW...', '..WWWWWWWWW..', '.WWWWWWWWWWW.', '.WW..WWW..WW.', '.WW..WWW..WW.', '.WWWWW.WWWWW.', '..WWWWWWWWW..', '...W.W.W.W...', '...WWWWWWW...'],
+  tree: ['......W......', '.....WWW.....', '....WWWWW....', '.....WWW.....', '....WWWWW....', '...WWWWWWW...', '....WWWWW....', '...WWWWWWW...', '..WWWWWWWWW..', '......A......', '......A......'],
+  bird: ['.............', '...WWW.......', '..WWWWW......', 'AAW.WWWW.....', '..WWWWWWW....', '...WWWWWWWW..', '....WWWWWWWWW', '.....WWWWWW..', '......A..A...', '.....AA.AA...'],
+  talon: ['.............', '....WWWWW....', '....WWWWW....', '...WWWWWWW...', '..WW.WWW.WW..', '.WW..W.W..WW.', 'WW..WW.WW..WW', 'W...W...W...W', 'A...A...A...A'],
+  feather: ['..........WW.', '.........WWW.', '........WWWW.', '.......WWWW..', '......WWWW...', '.....WWWW....', '....WWWW.....', '...WWWW......', '..AWWW.......', '.AA..........', 'A............'],
+  wave: ['.....WWWW....', '...WWWWWWWW..', '..WWW....WWW.', '.WW..WWW..WW.', '.W..W...W.W..', 'WW..W..WW....', 'W....WW......', 'W............', 'AAAAAAAAAAAAA', 'A.AAA.AAA.AAA'],
+  hat: ['.............', '.............', '.....WWW.....', '....WWWWW....', '...WWWWWWW...', '...AAAAAAA...', 'W..WWWWWWW..W', 'WWWWWWWWWWWWW', '.WWWWWWWWWWW.'],
+  hammer: ['.WWWWWWW.....', 'WWWWWWWWW....', 'WWWWWWWWW....', '.WWWWWWW.....', '....AA.......', '.....AA......', '......AA.....', '.......AA....', '........AA...', '.........AA..', '..........AA.'],
+  horns: ['W...........W', 'WW.........WW', '.WW.......WW.', '..WWWWWWWWW..', '...WWWWWWW...', '...W.WWW.W...', '...WWWWWWW...', '....WWWWW....', '.....AAA.....'],
+  tower: ['..W.W.W.W.W..', '..WWWWWWWWW..', '...WWWWWWW...', '...WW.W.WW...', '...WWWWWWW...', '...WWWWWWW...', '...WWW.WWW...', '...WW...WW...', '..WWWWWWWWW..'],
+  pillar: ['WWWWWWWWWWWWW', '.WWWWWWWWWWW.', '..W.W.W.W.W..', '..W.W.W.W.W..', '..W.W.W.W.W..', '..W.W.W.W.W..', '..W.W.W.W.W..', '.WWWWWWWWWWW.', 'WWWWWWWWWWWWW'],
+  dome: ['......W......', '......W......', '.....WWW.....', '....WWWWW....', '...WWWWWWW...', '..WWWWWWWWW..', '..AAAAAAAAA..', '..W.W.W.W.W..', '..W.W.W.W.W..', 'WWWWWWWWWWWWW'],
+  crate: null, star: null, moon: null, stripes: null, spots: null, flag: null, burst: null, halo: null, drop: null, claw: null, shield: null
+};
+// drawn by code on the 13 x 13 grid
+(function () {
+  const G = f => { const r = []; for (let y = 0; y < 13; y++) { let s = ''; for (let x = 0; x < 13; x++) s += f(x, y) || '.'; r.push(s); } return r; };
+  const cx = 6, cy = 6, d = (x, y, a, b) => Math.hypot(x - a, y - b);
+  EMB.crate = G((x, y) => (x === 0 || y === 0 || x === 12 || y === 12) ? 'W' : (x === y || x === 12 - y) ? 'W' : 'A');
+  const pts = []; for (let i = 0; i < 10; i++) { const r = i % 2 ? 2.6 : 6.4, a = -Math.PI / 2 + i * Math.PI / 5; pts.push([cx + r * Math.cos(a), cy + 0.4 + r * Math.sin(a)]); }
+  const inPoly = (x, y) => { let c = false; for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) { const [xi, yi] = pts[i], [xj, yj] = pts[j]; if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c; } return c; };
+  EMB.star = G((x, y) => inPoly(x + 0.5 - 0.5, y + 0.5 - 0.5) ? 'W' : '');
+  EMB.moon = G((x, y) => d(x, y, cx, cy) <= 5.8 && d(x, y, cx + 3, cy - 1.5) > 4.6 ? 'W' : (d(x, y, 10, 3) < 0.8 ? 'A' : ''));
+  EMB.stripes = G((x, y) => d(x, y, cx, cy) > 6.2 ? '' : ((x + Math.round(Math.sin(y * 0.8) * 1.5)) % 4 < 2 ? 'A' : 'W'));
+  EMB.spots = G((x, y) => { for (const [a, b] of [[3, 3], [9, 3], [6, 7], [3, 10], [9, 10]]) { const q = d(x, y, a, b); if (q < 0.6) return 'A'; if (q < 2.1) return 'W'; } return ''; });
+  EMB.flag = G((x, y) => y < 2 || y > 10 ? '' : (x < 6 && y < 7) ? ((x + y) % 2 ? 'W' : 'A') : (y % 2 ? 'W' : 'A'));
+  EMB.burst = G((x, y) => { const q = d(x, y, cx, cy), a = Math.atan2(y - cy, x - cx); return q < 2.2 ? 'W' : q < 6.4 && Math.abs(Math.sin(a * 4)) > 0.82 ? 'W' : q < 3.4 ? 'A' : ''; });
+  EMB.halo = G((x, y) => { const e = Math.hypot((x - cx) / 6, (y - 3) / 2.3); if (Math.abs(e - 1) < 0.22) return 'W'; const q = d(x, y, cx, 9); return q < 1.2 ? 'A' : (Math.abs(x - cx) < 0.6 && Math.abs(y - 9) < 3) || (Math.abs(y - 9) < 0.6 && Math.abs(x - cx) < 3) ? 'W' : ''; });
+  EMB.drop = G((x, y) => { if (y < 1) return ''; if (y < 6) return Math.abs(x - cx) <= (y - 1) * 0.75 ? 'W' : ''; return d(x, y, cx, 8) < 4.2 ? (d(x, y, cx - 1.5, 7) < 1 ? 'A' : 'W') : ''; });
+  EMB.claw = G((x, y) => { for (const o of [-4, 0, 4]) { const t = x - (y * 0.55) - o - 2.4; if (t >= 0 && t < 1.6 && y > 0 && y < 12) return 'W'; } return ''; });
+  EMB.shield = G((x, y) => { const w = y < 6 ? 6 : 6 - (y - 6) * 0.95; if (Math.abs(x - cx) > w || y > 12) return ''; const edge = Math.abs(x - cx) > w - 1.2 || y === 0; if (edge) return 'W'; return Math.abs(y - 2 - Math.abs(x - cx) * 0.8) < 1 ? 'W' : 'A'; });
+})();
+const EMB_BY = { cardinals: 'bird', falcons: 'talon', ravens: 'moon', bills: 'horns', panthers: 'claw', bears: 'paw', bengals: 'stripes', browns: 'shield',
+  cowboys: 'hat', broncos: 'mountain', lions: 'crown', packers: 'crate', texans: 'star', colts: 'horse', jaguars: 'spots', chiefs: 'flame', raiders: 'skull',
+  chargers: 'burst', rams: 'hammer', dolphins: 'wave', vikings: 'ship', patriots: 'flag', saints: 'halo', giants: 'tower', jets: 'plane', eagles: 'feather',
+  steelers: 'anvil', '49ers': 'pick', seahawks: 'tree', buccaneers: 'anchor', titans: 'pillar', oilers: 'drop', redskins: 'dome', commanders: 'dome', 'football team': 'dome' };
+function emblemFor(name) { const n = String(name || '').toLowerCase(); for (const k in EMB_BY) if (n.includes(k)) return EMB[EMB_BY[k]]; return EMB.shield; }
+
 /* ---------- the stadium, built once per game ---------- */
 function buildWorld() {
   const c = document.createElement('canvas'); c.width = WORLD_W; c.height = WORLD_H; const g = c.getContext('2d');
@@ -6047,9 +6098,14 @@ function buildWorld() {
   for (let y = 1; y < 100; y++) if (y % 5) for (const xx of [0.7, W / 2 - 3.08, W / 2 + 3.08, W - 0.7]) R(wxp(y), wyp(xx) - 1, 1, 2, 'rgba(246,246,239,.75)');
   for (let y = 10; y < 100; y += 10) { const n = String(y > 50 ? 100 - y : y); PKs.pixText(g, n, wxp(y) + 1, wyp(W - 10), 13, '#f6f6ef'); PKs.pixText(g, n, wxp(y) + 1, wyp(10), 13, '#f6f6ef'); }
   // midfield logo: the team name in a ring
-  { const mx = wxp(50), my = wyp(W / 2); g.fillStyle = edge; g.beginPath(); g.ellipse(mx, my, 35, 16, 0, 0, Math.PI * 2); g.fill();
-    g.fillStyle = ezc; g.beginPath(); g.ellipse(mx, my, 32, 13, 0, 0, Math.PI * 2); g.fill();
-    PKs.pixText(g, (me ? me.name : '').toUpperCase(), mx, my, 11, '#ffffff', 0, ink); }
+  // midfield: the team's emblem in a round badge, with the name on a banner under it (season colors)
+  { const mx = wxp(50), my = wyp(W / 2) - 6, E = emblemFor(me ? me.name : ''), C = 2, gw = 13 * C, off = Math.floor((13 - E.length) / 2);
+    const disc = (r, col) => { g.fillStyle = col; g.beginPath(); g.arc(mx, my, r, 0, Math.PI * 2); g.fill(); };
+    disc(20, sh(ezc, -0.45)); disc(19, edge); disc(17, ezc);
+    E.forEach((row, y) => { for (let x = 0; x < row.length; x++) { const ch = row[x]; if (ch === '.') continue; R(mx - gw / 2 + x * C, my - gw / 2 + (y + off) * C, C, C, ch === 'W' ? '#ffffff' : edge === '#ffffff' ? sh(ezc, 0.45) : edge); } });
+    const nm = (me ? me.name : '').toUpperCase(), tw = PKs.textW(nm, 7) + 12, by = my + 19;
+    R(mx - tw / 2 - 1, by - 1, tw + 2, 13, sh(ezc, -0.45)); R(mx - tw / 2, by, tw, 11, edge); R(mx - tw / 2 + 1, by + 1, tw - 2, 9, ezc);
+    PKs.pixText(g, nm, mx, by + 5.5, 7, '#ffffff', 0, ink); }
   // goal posts (base at the back of each end zone; the uprights go up the screen)
   for (const y of [-10, 110]) { const x = wxp(y) + (y < 0 ? -2 : 1), a = wyp(W / 2 - 3.1, 0), b = wyp(W / 2 + 3.1, 0), m = (a + b) / 2;
     R(x, m - 1, 2, 8, '#d9b52c'); R(x, m - 24, 2, 24, '#f2d13b'); R(x - 1, a - 22, 3, b - a, '#f2d13b'); R(x - 1, a - 40, 3, 18, '#f2d13b'); R(x - 1, b - 40, 3, 18 + (b - a) - (b - a), '#f2d13b'); }
