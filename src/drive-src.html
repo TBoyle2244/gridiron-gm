@@ -153,7 +153,7 @@ function playOrder(fam) {
 /* ---------- game state ---------- */
 let me = null, op = null, GS = null;
 function newGame(myId, opId, n) {
-  me = teamData(myId); op = teamData(opId); KH = kit(me, false); KA = kit(op, true);
+  me = teamData(myId); op = teamData(opId); KH = kit(me, false); KA = kit(op, true); CROWD_T = null;
   GS = { ko: true, n, poss: 0, my: 0, them: 0, y: 25, down: 1, togo: 10, mode: 'call', log: [], stats: {}, oppLog: [], year: L.year, over: false, twoPt: L.year >= 1994 };
   $('#tA').innerHTML = `<span>${esc(me.abbr)}</span><span class="sc" id="s1">0</span>`; $('#tB').innerHTML = `<span class="sc" id="s2">0</span><span>${esc(op.abbr)}</span>`;
   callPlay();
@@ -179,6 +179,7 @@ function resize() {
   cv.width = Math.round(CW * DPR); cv.height = Math.round(CH * DPR); cx.setTransform(DPR, 0, 0, DPR, 0, 0);
   S = clamp(CH / ((W + 5) * SQ), CW / 62, CW / 44);
   document.body.classList.toggle('portrait', CH > CW * 1.05);
+  artResize();
 }
 window.addEventListener('resize', resize);
 const SX = y => (y - camY) * S, SY = x => (x - camX) * S * SQ;
@@ -807,162 +808,323 @@ const SKIN = ['#f1c9a5', '#e0b08a', '#c68d64', '#a0694a', '#7d4e33', '#5c3824'];
 const hash = s => { let h = 7; s = String(s); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return Math.abs(h); };
 let KH = null, KA = null;
 
-function ell(x, y, rx, ry, rot) { cx.beginPath(); cx.ellipse(x, y, Math.max(0.1, rx), Math.max(0.1, ry), rot || 0, 0, Math.PI * 2); }
-function seg(x1, y1, x2, y2, w, col) { cx.strokeStyle = col; cx.lineWidth = w; cx.beginPath(); cx.moveTo(x1, y1); cx.lineTo(x2, y2); cx.stroke(); }
-function limb(x1, y1, x2, y2, bend, w, c1, c2) {
-  // a two-part limb: hip→knee (or shoulder→elbow), then knee→foot; bend pushes the joint sideways
-  const mx = (x1 + x2) / 2 + bend, my = (y1 + y2) / 2;
-  seg(x1, y1, mx, my, w, c1); seg(mx, my, x2, y2, w * 0.85, c2);
+/* ---------- pixel-art renderer ----------
+   Everything is drawn into a small "art" canvas (one art pixel = PX screen pixels) with whole-pixel
+   rectangles and hand-built sprites, then blown up with no smoothing: a chunky 16-bit look. */
+let AC = null, ax = null, PX = 2, AW = 0, AH = 0, SPR = {}, CROWD_T = null, NOISE_T = null;
+function artResize() {
+  PX = clamp(Math.round(S * 2.75 / 26), 2, 6);
+  AW = Math.ceil(CW / PX) + 1; AH = Math.ceil(CH / PX) + 1;
+  if (!AC) AC = document.createElement('canvas');
+  AC.width = AW; AC.height = AH; ax = AC.getContext('2d'); ax.imageSmoothingEnabled = false;
+  SPR = {}; CROWD_T = null; NOISE_T = null;
 }
-function football(x, y, r, rot) {
-  cx.fillStyle = '#7a3f17'; ell(x, y, r, r * 0.6, rot); cx.fill();
-  cx.strokeStyle = 'rgba(255,255,255,.85)'; cx.lineWidth = Math.max(0.8, r * 0.14);
-  cx.beginPath(); cx.moveTo(x - Math.cos(rot) * r * 0.35, y - Math.sin(rot) * r * 0.35); cx.lineTo(x + Math.cos(rot) * r * 0.35, y + Math.sin(rot) * r * 0.35); cx.stroke();
+// world -> art pixels
+const AX = y => Math.round(SX(y) / PX), AY = x => Math.round(SY(x) / PX);
+function R(x, y, w, h, c) { ax.fillStyle = c; ax.fillRect(x | 0, y | 0, w | 0, h | 0); }
+// filled pixel ellipse
+function pell(cx0, cy0, rx, ry, c) { ax.fillStyle = c; for (let dy = -ry; dy <= ry; dy++) { const hw = Math.round(rx * Math.sqrt(Math.max(0, 1 - (dy / (ry + 0.5)) ** 2))); ax.fillRect(cx0 - hw, cy0 + dy, hw * 2 + 1, 1); } }
+// pixel ellipse outline
+function pring(cx0, cy0, rx, ry, c) { ax.fillStyle = c; const n = Math.max(16, (rx + ry) * 4); for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2; ax.fillRect(Math.round(cx0 + Math.cos(a) * rx), Math.round(cy0 + Math.sin(a) * ry), 1, 1); } }
+
+/* 3x5 pixel font: each glyph is 5 rows of 3 bits */
+const FONT = {
+  '0': [7, 5, 5, 5, 7], '1': [2, 6, 2, 2, 7], '2': [7, 1, 7, 4, 7], '3': [7, 1, 3, 1, 7], '4': [5, 5, 7, 1, 1], '5': [7, 4, 7, 1, 7], '6': [7, 4, 7, 5, 7], '7': [7, 1, 2, 2, 2], '8': [7, 5, 7, 5, 7], '9': [7, 5, 7, 1, 7],
+  A: [2, 5, 7, 5, 5], B: [6, 5, 6, 5, 6], C: [3, 4, 4, 4, 3], D: [6, 5, 5, 5, 6], E: [7, 4, 6, 4, 7], F: [7, 4, 6, 4, 4], G: [3, 4, 5, 5, 3], H: [5, 5, 7, 5, 5], I: [7, 2, 2, 2, 7], J: [1, 1, 1, 5, 2], K: [5, 5, 6, 5, 5], L: [4, 4, 4, 4, 7], M: [5, 7, 7, 5, 5],
+  N: [6, 5, 5, 5, 5], O: [2, 5, 5, 5, 2], P: [6, 5, 6, 4, 4], Q: [2, 5, 5, 6, 3], R: [6, 5, 6, 5, 5], S: [3, 4, 2, 1, 6], T: [7, 2, 2, 2, 2], U: [5, 5, 5, 5, 7], V: [5, 5, 5, 5, 2], W: [5, 5, 7, 7, 5], X: [5, 5, 2, 5, 5], Y: [5, 5, 2, 2, 2], Z: [7, 1, 2, 4, 7],
+  ' ': [0, 0, 0, 0, 0], '.': [0, 0, 0, 0, 2], '-': [0, 0, 7, 0, 0], "'": [2, 2, 0, 0, 0], '&': [2, 5, 2, 5, 3], '!': [2, 2, 2, 0, 2], ':': [0, 2, 0, 2, 0], '/': [1, 1, 2, 4, 4]
+};
+const textW = (t, sc) => t.length * 4 * sc - sc;
+// rot: 0 normal, 1 = reads top to bottom, -1 = reads bottom to top
+function ptext(t, x, y, sc, c, rot, shadow) {
+  t = String(t).toUpperCase();
+  if (shadow) ptext(t, x + (rot ? 0 : sc), y + (rot ? 0 : sc), sc, shadow, rot);
+  ax.fillStyle = c;
+  for (let i = 0; i < t.length; i++) {
+    const g = FONT[t[i]] || FONT[' '];
+    for (let r = 0; r < 5; r++) for (let b = 0; b < 3; b++) if (g[r] & (4 >> b)) {
+      const gx = i * 4 + b, gy = r;
+      if (!rot) ax.fillRect(x + gx * sc, y + gy * sc, sc, sc);
+      else if (rot > 0) ax.fillRect(x + (4 - gy) * sc, y + gx * sc, sc, sc);
+      else ax.fillRect(x + gy * sc, y - gx * sc - sc, sc, sc);
+    }
+  }
 }
 
-// One player, drawn side-on with his feet at the spot he occupies on the field.
-function sprite(u, k, o) {
-  const fx = SX(u.y), fy = SY(u.x), r = S;
-  const want = u.side === 'o' ? (u.vy < -3.5 && (u === P.carrier || u.role === 'RB' || u.role === 'WR' || u.role === 'TE') ? -1 : 1) : (u.vy > 3.5 ? 1 : -1);
-  u.face = want; const f = want;
-  const sp = Math.hypot(u.vx, u.vy), mv = clamp(sp / 5, 0, 1);
-  const ph = (u.ph || 0) * 1.6, sw = Math.sin(ph) * mv;
-  const H = r * 2.2, lw = Math.max(2, r * 0.3);
-  // shadow
-  cx.fillStyle = 'rgba(0,0,0,.28)'; ell(fx + r * 0.15, fy, r * 0.8, r * 0.26); cx.fill();
-  if (o.ring) { cx.strokeStyle = o.ring; cx.lineWidth = 2; ell(fx, fy, r * 0.95, r * 0.36); cx.stroke(); }
-  cx.save(); cx.translate(fx, fy);
-  if (o.fall) cx.rotate(f * o.fall * Math.PI * 0.48);
-  cx.lineCap = 'round'; cx.lineJoin = 'round';
-  const crouch = o.stance ? 0.7 : o.block ? 0.86 : 1 - mv * 0.06;
-  const lean = o.stance ? 0.42 : o.block ? 0.34 : mv * 0.2;
-  const bob = o.stance || o.block ? 0 : Math.abs(Math.cos(ph)) * mv * r * 0.12;
-  const hipY = -H * 0.43 * crouch - bob, hipX = -f * lean * r * 0.15;
-  const shY = -H * 0.79 * crouch - bob, shX = f * lean * H * 0.42;
-  const hdX = shX + f * r * (0.1 + lean * 0.35), hdY = shY - H * 0.15;
-  const skin = SKIN[hash(u.who.id || u.who.name) % SKIN.length], sock = k.sl === '#f6f4ee' ? '#d8d4c8' : k.sl;
-  // legs: the stride swings them front and back; the far leg is drawn darker and first
-  const stride = r * 0.62 * sw, stF = o.stance ? r * 0.35 : o.block ? r * 0.45 : 0;
-  const leg = (s, shade) => {
-    const footX = f * (s * stride + (s > 0 ? stF : -stF * 0.6)), lift = s * sw > 0.2 ? -r * 0.28 * (s * sw) : 0;
-    limb(hipX, hipY, footX, lift, f * r * 0.22 * (o.stance ? 1.6 : 1), lw, shade ? shadeC(k.p) : k.p, shade ? shadeC(sock) : sock);
-    cx.fillStyle = '#121212'; ell(footX + f * r * 0.12, lift, r * 0.2, r * 0.1); cx.fill();
-  };
-  leg(-1, true); leg(1, false);
-  // far arm
-  const arm = (s, shade) => {
-    let hx, hy;
-    if (o.block) { hx = shX + f * r * 0.75; hy = shY + r * 0.15 + s * r * 0.08; }
-    else if (o.cock && s < 0) { hx = shX - f * r * 0.55; hy = shY - r * 0.55; }
-    else if (o.release && s < 0) { hx = shX + f * r * 0.7; hy = shY - r * 0.1; }
-    else if (o.carry && s > 0) { hx = shX + f * r * 0.22; hy = shY + r * 0.42; }
-    else if (o.stance) { hx = shX + f * r * 0.35; hy = -r * 0.05; }
-    else { hx = shX - f * r * 0.55 * sw * s; hy = shY + r * 0.65 - Math.abs(sw) * r * 0.1; }
-    limb(shX, shY + r * 0.08, hx, hy, -f * r * 0.12, lw * 0.85, shade ? shadeC(k.j) : k.j, skin);
-    cx.fillStyle = skin; ell(hx, hy, r * 0.13, r * 0.13); cx.fill();
-    return [hx, hy];
-  };
-  arm(-1, true);
-  // torso with shoulder pads
-  cx.fillStyle = k.j; cx.beginPath();
-  cx.moveTo(hipX - r * 0.3, hipY + r * 0.05); cx.lineTo(hipX + r * 0.3, hipY + r * 0.05);
-  cx.lineTo(shX + r * 0.42, shY + r * 0.05); cx.lineTo(shX - r * 0.42, shY + r * 0.05); cx.closePath(); cx.fill();
-  ell(shX, shY + r * 0.08, r * 0.5, r * 0.24); cx.fill();
-  cx.fillStyle = k.p; cx.fillRect(hipX - r * 0.31, hipY - r * 0.02, r * 0.62, r * 0.22);
-  if (u.who.num !== '' && r > 7) {
-    cx.fillStyle = k.n; cx.font = `700 ${Math.round(r * 0.62)}px "Barlow Condensed", sans-serif`; cx.textAlign = 'center'; cx.textBaseline = 'middle';
-    cx.fillText(u.who.num, (hipX + shX) / 2, (hipY + shY) / 2 + r * 0.05);
+
+/* 5x7 pixel font for big lettering (end zones, midfield, yard numbers) */
+const BIG = {
+  '0': [14, 17, 17, 17, 17, 17, 14], '1': [2, 6, 2, 2, 2, 2, 7], '2': [14, 17, 1, 2, 4, 8, 31], '3': [30, 1, 1, 14, 1, 1, 30], '4': [2, 6, 10, 18, 31, 2, 2], '5': [31, 16, 30, 1, 1, 17, 14], '6': [6, 8, 16, 30, 17, 17, 14], '7': [31, 1, 2, 4, 8, 8, 8], '8': [14, 17, 17, 14, 17, 17, 14], '9': [14, 17, 17, 15, 1, 2, 12],
+  A: [14, 17, 17, 31, 17, 17, 17], B: [30, 17, 17, 30, 17, 17, 30], C: [14, 17, 16, 16, 16, 17, 14], D: [30, 17, 17, 17, 17, 17, 30], E: [31, 16, 16, 30, 16, 16, 31], F: [31, 16, 16, 30, 16, 16, 16], G: [14, 17, 16, 23, 17, 17, 15], H: [17, 17, 17, 31, 17, 17, 17], I: [14, 4, 4, 4, 4, 4, 14], J: [7, 2, 2, 2, 2, 18, 12], K: [17, 18, 20, 24, 20, 18, 17], L: [16, 16, 16, 16, 16, 16, 31], M: [17, 27, 21, 21, 17, 17, 17],
+  N: [17, 17, 25, 21, 19, 17, 17], O: [14, 17, 17, 17, 17, 17, 14], P: [30, 17, 17, 30, 16, 16, 16], Q: [14, 17, 17, 17, 21, 18, 13], R: [30, 17, 17, 30, 20, 18, 17], S: [15, 16, 16, 14, 1, 1, 30], T: [31, 4, 4, 4, 4, 4, 4], U: [17, 17, 17, 17, 17, 17, 14], V: [17, 17, 17, 17, 17, 10, 4], W: [17, 17, 17, 21, 21, 21, 10], X: [17, 17, 10, 4, 10, 17, 17], Y: [17, 17, 10, 4, 4, 4, 4], Z: [31, 1, 2, 4, 8, 16, 31],
+  ' ': [0, 0, 0, 0, 0, 0, 0], '.': [0, 0, 0, 0, 0, 12, 12], "'": [4, 4, 8, 0, 0, 0, 0], '-': [0, 0, 0, 31, 0, 0, 0], '&': [12, 18, 20, 8, 21, 18, 13]
+};
+const bigW = (t, sc) => t.length * 6 * sc - sc;
+function btext(t, x, y, sc, c, rot, shadow) {
+  t = String(t).toUpperCase();
+  if (shadow) btext(t, x + (rot ? (rot > 0 ? -sc : sc) : sc), y + (rot ? 0 : sc), sc, shadow, rot);
+  ax.fillStyle = c;
+  for (let i = 0; i < t.length; i++) {
+    const g = BIG[t[i]] || BIG[' '];
+    for (let r = 0; r < 7; r++) for (let b = 0; b < 5; b++) if (g[r] & (16 >> b)) {
+      const gx = i * 6 + b, gy = r;
+      if (!rot) ax.fillRect(x + gx * sc, y + gy * sc, sc, sc);
+      else if (rot > 0) ax.fillRect(x + (6 - gy) * sc, y + gx * sc, sc, sc);
+      else ax.fillRect(x + gy * sc, y - gx * sc - sc, sc, sc);
+    }
   }
-  // helmet, stripe and facemask
-  const hr = r * 0.36;
-  cx.fillStyle = k.h; ell(hdX, hdY, hr, hr * 0.95); cx.fill();
-  cx.strokeStyle = k.t; cx.lineWidth = Math.max(1, r * 0.09); cx.beginPath(); cx.arc(hdX, hdY, hr * 0.98, -Math.PI * 0.95, -Math.PI * 0.05); cx.stroke();
-  cx.fillStyle = skin; ell(hdX + f * hr * 0.55, hdY + hr * 0.12, hr * 0.32, hr * 0.42); cx.fill();
-  cx.strokeStyle = '#9aa0a4'; cx.lineWidth = Math.max(1, r * 0.07);
-  cx.beginPath(); cx.moveTo(hdX + f * hr * 0.55, hdY - hr * 0.15); cx.lineTo(hdX + f * hr * 1.08, hdY + hr * 0.05); cx.lineTo(hdX + f * hr * 0.9, hdY + hr * 0.7); cx.stroke();
-  // near arm and the ball
-  const hand = arm(1, false);
-  let ball = null;
-  if (o.cock) ball = [shX - f * r * 0.55, shY - r * 0.68];
-  else if (o.carry) ball = [hand[0] + f * r * 0.08, hand[1] - r * 0.08];
-  else if (o.hold) ball = [shX + f * r * 0.3, shY + r * 0.3];
-  if (ball) football(ball[0], ball[1], r * 0.3, f * -0.5);
-  cx.restore();
 }
-function shadeC(hex) {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex); if (!m) return hex;
-  const n = parseInt(m[1], 16), d = 0.78;
-  return `rgb(${Math.round((n >> 16 & 255) * d)},${Math.round((n >> 8 & 255) * d)},${Math.round((n & 255) * d)})`;
+
+/* ---------- player sprites ----------
+   Built from pixel rectangles on a 22x30 canvas (feet at 11,28), outlined, cached per team kit,
+   skin, number, pose and facing. */
+const SW = 22, SH = 30, FX = 11, FY = 28;
+const SKIN_S = ['#d9a982', '#c48f6a', '#a87250', '#86543a', '#653d27', '#462818'];
+const HAIR = ['#2b1d14', '#5a3a1e', '#1a1410', '#a3752c', '#121010'];
+function darken(hex, d) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || ''); if (!m) return hex; const n = parseInt(m[1], 16);
+  const f = v => Math.round(clamp(v * d, 0, 255)).toString(16).padStart(2, '0');
+  return '#' + f(n >> 16 & 255) + f(n >> 8 & 255) + f(n & 255);
+}
+// pose: { legs: [backFootX, backLift, frontFootX, frontLift], crouch, lean, arm: 'swing'|'block'|'cock'|'carry'|'hold'|'down', swing }
+function buildSprite(k, skinI, num, pose) {
+  const c = document.createElement('canvas'); c.width = SW; c.height = SH; const g = c.getContext('2d');
+  const P_ = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(FX + x, FY + y, w, h); };
+  const sk = SKIN[skinI], skd = SKIN_S[skinI];
+  const J = k.j, Jd = darken(k.j, 0.78), Pn = k.p, Pd = darken(k.p, 0.75), H = k.h, Hd = darken(k.h, 0.72), T = k.t, sock = k.sl === '#f6f4ee' ? '#e6e2d6' : k.sl;
+  const cr = pose.crouch || 0, ln = pose.lean || 0;
+  const hipY = -11 + cr, shY = -18 + cr * 1.6, shX = ln, hdY = shY - 8, hdX = shX + 1 + Math.round(ln * 0.6);
+  // a two-pixel-wide leg from hip to foot, knee pushed forward
+  const leg = (fx, lift, back) => {
+    const knX = Math.round((fx + shX * 0.3) / 2) + 1, knY = Math.round(hipY + (-lift - hipY) * 0.5);
+    const pc = back ? Pd : Pn, sc = back ? darken(sock, 0.8) : sock;
+    const line = (x0, y0, x1, y1, col) => { const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), 1); for (let i = 0; i <= n; i++) P_(Math.round(x0 + (x1 - x0) * i / n) - 1, Math.round(y0 + (y1 - y0) * i / n), 2, 1, col); };
+    line(back ? -1 : 0, hipY, knX, knY, pc); line(knX, knY, fx, -1 - lift, sc);
+    P_(fx - 1, -1 - lift, 3, 1, '#1b1b1d'); P_(fx - 1, -lift, 4, 1, '#1b1b1d');
+  };
+  const [bx, bl, fx, fl] = pose.legs;
+  leg(bx, bl, true);
+  // back arm (behind the body)
+  const armTo = (hx, hy, back) => {
+    const x0 = shX + (back ? -2 : 1), y0 = shY + 1, n = Math.max(Math.abs(hx - x0), Math.abs(hy - y0), 1);
+    for (let i = 0; i <= n; i++) { const t = i / n; P_(Math.round(x0 + (hx - x0) * t) - 1 + (back ? 0 : 0), Math.round(y0 + (hy - y0) * t), 2, 1, t < 0.45 ? (back ? Jd : J) : (back ? skd : sk)); }
+    P_(hx - 1, hy, 2, 2, back ? skd : sk);
+  };
+  const a = pose.arm, sw = pose.swing || 0;
+  let ball = null;
+  if (a === 'cock') { armTo(shX - 4, shY - 6, true); ball = [shX - 5, shY - 8]; }
+  else if (a === 'block') armTo(shX + 6, shY + 1, true);
+  else if (a === 'down') armTo(shX + 5, -2, true);
+  else armTo(shX - 1 - sw * 3, shY + 6 - Math.abs(sw), true);
+  // hips and torso
+  P_(shX - 4, hipY - 2, 7, 3, Pn); P_(shX - 4, hipY - 2, 7, 1, Pd);
+  for (let y = shY; y < hipY - 1; y++) { const t = (y - shY) / Math.max(1, hipY - 1 - shY), x = Math.round(shX + (0 - shX) * t); P_(x - 4, y, 8, 1, J); P_(x - 4, y, 1, 1, Jd); }
+  P_(shX - 5, shY, 10, 2, J); P_(shX - 5, shY + 1, 10, 1, Jd); // shoulder pads
+  if (num !== '' && num != null) {
+    const s = String(num).slice(0, 2), w = s.length * 4 - 1, nx = Math.round(shX - w / 2), ny = shY + 2;
+    for (let i = 0; i < s.length; i++) { const gl = FONT[s[i]]; if (!gl) continue; for (let r = 0; r < 5; r++) for (let b = 0; b < 3; b++) if (gl[r] & (4 >> b)) P_(nx + i * 4 + b, ny + r * (cr > 2 ? 0.8 : 1), 1, 1, k.n); }
+  }
+  // front leg over the body
+  leg(fx, fl, false);
+  // helmet: big and round, with a stripe, the face and a grey facemask in front
+  P_(hdX - 4, hdY + 1, 9, 5, H); P_(hdX - 3, hdY, 7, 1, H); P_(hdX - 3, hdY + 6, 6, 1, H);
+  P_(hdX - 4, hdY + 4, 9, 2, Hd); P_(hdX - 3, hdY + 6, 6, 1, Hd);
+  P_(hdX - 3, hdY, 6, 1, T); P_(hdX - 4, hdY + 1, 1, 2, T);
+  P_(hdX + 2, hdY + 2, 3, 4, sk); P_(hdX + 2, hdY + 5, 3, 1, skd);
+  P_(hdX + 5, hdY + 2, 1, 4, '#c9cdd2'); P_(hdX + 3, hdY + 4, 3, 1, '#c9cdd2');
+  P_(hdX - 1, hdY + 3, 1, 1, '#1b1b1d'); // ear hole
+  // front arm
+  if (a === 'block') armTo(shX + 7, shY + 2, false);
+  else if (a === 'carry' || a === 'hold') { armTo(shX + 3, shY + 4, false); ball = [shX + 2, shY + 3]; }
+  else if (a === 'cock') armTo(shX + 3, shY + 5, false);
+  else if (a === 'down') armTo(shX + 6, -2, false);
+  else armTo(shX + 1 + sw * 3, shY + 6 - Math.abs(sw), false);
+  if (ball) { P_(ball[0], ball[1], 4, 2, '#7a3f17'); P_(ball[0] + 1, ball[1] - 1, 2, 1, '#8b4a1c'); P_(ball[0] + 1, ball[1], 2, 1, '#f2efe6'); }
+  // dark outline around everything
+  const id = g.getImageData(0, 0, SW, SH), d = id.data, out = new Uint8ClampedArray(d);
+  const op = (x, y) => x >= 0 && y >= 0 && x < SW && y < SH && d[(y * SW + x) * 4 + 3] > 0;
+  for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++) if (!op(x, y) && (op(x + 1, y) || op(x - 1, y) || op(x, y + 1) || op(x, y - 1))) { const i = (y * SW + x) * 4; out[i] = 18; out[i + 1] = 20; out[i + 2] = 24; out[i + 3] = 255; }
+  g.putImageData(new ImageData(out, SW, SH), 0, 0);
+  return c;
+}
+function flipped(c) { const f = document.createElement('canvas'); f.width = c.width; f.height = c.height; const g = f.getContext('2d'); g.translate(c.width, 0); g.scale(-1, 1); g.drawImage(c, 0, 0); return f; }
+const RUN = [[-4, 0, 4, 1], [-2, 1, 2, 0], [4, 1, -4, 0], [2, 0, -2, 1]];
+function poseFor(u, o) {
+  const sp = Math.hypot(u.vx, u.vy), moving = sp > 1.2;
+  const fr = moving ? Math.floor(((u.ph || 0) * 1.6) / (Math.PI / 2)) & 3 : -1;
+  const legs = fr >= 0 ? RUN[fr] : [-2, 0, 2, 0];
+  const swing = fr >= 0 ? (fr === 0 ? 1 : fr === 2 ? -1 : 0) : 0;
+  if (o.stance) return { id: 'st', legs: [-4, 0, 2, 0], crouch: 5, lean: 4, arm: u.role === 'OL' || u.role === 'DL' ? 'down' : 'swing' };
+  if (o.block) return { id: 'bk' + (fr & 1), legs: fr >= 0 ? RUN[fr] : [-4, 0, 3, 0], crouch: 2, lean: 3, arm: 'block' };
+  if (o.cock) return { id: 'ck', legs: [-3, 0, 3, 0], crouch: 0, lean: -1, arm: 'cock' };
+  if (o.carry) return { id: 'ca' + fr, legs, crouch: moving ? 1 : 0, lean: moving ? 2 : 0, arm: 'carry', swing };
+  if (o.hold) return { id: 'ho', legs: [-2, 0, 2, 0], crouch: 0, lean: 0, arm: 'hold' };
+  return { id: 'rn' + fr, legs, crouch: moving ? 1 : 0, lean: moving ? 1 : 0, arm: 'swing', swing };
+}
+function spriteFor(u, k, o, f) {
+  const pose = poseFor(u, o), skinI = hash(u.who.id || u.who.name) % SKIN.length, num = u.who.num === '' ? '' : u.who.num;
+  const key = k.j + k.h + k.p + k.n + '|' + skinI + '|' + num + '|' + pose.id + '|' + f;
+  let s = SPR[key];
+  if (!s) { const b = buildSprite(k, skinI, num, pose); s = SPR[key] = f < 0 ? flipped(b) : b; }
+  return s;
+}
+function drawPlayer(u, k, o) {
+  const fx = AX(u.y), fy = AY(u.x);
+  const f = u.side === 'o' ? (u.vy < -3.5 && (u === P.carrier || u.role === 'RB' || u.role === 'WR' || u.role === 'TE') ? -1 : 1) : (u.vy > 3.5 ? 1 : -1);
+  u.face = f;
+  pell(fx, fy, 5, 1, 'rgba(0,0,0,.32)');
+  if (o.ring) pring(fx, fy, 7, 2, o.ring);
+  const s = spriteFor(u, k, o, f);
+  if (o.fall) {
+    ax.save(); ax.translate(fx, fy - 5); ax.rotate(f * o.fall * Math.PI * 0.5); ax.drawImage(s, -FX, -FY + 5); ax.restore();
+  } else ax.drawImage(s, fx - FX, fy - FY);
+}
+function pball(x, y, big) { R(x - 2, y - 1, big ? 5 : 4, 2, '#7a3f17'); R(x - 1, y - 2, 2, 1, '#8b4a1c'); R(x - 1, y - 1, 2, 1, '#f2efe6'); R(x - 3, y - 1, 1, 1, '#2a160a'); R(x + (big ? 3 : 2), y - 1, 1, 1, '#2a160a'); }
+
+/* ---------- field, stands and sidelines ---------- */
+const TURF = ['#3d8f3a', '#368333'];
+function noiseTile() {
+  const c = document.createElement('canvas'); c.width = 32; c.height = 32; const g = c.getContext('2d');
+  let h = 99; const rnd = () => (h = (h * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  for (let i = 0; i < 70; i++) { g.fillStyle = rnd() < 0.5 ? 'rgba(0,0,0,.09)' : 'rgba(255,255,255,.06)'; g.fillRect(rnd() * 32 | 0, rnd() * 32 | 0, 1 + (rnd() < 0.3), 1); }
+  return c;
+}
+// Rows of fans: the home team's colours mostly, everyone a little different
+function crowdTile(home) {
+  const w = 120, h = 72, c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d');
+  g.fillStyle = '#262c34'; g.fillRect(0, 0, w, h);
+  let s = 7; const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  const shirts = [home.j, home.j, home.j, home.t, home.h, '#e9e5da', '#3b4a63', '#8a2f2f', '#d8d2c2'];
+  for (let row = 0; row < 8; row++) {
+    const y = h - 10 - row * 9;
+    g.fillStyle = row % 2 ? '#2f3640' : '#2a313a'; g.fillRect(0, y + 5, w, 5); // seat rows
+    g.fillStyle = '#1d2228'; g.fillRect(0, y + 9, w, 1);
+    for (let i = 0; i < 20; i++) {
+      if (rnd() < 0.07) continue;
+      const x = i * 6 + (row % 2) * 3, sk = SKIN[rnd() * SKIN.length | 0], sh = shirts[rnd() * shirts.length | 0];
+      g.fillStyle = '#14181d'; g.fillRect(x, y + 4, 5, 5); g.fillRect(x + 1, y - 1, 3, 5); // outline
+      g.fillStyle = sh; g.fillRect(x + 1, y + 4, 3, 4); g.fillRect(x, y + 5, 5, 3);
+      g.fillStyle = sk; g.fillRect(x + 1, y, 3, 3);
+      const hat = rnd() < 0.3; g.fillStyle = hat ? home.h : HAIR[rnd() * HAIR.length | 0]; g.fillRect(x + 1, y - 1, 3, hat ? 2 : 1);
+      if (rnd() < 0.2) { g.fillStyle = sk; const ax0 = x + (rnd() < 0.5 ? -1 : 5); g.fillRect(ax0, y - 2, 1, 5); } // cheering
+    }
+  }
+  return c;
+}
+function cameraman(x, y, t) {
+  R(x - 1, y - 3, 1, 3, '#20242a'); R(x + 2, y - 3, 1, 3, '#20242a'); R(x, y - 4, 2, 1, '#20242a'); // tripod
+  R(x - 2, y - 8, 6, 4, '#3a3f47'); R(x + 4, y - 7, 2, 2, '#14171b'); R(x - 1, y - 9, 3, 1, '#5a616b'); // camera
+  R(x - 6, y - 7, 3, 4, t); R(x - 6, y - 10, 3, 3, SKIN[2]); R(x - 6, y - 10, 3, 1, '#1f1f1f'); R(x - 6, y - 3, 1, 3, '#2a2a33'); R(x - 4, y - 3, 1, 3, '#2a2a33'); // operator
+}
+function drawField() {
+  const home = KH || { j: '#14351f', h: '#14351f', t: '#c9a227', p: '#e8e4d8', n: '#fff' }, away = KA || { j: '#f6f4ee', t: '#6d2f2f' };
+  const y0 = AY(0), y1 = AY(W), xL = AX(-10), xR = AX(110);
+  // stands beyond the far sideline (top)
+  R(0, 0, AW, AH, '#1f2a22');
+  const topS = AY(-4.5);
+  if (topS > 0) {
+    if (!CROWD_T) CROWD_T = crowdTile(home);
+    const off = ((AX(0) % 120) + 120) % 120;
+    for (let ty = topS - 72; ty > -72; ty -= 72) for (let gx = off - 120; gx < AW; gx += 120) ax.drawImage(CROWD_T, gx, ty);
+    R(0, topS - 3, AW, 3, darken(home.j, 0.6)); R(0, topS - 3, AW, 1, darken(home.j, 0.9)); // wall
+  }
+  // sideline apron (both sides)
+  const botS = AY(W + 4.5);
+  R(0, topS, AW, botS - topS, '#2c6b2c');
+  // white boundary 2 yards outside the field, like a real sideline
+  R(AX(-12), AY(-2), AX(112) - AX(-12), 1, 'rgba(244,244,238,.5)'); R(AX(-12), AY(W + 2), AX(112) - AX(-12), 1, 'rgba(244,244,238,.5)');
+  if (botS < AH) {
+    R(0, botS, AW, 3, darken(home.j, 0.6));
+    if (!CROWD_T) CROWD_T = crowdTile(home);
+    const off = ((AX(0) % 120) + 120) % 120;
+    for (let ty = botS + 3; ty < AH; ty += 72) for (let gx = off - 120; gx < AW; gx += 120) ax.drawImage(CROWD_T, gx, ty);
+  }
+  // stands behind each end zone
+  if (!CROWD_T) CROWD_T = crowdTile(home);
+  [[-1, AX(-13)], [1, AX(113)]].forEach(([side, edge]) => {
+    if (side < 0 && edge <= 0) return; if (side > 0 && edge >= AW) return;
+    const xa = side < 0 ? 0 : edge, xb = side < 0 ? edge : AW, offy = ((y0 % 72) + 72) % 72;
+    ax.save(); ax.beginPath(); ax.rect(xa, 0, xb - xa, AH); ax.clip();
+    for (let ty = offy - 72; ty < AH; ty += 72) for (let gx = xa - (xa % 120) - 120; gx < xb; gx += 120) ax.drawImage(CROWD_T, gx, ty);
+    ax.restore();
+    R(side < 0 ? edge - 3 : edge, 0, 3, AH, darken(home.j, 0.6));
+  });
+  // turf with mowing stripes
+  for (let y = -10; y < 110; y += 5) { const a = AX(y), b = AX(y + 5); if (b < 0 || a > AW) continue; R(a, y0, b - a, y1 - y0, TURF[((y + 10) / 5) & 1]); }
+  if (!NOISE_T) NOISE_T = noiseTile();
+  ax.save(); ax.beginPath(); ax.rect(xL, y0, xR - xL, y1 - y0); ax.clip();
+  const nx = ((AX(0) % 32) + 32) % 32, ny = ((y0 % 32) + 32) % 32;
+  for (let gy = ny - 32; gy < AH; gy += 32) for (let gx = nx - 32; gx < AW; gx += 32) ax.drawImage(NOISE_T, gx, gy);
+  ax.restore();
+  // end zones: team colour with the team name in big pixel letters
+  const ez = (a, b, name, col, ink, rot) => {
+    const xa = AX(a), xb = AX(b); if (xb < 0 || xa > AW) return;
+    R(xa, y0, xb - xa, y1 - y0, col);
+    for (let x = xa + 2; x < xb - 1; x += 4) R(x, y0, 2, y1 - y0, darken(col, 0.93));
+    const t = String(name || '').toUpperCase().slice(0, 12);
+    let sc = clamp(Math.floor((xb - xa) / 11), 1, 6); while (sc > 1 && bigW(t, sc) > (y1 - y0) - 6) sc--;
+    const tw = bigW(t, sc), cxm = Math.round((xa + xb) / 2), cym = Math.round((y0 + y1) / 2);
+    if (rot > 0) btext(t, cxm - Math.round(3.5 * sc), cym - Math.round(tw / 2), sc, ink, 1, darken(col, 0.5));
+    else btext(t, cxm - Math.round(3.5 * sc), cym + Math.round(tw / 2), sc, ink, -1, darken(col, 0.5));
+  };
+  const hn = me ? me.name || me.abbr : 'HOME', an = op ? op.name || op.abbr : 'AWAY';
+  ez(-10, 0, hn, home.j, home.n === home.j ? '#ffffff' : home.n, -1);
+  ez(100, 110, an, away.t || '#6d2f2f', '#ffffff', 1);
+  // lines
+  R(xL, y0, xR - xL, 1, '#f4f4ee'); R(xL, y1, xR - xL, 1, '#f4f4ee');
+  for (let y = 0; y <= 100; y += 5) {
+    const x = AX(y); if (x < -4 || x > AW + 4) continue;
+    R(x, y0, y % 10 === 0 || y === 0 || y === 100 ? 2 : 1, y1 - y0, 'rgba(244,244,238,.9)');
+    if (y % 10 === 0 && y > 0 && y < 100) {
+      const n = String(y > 50 ? 100 - y : y), sc = PX >= 4 ? 1 : 2, tw = bigW(n, sc);
+      btext(n, x - Math.round(tw / 2) + 1, AY(W - 10), sc, 'rgba(244,244,238,.85)');
+      btext(n, x - Math.round(tw / 2) + 1, AY(10) - 7 * sc, sc, 'rgba(244,244,238,.85)');
+    }
+  }
+  for (let y = 1; y < 100; y++) {
+    if (y % 5 === 0) continue; const x = AX(y); if (x < -2 || x > AW + 2) continue;
+    [0.8, W / 2 - 3.08, W / 2 + 3.08, W - 0.8].forEach(xx => R(x, AY(xx) - 1, 1, 2, 'rgba(244,244,238,.6)'));
+  }
+  // midfield: the home team's abbreviation in a ring
+  const mx = AX(50), my = Math.round((y0 + y1) / 2);
+  if (mx > -40 && mx < AW + 40) {
+    const t = me ? me.abbr : '', sc = 2, tw = bigW(t, sc), rx = Math.round(tw / 2) + 8, ry = 11;
+    pell(mx, my, rx + 1, ry + 1, home.t || '#fff'); pell(mx, my, rx, ry, home.j);
+    btext(t, mx - Math.round(tw / 2), my - 7, sc, home.n === home.j ? '#fff' : home.n, 0, darken(home.j, 0.45));
+  }
+  // goal posts at the back of each end zone
+  [-10, 110].forEach(y => { const x = AX(y); if (x < -10 || x > AW + 10) return; const a = AY(W / 2 - 3.1), b = AY(W / 2 + 3.1); R(x, a, 2, b - a, '#f2d13b'); R(x, a - 18, 2, 18, '#f2d13b'); R(x, b - 18, 2, 18, '#f2d13b'); R(x, Math.round((a + b) / 2), 2, 6, '#d9b52c'); });
+  // cameramen and benches on the far sideline
+  for (let y = 0; y <= 100; y += 25) { const x = AX(y + 7); if (x > -10 && x < AW + 10) cameraman(x, AY(-1.4), '#2b2f36'); }
+  for (let y = 30; y <= 60; y += 10) { const x = AX(y); if (x > -20 && x < AW + 20) { R(x, AY(-3.3), AX(y + 7) - x, 2, '#8a8f97'); R(x, AY(-3.3) + 2, AX(y + 7) - x, 1, '#4a4f57'); } }
 }
 
 function draw() {
-  cx.clearRect(0, 0, CW, CH);
-  cx.fillStyle = '#17482b'; cx.fillRect(0, 0, CW, CH);
-  // stands behind the far sideline
-  const top = SY(-3.5);
-  if (top > 0) {
-    cx.fillStyle = '#20262b'; cx.fillRect(0, 0, CW, top);
-    // the crowd is drawn once into a tile and slid along with the camera (much cheaper per frame)
-    if (!CROWD) {
-      CROWD = document.createElement('canvas'); CROWD.width = 630; CROWD.height = 140;
-      const g = CROWD.getContext('2d'), cols = ['#c9c2b3', '#8d3b2f', '#2d4f7c', '#d9b54a', '#5c6b73', '#e9e4d8', '#6d2f4f'];
-      g.fillStyle = '#20262b'; g.fillRect(0, 0, 630, 140);
-      for (let row = 0; row < 20; row++) for (let i = 0; i < 70; i++) { g.fillStyle = cols[hash(i * 131 + row) % cols.length]; g.fillRect(i * 9 + (row % 2) * 4.5, 140 - 7 - row * 7, 5, 5); }
-    }
-    const off = ((SX(0) % 630) + 630) % 630;
-    for (let gx = off - 630; gx < CW; gx += 630) cx.drawImage(CROWD, gx, top - 140);
-    cx.fillStyle = '#0f2a19'; cx.fillRect(0, top - 2, CW, 3);
-  }
-  // grass
-  const x0 = SX(-10), x1 = SX(110), y0 = SY(0), y1 = SY(W);
-  cx.fillStyle = '#2a7a43'; cx.fillRect(x0, y0, x1 - x0, y1 - y0);
-  for (let y = 0; y < 100; y += 10) { cx.fillStyle = '#2f8349'; cx.fillRect(SX(y), y0, 5 * S, y1 - y0); }
-  // end zones in team colours
-  const ez = (a, b, t, c) => {
-    cx.fillStyle = c; cx.globalAlpha = 0.85; cx.fillRect(SX(a), y0, (b - a) * S, y1 - y0); cx.globalAlpha = 1;
-    cx.save(); cx.translate(SX((a + b) / 2), (y0 + y1) / 2); cx.rotate(a < 0 ? -Math.PI / 2 : Math.PI / 2);
-    cx.fillStyle = 'rgba(255,255,255,.85)'; cx.font = `${Math.round(S * 4.2)}px Graduate, Georgia, serif`; cx.textAlign = 'center'; cx.textBaseline = 'middle';
-    cx.fillText(t || '', 0, 0); cx.restore();
-  };
-  ez(-10, 0, me ? me.abbr : '', KH ? KH.j : '#14351f'); ez(100, 110, op ? op.abbr : '', KA ? KA.t : '#6d2f2f');
-  // lines, hashes, numbers
-  cx.strokeStyle = 'rgba(255,255,255,.85)'; cx.lineWidth = 2; cx.strokeRect(x0, y0, x1 - x0, y1 - y0);
-  for (let y = 0; y <= 100; y += 5) {
-    const sx = SX(y); if (sx < -20 || sx > CW + 20) continue;
-    seg(sx, y0, sx, y1, y % 10 === 0 ? 1.8 : 1, 'rgba(255,255,255,.8)');
-    if (y % 10 === 0 && y > 0 && y < 100) {
-      const n = String(y > 50 ? 100 - y : y); cx.fillStyle = 'rgba(255,255,255,.8)'; cx.font = `600 ${Math.round(S * 2.1)}px "Barlow Condensed", sans-serif`; cx.textAlign = 'center'; cx.textBaseline = 'middle';
-      cx.fillText(n, sx, SY(W - 9)); cx.save(); cx.translate(sx, SY(9)); cx.rotate(Math.PI); cx.fillText(n, 0, 0); cx.restore();
-    }
-  }
-  cx.strokeStyle = 'rgba(255,255,255,.55)'; cx.lineWidth = 1;
-  for (let y = 1; y < 100; y++) {
-    if (y % 5 === 0) continue; const sx = SX(y); if (sx < -5 || sx > CW + 5) continue;
-    [0.6, W / 2 - 3.08, W / 2 + 3.08, W - 0.6].forEach(x => { cx.beginPath(); cx.moveTo(sx, SY(x) - S * 0.3); cx.lineTo(sx, SY(x) + S * 0.3); cx.stroke(); });
-  }
-  if (!GS || GS.over) return;
-  const los = P ? P.los : GS.y, kr = P && P.play && P.play.kr;
-  if (!kr) seg(SX(los), y0, SX(los), y1, 3, '#5aa2ff');
-  if (!kr && GS.y + GS.togo < 100 && !GS.goal2) seg(SX(los + GS.togo), y0, SX(los + GS.togo), y1, 3, '#ffd34d');
+  if (!ax) artResize();
+  ax.clearRect(0, 0, AW, AH);
+  drawField();
+  if (GS && !GS.over) drawPlay();
+  cx.setTransform(DPR, 0, 0, DPR, 0, 0); cx.imageSmoothingEnabled = false;
+  cx.clearRect(0, 0, CW, CH); cx.drawImage(AC, 0, 0, AW * PX, AH * PX);
+}
+function dots(pts, c, gap) { ax.fillStyle = c; let acc = 0; for (let i = 1; i < pts.length; i++) { const [x0, y0] = pts[i - 1], [x1, y1] = pts[i], n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)); for (let j = 0; j < n; j++) { if (acc++ % gap === 0) ax.fillRect(Math.round(x0 + (x1 - x0) * j / n), Math.round(y0 + (y1 - y0) * j / n), 1, 1); } } }
+function drawPlay() {
+  const y0 = AY(0), y1 = AY(W);
+  const los = P ? P.los : GS.y, kr = P && P.play && P.play.kr, lw = PX >= 4 ? 1 : 2;
+  if (!kr) R(AX(los), y0, lw, y1 - y0, '#5aa2ff');
+  if (!kr && GS.y + GS.togo < 100 && !GS.goal2) R(AX(los + GS.togo), y0, lw, y1 - y0, '#ffd34d');
   if (!P) return;
-  // routes until the ball is thrown
   if (!P.preview && P.ball.st !== 'air' && !P.carrier && !P.done) {
-    cx.setLineDash([5, 5]); cx.strokeStyle = 'rgba(255,255,255,.45)'; cx.lineWidth = 2;
-    P.elig.forEach(u => { if (!u.route || u.ri >= u.route.length) return; cx.beginPath(); cx.moveTo(SX(u.y), SY(u.x)); for (let i = u.ri; i < u.route.length; i++) cx.lineTo(SX(u.route[i][1]), SY(u.route[i][0])); cx.stroke(); });
-    cx.setLineDash([]);
+    P.elig.forEach(u => { if (!u.route || u.ri >= u.route.length) return; const pts = [[AX(u.y), AY(u.x)]]; for (let i = u.ri; i < u.route.length; i++) pts.push([AX(u.route[i][1]), AY(u.route[i][0])]); dots(pts, 'rgba(255,255,255,.6)', 3); });
   }
-  // aiming arc
   const q = P.qb, B = P.ball, aiming = touch && B.st === 'held' && !P.play.run && !P.done;
   if (aiming) {
-    const a = aimFrom(touch), sx0 = SX(q.y), sy0 = SY(q.x) - S * 2, sx1 = SX(a.y), sy1 = SY(a.x);
-    const dist = Math.hypot(a.x - q.x, a.y - q.y);
-    cx.strokeStyle = 'rgba(255,255,255,.95)'; cx.lineWidth = 2.5; cx.setLineDash([7, 6]);
-    cx.beginPath(); cx.moveTo(sx0, sy0); cx.quadraticCurveTo((sx0 + sx1) / 2, Math.min(sy0, sy1) - dist * S * 0.18, sx1, sy1); cx.stroke(); cx.setLineDash([]);
-    cx.strokeStyle = '#ffd34d'; ell(sx1, sy1, S * 1.3, S * 1.3 * SQ); cx.stroke();
+    const a = aimFrom(touch), sx0 = AX(q.y), sy0 = AY(q.x) - 16, sx1 = AX(a.y), sy1 = AY(a.x), dist = Math.hypot(a.x - q.x, a.y - q.y);
+    const pts = []; const cy = Math.min(sy0, sy1) - dist * S * 0.18 / PX; for (let i = 0; i <= 24; i++) { const t = i / 24, mx = (sx0 + sx1) / 2; pts.push([Math.round((1 - t) ** 2 * sx0 + 2 * (1 - t) * t * mx + t * t * sx1), Math.round((1 - t) ** 2 * sy0 + 2 * (1 - t) * t * cy + t * t * sy1)]); }
+    dots(pts, '#ffffff', 2); pring(sx1, sy1, 7, 3, '#ffd34d'); pring(sx1, sy1, 6, 2, '#ffd34d');
   }
-  if (B.st === 'air' || B.st === 'kick') { cx.strokeStyle = 'rgba(255,255,255,.55)'; cx.setLineDash([3, 3]); cx.lineWidth = 1.5; ell(SX(B.ly), SY(B.lx), S, S * SQ); cx.stroke(); cx.setLineDash([]); }
-  // players, far sideline first so nearer players overlap them
-  const R = P.result, post = P.post || 0;
+  if (B.st === 'air' || B.st === 'kick') pring(AX(B.ly), AY(B.lx), 5, 2, 'rgba(255,255,255,.6)');
+  const Rz = P.result, post = P.post || 0;
   const all = P.off.concat(P.def).slice().sort((a, b) => a.x - b.x);
   const snap = P.preview || P.t < 0.3;
   all.forEach(u => {
@@ -974,27 +1136,23 @@ function draw() {
       if (u.side === 'd' && (u.block > 0 || (u.rush && P.t < u.shed && B.st === 'held'))) o.block = true;
     }
     if (u === q && B.st === 'held' && !P.play.run) { if (aiming) o.cock = true; else o.hold = true; }
-    if (u === q && B.st === 'air' && P.t - B.t0 < 0.3) o.release = true;
-    if (u === P.carrier && !(R && R.kind === 'inc')) o.carry = true;
+    if (u === P.carrier && !(Rz && Rz.kind === 'inc')) o.carry = true;
     if (u === q && (B.st === 'snap' || B.st === 'hand')) o.hold = true;
-    if (R && post > 0.05 && (u === R.who && /tackle|sack|safety/.test(R.kind) || u === R.by && R.kind !== 'int')) o.fall = clamp((post - 0.05) / 0.3, 0, 1) * (R.slide && u === R.who ? -1 : 1);
+    if (Rz && post > 0.05 && (u === Rz.who && /tackle|sack|safety/.test(Rz.kind) || u === Rz.by && Rz.kind !== 'int')) o.fall = clamp((post - 0.05) / 0.3, 0, 1) * (Rz.slide && u === Rz.who ? -1 : 1);
     if (u === P.carrier) o.ring = '#ffd34d'; else if (B.st === 'air' && B.tgt === u) o.ring = '#7fb7ff';
-    sprite(u, u.side === 'o' ? KH : KA, o);
+    drawPlayer(u, u.side === 'o' ? KH : KA, o);
   });
-  // names over the man with the ball
+  // name tag over the man with the ball
   const label = (u, t) => {
-    const x = SX(u.y), y = SY(u.x) - S * 3.25; cx.font = `600 ${Math.round(clamp(S * 1.05, 11, 16))}px "Barlow Condensed", sans-serif`; cx.textAlign = 'center'; cx.textBaseline = 'middle';
-    const w = cx.measureText(t).width + 10; cx.fillStyle = 'rgba(8,18,12,.7)'; cx.fillRect(x - w / 2, y - 9, w, 18); cx.fillStyle = '#fff'; cx.fillText(t, x, y + 0.5);
+    const sc = PX >= 3 ? 1 : 1, tw = textW(t, sc), x = AX(u.y) - Math.round(tw / 2), y = AY(u.x) - FY - 9;
+    R(x - 2, y - 2, tw + 4, 5 * sc + 4, 'rgba(10,16,12,.78)'); ptext(t, x, y, sc, '#ffffff');
   };
-  if (P.carrier && !(R && R.kind === 'inc')) label(P.carrier, P.carrier.who.last);
+  if (P.carrier && !(Rz && Rz.kind === 'inc')) label(P.carrier, P.carrier.who.last);
   else if (B.st === 'held' && !P.done) label(q, q.who.last);
-  // the ball in flight: a shadow on the grass and the ball up in the air
   if (B.st === 'air' || B.st === 'kick') {
-    const sx = SX(B.y), sy = SY(B.x), f = clamp((P.t - B.t0) / B.tof, 0, 1);
-    cx.fillStyle = 'rgba(0,0,0,.3)'; ell(sx, sy, S * 0.4, S * 0.16); cx.fill();
-    const hgt = S * 1.9 + B.z * S * 0.9;
-    const ang = Math.atan2((SY(B.lx) - SY(B.sx)) - (Math.cos(f * Math.PI) * B.z * S), SX(B.ly) - SX(B.sy));
-    football(sx, sy - hgt, S * 0.42, ang);
+    const sx = AX(B.y), sy = AY(B.x), hgt = Math.round((S * 1.9 + B.z * S * 0.9) / PX);
+    R(sx - 2, sy, 4, 1, 'rgba(0,0,0,.35)');
+    pball(sx, sy - hgt, true);
   }
 }
 
@@ -1006,6 +1164,7 @@ function frame(t) {
   else if (P && P.result && !P.preview) { P.post = (P.post || 0) + dt; P.off.concat(P.def).forEach(u => { u.vx *= 0.9; u.vy *= 0.9; u.x += u.vx * dt; u.y += u.vy * dt; u.ph = (u.ph || 0) + Math.hypot(u.vx, u.vy) * dt * 1.25; }); }
   else if (P && !P.result) { const sh = sheetH(); camT = P.los - viewLen() * 0.38; camXT = aimCamX(W / 2, sh); }
   camY += (camT - camY) * Math.min(1, dt * 5); camX += (camXT - camX) * Math.min(1, dt * 5);
+  if (window.__camLock) { camY = camT = window.__camLock[0]; camX = camXT = window.__camLock[1]; }
   if (KICK) { const m = document.getElementById('kmark'); if (m) m.style.left = `calc(${kickPos() * 100}% - 7px)`; }
   draw(); requestAnimationFrame(frame);
 }
@@ -1034,7 +1193,7 @@ function setup() {
   setup();
 })();
 // test hooks
-window.__drive = { get P() { return P; }, get GS() { return GS; }, throwBall: (x, y) => throwBall(x, y), juke, scramble,
+window.__drive = { get P() { return P; }, cam(y, x) { window.__camLock = [y, x]; }, get GS() { return GS; }, throwBall: (x, y) => throwBall(x, y), juke, scramble,
   // testing: run one play instantly with a scripted player; returns the result
   testReturn(kind, ai) {
     const keep = window.setTimeout; window.setTimeout = () => 0;
