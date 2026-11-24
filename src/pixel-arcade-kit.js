@@ -268,7 +268,15 @@
 .arc-match .banner { position: relative; width: min(1000px, 100%); display: flex; border: 3px solid #36a3ff; } .arc-match .banner .tm { flex: 1; padding: 10px 16px 22px; display: flex; flex-direction: column; font: 900 clamp(16px, 2.8vw, 26px)/1.1 "Courier New", monospace; letter-spacing: .12em; }
 .arc-match .banner .tm.r { text-align: right; } .arc-match .banner .vs { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -60%); font: 900 clamp(22px, 4vw, 38px)/1 "Courier New", monospace; }
 .arc-match .kits { width: min(1000px, 100%); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; } .arc-match .kits button { background: #1659b8; border: 3px solid #2b7fe0; color: #fff; font: 800 14px/1 system-ui, sans-serif; padding: 9px 12px; }
-.arc-match .kits button.on { border-color: #6ff3ff; } .arc-match .kits .go { margin-left: auto; background: #1a8f4a; border-color: #4ade80; padding: 12px 22px; font-size: 16px; }`;
+.arc-match .kits button.on { border-color: #6ff3ff; } .arc-match .kits .go { margin-left: auto; background: #1a8f4a; border-color: #4ade80; padding: 12px 22px; font-size: 16px; }
+.arc-match { padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }
+.arc-match .five { min-width: 0; overflow: hidden; } .arc-match .pc .st { white-space: nowrap; font-size: clamp(9px, 1.6vw, 15px); letter-spacing: -1px; }
+@media (max-height: 520px) {
+  .arc-match { gap: 6px; padding-top: max(6px, env(safe-area-inset-top)); padding-bottom: max(6px, env(safe-area-inset-bottom)); }
+  .arc-match .mh { font-size: 16px; padding: 6px; } .arc-match .sides { gap: 8px; } .arc-match .five { padding: 4px 2px; gap: 2px; }
+  .arc-match .pc img { max-width: 48px; } .arc-match .pc b { font-size: 10px; } .arc-match .pc span { font-size: 9px; }
+  .arc-match .banner .tm { padding: 6px 12px 8px; font-size: 14px; } .arc-match .banner .vs { font-size: 20px; }
+  .arc-match .kits { gap: 6px; } .arc-match .kits button { padding: 7px 10px; font-size: 12px; } .arc-match .kits .go { padding: 8px 16px; font-size: 14px; } }`;
   function injectCSS() { if (typeof document === 'undefined' || document.getElementById('pk-css')) return; const st = document.createElement('style'); st.id = 'pk-css'; st.textContent = CSS; document.head.appendChild(st); }
 
   const PK = { clamp, hash, shade, MF, micro, microW, pixText, textW, SKIN, HAIRC, LOOKS, lookOf, toonHead, helmetHead, frontHead, faceDetail, edgeShade, outlined, flipped, portrait, fan, buildStands, scoreboard, CSS, injectCSS };

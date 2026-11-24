@@ -475,6 +475,7 @@ function step(dt) {
     steer(q, B.lx, B.ly, q.sp * 0.8, dt, 14);
     if (f >= 1) {
       if (P.land < -4 && P.play.kr === 'ko' && Math.random() < 0.0) {}
+      if (P.call) { B.st = 'run'; P.carrier = q; q.vx = q.vy = 0; q.kneel = P.call === 'knee'; endPlay({ kind: P.call, y: q.y, who: q }); return; }
       B.st = 'run'; P.carrier = q; tip('Slide up/down to change lanes · tap to juke · swipe right to dive, left to slide'); btns();
     }
   }
@@ -632,7 +633,9 @@ function endReturn(r) {
   if (r.kind === 'td') { st(ret.who, 'kr', 1); flash(`${ko ? 'Kickoff' : 'Punt'} return touchdown! ${ret.who.last}`, 1700); setTimeout(() => { GS.my += 6; scoreBar(); patChoice(); }, 1700); return; }
   let spot = r.kind === 'fair' || r.kind === 'knee' ? r.y : clamp(r.y, 0, 99);
   let text;
-  if (r.kind === 'knee') { spot = tb; text = 'Touchback'; }
+  if (r.kind === 'knee' && spot <= 0) { spot = tb; text = 'Touchback'; }
+  else if (r.kind === 'knee') text = `${ret.who.last} takes a knee at the ${Math.round(spot) < 50 ? 'own ' + Math.round(spot) : 'opponent ' + Math.round(100 - spot)}`;
+  else if (r.kind === 'fair' && spot <= 0) { spot = tb; text = 'Fair catch in the end zone: touchback'; }
   else if (r.kind === 'fair') text = `Fair catch at the ${Math.round(spot) < 50 ? 'own ' + Math.round(spot) : 'opponent ' + Math.round(100 - spot)}`;
   else if (spot <= 0) { spot = tb; text = 'Downed in the end zone: touchback'; }
   else text = `${ret.who.last} returns it to the ${Math.round(spot) < 50 ? Math.round(spot) : 'opponent ' + Math.round(100 - spot)}`;
@@ -640,7 +643,9 @@ function endReturn(r) {
   flash(text, 1300);
   setTimeout(() => { scoreBar(); callPlay(); }, 1300);
 }
-function fairCatch() { if (!P || P.done || !P.play.kr || P.ball.st !== 'kick') return; endPlay({ kind: P.play.kr === 'ko' && P.land < 0 ? 'knee' : 'fair', y: P.land, who: P.qb }); }
+// the call is made in the air; the play goes on until the returner has the ball, then he kneels (or signals) where he caught it
+function fairCatch() { if (!P || P.done || !P.play.kr || P.ball.st !== 'kick' || P.call) return; P.call = P.play.kr === 'ko' ? 'knee' : 'fair';
+  tip(P.call === 'knee' ? 'Taking a knee once he catches it' : 'Fair catch called'); btns(); }
 function callPlay() {
   if (GS.ko) { GS.ko = false; return startReturn('ko'); }
   if (GS.pr != null) { const l = GS.pr; GS.pr = null; return startReturn('pr', l); }
@@ -757,7 +762,7 @@ function sheet(h) { const s = $('#sheet'); s.innerHTML = h; s.style.display = h 
 function btns() {
   const b = $('#btns'); let h = '';
   if (P && !P.done && !P.play.run && P.ball.st === 'held') h += '<button class="big alt" data-act="scr">QB run</button>';
-  if (P && !P.done && P.play.kr && P.ball.st === 'kick') h += P.play.kr === 'ko' && P.land < 0 ? '<button class="big alt" data-act="fair">Take a knee</button>' : P.play.kr === 'pr' ? '<button class="big alt" data-act="fair">Fair catch</button>' : '';
+  if (P && !P.done && P.play.kr && P.ball.st === 'kick' && !P.call) h += P.play.kr === 'ko' && P.land < 0 ? '<button class="big alt" data-act="fair">Take a knee</button>' : P.play.kr === 'pr' ? '<button class="big alt" data-act="fair">Fair catch</button>' : '';
   if (P && !P.done && P.carrier) h += '<button class="big alt" data-act="dive">Dive</button>';
   b.innerHTML = h;
 }
@@ -1155,6 +1160,7 @@ function drawPlay() {
     if (Rz && post > 0.05 && (u === Rz.who && /tackle|sack|safety/.test(Rz.kind) || u === Rz.by && Rz.kind !== 'int')) o.fall = clamp((post - 0.05) / 0.3, 0, 1) * (Rz.slide && u === Rz.who ? -1 : 1);
     if (u === P.carrier) o.ring = '#ffd34d'; else if (B.st === 'air' && B.tgt === u) o.ring = '#7fb7ff';
     if (u.catchAt && now - u.catchAt < 330) o.pose = 'grab';
+    if (P.play.kr && u === P.qb && P.call) { if (u.kneel && P.done) { o.pose = 'stance'; o.ring = null; } else if (!P.done && P.call === 'fair') o.pose = 'up'; }
     if (u === P.carrier && u.jk > 0 && !P.done) { (u.gst = u.gst || []).push([u.y, u.x]); if (u.gst.length > 7) u.gst.shift(); o.pose = 'juke'; o.ghosts = [u.gst[0], u.gst[3]].filter(Boolean); } else if (u.gst) u.gst = null;
     if (P.td) { const age = (now - P.td.at) / 1000;
       if (u === P.td.who) { o.pose = 'upball'; o.fall = 0; o.lift = age > 0.15 ? Math.abs(Math.sin((age - 0.15) * 7)) * 6 : 0; }
@@ -1235,7 +1241,7 @@ function setup() {
   setup();
 })();
 // test hooks
-window.__drive = { get P() { return P; }, td: () => startTD(P.qb), spr: (u, pose, f) => spriteFor(u, KH, pose, f).c.toDataURL(),  cam(y, x) { window.__camLock = [y, x]; }, get GS() { return GS; }, throwBall: (x, y) => throwBall(x, y), juke, scramble,
+window.__drive = { get P() { return P; }, td: () => startTD(P.qb), ret: k => startReturn(k), spr: (u, pose, f) => spriteFor(u, KH, pose, f).c.toDataURL(),  cam(y, x) { window.__camLock = [y, x]; }, get GS() { return GS; }, throwBall: (x, y) => throwBall(x, y), juke, scramble,
   // testing: run one play instantly with a scripted player; returns the result
   testReturn(kind, ai) {
     const keep = window.setTimeout; window.setTimeout = () => 0;
