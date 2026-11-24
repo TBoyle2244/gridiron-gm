@@ -6002,57 +6002,123 @@ function kitFor(t, k) {
 }
 function setKits(k) { KIT = k; KH = kitFor(me, k); KA = kitFor(op, k === 'away' ? 'home' : 'away'); SPR = {}; WORLD = null; }
 
-// Original pixel emblems, one idea per team name (none of them copies a real logo). 13 x 13 cells:
-// W = white, A = the team's trim color, . = empty. Some are drawn by code (star, moon, stripes...).
-const EMB = {
-  paw: ['.............', '...WW...WW...', '..WWWW.WWWW..', '..WWWW.WWWW..', '...WW...WW...', 'WW.........WW', 'WWW.......WWW', '.W..WWWWW..W.', '...WWWWWWW...', '..WWWWWWWWW..', '..WWWWWWWWW..', '...WWWWWWW...', '....WW.WW....'],
-  mountain: ['.............', '.............', '.............', '......A......', '.....AAA.....', '....AAAAA....', '...WAAWAAW...', '..WWWWWWWWW..', '.WWWWWWWWWWW.', 'WWWWWWWWWWWWW', '.............'],
-  crown: ['.............', '.............', 'W.....W.....W', 'WW...WWW...WW', 'WWW.WWWWW.WWW', 'WWWWWWWWWWWWW', 'WAWWWAWAWWWAW', 'WWWWWWWWWWWWW', 'AAAAAAAAAAAAA'],
-  horse: ['.............', '........WW...', '.......WWWW..', '......WWWWWW.', '.....WWW..WW.', 'WWWWWWWW.....', 'WWWWWWWWW....', '.WWWWWWWW....', '.W..W..W.W...', 'W...W..W..W..', 'W....W.W...W.'],
-  flame: ['......W......', '.....WW......', '.....WWW.....', '....WWWW..W..', '...WWWAWW.WW.', '..WWWAAWWWWW.', '..WWAAAAWWWW.', '.WWWAAAAAWWW.', '.WWAAAAAAAWW.', '.WWWAAAAAWWW.', '..WWWAAAWWW..', '...WWWWWWW...'],
-  ship: ['......W......', '......WAAA...', '......WAAAA..', '......WAAAA..', '......WAAA...', '......W......', 'W.....W.....W', 'WW.WWWWWWW.WW', '.WWWWWWWWWWW.', '..WWWWWWWWW..'],
-  plane: ['......W......', '.....WWW.....', '.....WWW.....', '.....WWW.....', '...WWWWWWW...', '.WWWWWWWWWWW.', 'WWWW.WWW.WWWW', '.....WWW.....', '.....WWW.....', '....WWWWW....', '...WW.W.WW...'],
-  anvil: ['.............', 'WWWWWWWWWWW..', '.WWWWWWWWWWWW', '..WWWWWWWWWW.', '....WWWWW....', '....WWWWW....', '...WWWWWWW...', '..WWWWWWWWW..', '..AAAAAAAAA..'],
-  pick: ['..WWWWWWWWW..', '.WW...A...WW.', 'WW....A....WW', 'W.....A.....W', '......A......', '......A......', '......A......', '......A......', '......A......', '......A......'],
-  anchor: ['.....WWW.....', '.....W.W.....', '.....WWW.....', '...WWWWWWW...', '......W......', '......W......', '......W......', 'W.....W.....W', 'WW....W....WW', '.WW...W...WW.', '..WWWWWWWWW..', '....WWWWW....'],
-  skull: ['.............', '...WWWWWWW...', '..WWWWWWWWW..', '.WWWWWWWWWWW.', '.WW..WWW..WW.', '.WW..WWW..WW.', '.WWWWW.WWWWW.', '..WWWWWWWWW..', '...W.W.W.W...', '...WWWWWWW...'],
-  tree: ['......W......', '.....WWW.....', '....WWWWW....', '.....WWW.....', '....WWWWW....', '...WWWWWWW...', '....WWWWW....', '...WWWWWWW...', '..WWWWWWWWW..', '......A......', '......A......'],
-  bird: ['.............', '...WWW.......', '..WWWWW......', 'AAW.WWWW.....', '..WWWWWWW....', '...WWWWWWWW..', '....WWWWWWWWW', '.....WWWWWW..', '......A..A...', '.....AA.AA...'],
-  talon: ['.............', '....WWWWW....', '....WWWWW....', '...WWWWWWW...', '..WW.WWW.WW..', '.WW..W.W..WW.', 'WW..WW.WW..WW', 'W...W...W...W', 'A...A...A...A'],
-  feather: ['..........WW.', '.........WWW.', '........WWWW.', '.......WWWW..', '......WWWW...', '.....WWWW....', '....WWWW.....', '...WWWW......', '..AWWW.......', '.AA..........', 'A............'],
-  wave: ['.....WWWW....', '...WWWWWWWW..', '..WWW....WWW.', '.WW..WWW..WW.', '.W..W...W.W..', 'WW..W..WW....', 'W....WW......', 'W............', 'AAAAAAAAAAAAA', 'A.AAA.AAA.AAA'],
-  hat: ['.............', '.............', '.....WWW.....', '....WWWWW....', '...WWWWWWW...', '...AAAAAAA...', 'W..WWWWWWW..W', 'WWWWWWWWWWWWW', '.WWWWWWWWWWW.'],
-  hammer: ['.WWWWWWW.....', 'WWWWWWWWW....', 'WWWWWWWWW....', '.WWWWWWW.....', '....AA.......', '.....AA......', '......AA.....', '.......AA....', '........AA...', '.........AA..', '..........AA.'],
-  horns: ['W...........W', 'WW.........WW', '.WW.......WW.', '..WWWWWWWWW..', '...WWWWWWW...', '...W.WWW.W...', '...WWWWWWW...', '....WWWWW....', '.....AAA.....'],
-  tower: ['..W.W.W.W.W..', '..WWWWWWWWW..', '...WWWWWWW...', '...WW.W.WW...', '...WWWWWWW...', '...WWWWWWW...', '...WWW.WWW...', '...WW...WW...', '..WWWWWWWWW..'],
-  pillar: ['WWWWWWWWWWWWW', '.WWWWWWWWWWW.', '..W.W.W.W.W..', '..W.W.W.W.W..', '..W.W.W.W.W..', '..W.W.W.W.W..', '..W.W.W.W.W..', '.WWWWWWWWWWW.', 'WWWWWWWWWWWWW'],
-  dome: ['......W......', '......W......', '.....WWW.....', '....WWWWW....', '...WWWWWWW...', '..WWWWWWWWW..', '..AAAAAAAAA..', '..W.W.W.W.W..', '..W.W.W.W.W..', 'WWWWWWWWWWWWW'],
-  crate: null, star: null, moon: null, stripes: null, spots: null, flag: null, burst: null, halo: null, drop: null, claw: null, shield: null
-};
-// drawn by code on the 13 x 13 grid
-(function () {
-  const G = f => { const r = []; for (let y = 0; y < 13; y++) { let s = ''; for (let x = 0; x < 13; x++) s += f(x, y) || '.'; r.push(s); } return r; };
-  const cx = 6, cy = 6, d = (x, y, a, b) => Math.hypot(x - a, y - b);
-  EMB.crate = G((x, y) => (x === 0 || y === 0 || x === 12 || y === 12) ? 'W' : (x === y || x === 12 - y) ? 'W' : 'A');
-  const pts = []; for (let i = 0; i < 10; i++) { const r = i % 2 ? 2.6 : 6.4, a = -Math.PI / 2 + i * Math.PI / 5; pts.push([cx + r * Math.cos(a), cy + 0.4 + r * Math.sin(a)]); }
-  const inPoly = (x, y) => { let c = false; for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) { const [xi, yi] = pts[i], [xj, yj] = pts[j]; if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c; } return c; };
-  EMB.star = G((x, y) => inPoly(x + 0.5 - 0.5, y + 0.5 - 0.5) ? 'W' : '');
-  EMB.moon = G((x, y) => d(x, y, cx, cy) <= 5.8 && d(x, y, cx + 3, cy - 1.5) > 4.6 ? 'W' : (d(x, y, 10, 3) < 0.8 ? 'A' : ''));
-  EMB.stripes = G((x, y) => d(x, y, cx, cy) > 6.2 ? '' : ((x + Math.round(Math.sin(y * 0.8) * 1.5)) % 4 < 2 ? 'A' : 'W'));
-  EMB.spots = G((x, y) => { for (const [a, b] of [[3, 3], [9, 3], [6, 7], [3, 10], [9, 10]]) { const q = d(x, y, a, b); if (q < 0.6) return 'A'; if (q < 2.1) return 'W'; } return ''; });
-  EMB.flag = G((x, y) => y < 2 || y > 10 ? '' : (x < 6 && y < 7) ? ((x + y) % 2 ? 'W' : 'A') : (y % 2 ? 'W' : 'A'));
-  EMB.burst = G((x, y) => { const q = d(x, y, cx, cy), a = Math.atan2(y - cy, x - cx); return q < 2.2 ? 'W' : q < 6.4 && Math.abs(Math.sin(a * 4)) > 0.82 ? 'W' : q < 3.4 ? 'A' : ''; });
-  EMB.halo = G((x, y) => { const e = Math.hypot((x - cx) / 6, (y - 3) / 2.3); if (Math.abs(e - 1) < 0.22) return 'W'; const q = d(x, y, cx, 9); return q < 1.2 ? 'A' : (Math.abs(x - cx) < 0.6 && Math.abs(y - 9) < 3) || (Math.abs(y - 9) < 0.6 && Math.abs(x - cx) < 3) ? 'W' : ''; });
-  EMB.drop = G((x, y) => { if (y < 1) return ''; if (y < 6) return Math.abs(x - cx) <= (y - 1) * 0.75 ? 'W' : ''; return d(x, y, cx, 8) < 4.2 ? (d(x, y, cx - 1.5, 7) < 1 ? 'A' : 'W') : ''; });
-  EMB.claw = G((x, y) => { for (const o of [-4, 0, 4]) { const t = x - (y * 0.55) - o - 2.4; if (t >= 0 && t < 1.6 && y > 0 && y < 12) return 'W'; } return ''; });
-  EMB.shield = G((x, y) => { const w = y < 6 ? 6 : 6 - (y - 6) * 0.95; if (Math.abs(x - cx) > w || y > 12) return ''; const edge = Math.abs(x - cx) > w - 1.2 || y === 0; if (edge) return 'W'; return Math.abs(y - 2 - Math.abs(x - cx) * 0.8) < 1 ? 'W' : 'A'; });
+/* ---------- original cartoon team emblems (none copies a real logo) ---------- */
+// Each emblem is drawn in a 100 x 100 box with thick dark outlines. c = { P: team color, S: trim, D: outline }
+const LOGO = (() => {
+  const O = (w) => `stroke="#16161e" stroke-width="${w || 3.5}" stroke-linejoin="round" stroke-linecap="round"`;
+  const star = (cx, cy, r1, r2, n, rot) => { let p = ''; for (let i = 0; i < n * 2; i++) { const r = i % 2 ? r2 : r1, a = (rot || -Math.PI / 2) + i * Math.PI / n; p += (i ? 'L' : 'M') + (cx + r * Math.cos(a)).toFixed(1) + ' ' + (cy + r * Math.sin(a)).toFixed(1); } return p + 'Z'; };
+  const spark = (x, y, r, col) => `<path d="${star(x, y, r, r * 0.3, 4, 0)}" fill="${col}"/>`;
+  const steel = '#c9ced6', wood = '#b47a45', gold = '#ffcf4a';
+  const E = {
+    paw: c => `${[[31, 37, -20], [43, 28, -6], [57, 28, 6], [69, 37, 20]].map(([x, y, r]) => `<path d="M${x - 3} ${y - 8} L${x} ${y - 15} L${x + 3} ${y - 8}Z" fill="${c.S}" ${O(2.5)} transform="rotate(${r} ${x} ${y})"/><ellipse cx="${x}" cy="${y}" rx="6.5" ry="8.5" fill="#fff" ${O()} transform="rotate(${r} ${x} ${y})"/>`).join('')}
+      <path d="M50 44 Q66 44 70 58 Q72 72 60 72 Q55 70 50 72 Q45 70 40 72 Q28 72 30 58 Q34 44 50 44Z" fill="#fff" ${O()}/><path d="M40 52 Q44 48 50 48" stroke="${c.S}" stroke-width="3" fill="none" stroke-linecap="round"/>`,
+    mountain: c => `<path d="M10 72 L36 32 L48 48 L60 28 L90 72Z" fill="${c.S}" ${O()}/><path d="M36 32 L44 44 L40 42 L36 47 L32 42 L29 44Z" fill="#fff" ${O(2.5)}/>
+      <path d="M60 28 L69 41 L64 39 L60 45 L56 39 L51 42Z" fill="#fff" ${O(2.5)}/><path d="M60 45 L66 72" stroke="#16161e" stroke-opacity=".35" stroke-width="3"/><circle cx="78" cy="26" r="7" fill="${gold}" ${O(2.5)}/>`,
+    crown: c => `<path d="M22 66 L18 32 L36 48 L50 22 L64 48 L82 32 L78 66Z" fill="${gold}" ${O()}/><rect x="20" y="62" width="60" height="11" rx="3" fill="${gold}" ${O()}/>
+      <circle cx="18" cy="31" r="4.5" fill="#fff" ${O(2.5)}/><circle cx="50" cy="21" r="4.5" fill="#fff" ${O(2.5)}/><circle cx="82" cy="31" r="4.5" fill="#fff" ${O(2.5)}/>
+      <circle cx="50" cy="50" r="5.5" fill="${c.S}" ${O(2.5)}/><circle cx="33" cy="67.5" r="3" fill="${c.S}"/><circle cx="50" cy="67.5" r="3" fill="${c.S}"/><circle cx="67" cy="67.5" r="3" fill="${c.S}"/><path d="M26 58 L74 58" stroke="#fff" stroke-opacity=".6" stroke-width="2.5"/>`,
+    colt: c => `<path d="M35 32 L31 12 L45 25Z" fill="#fff" ${O()}/><path d="M65 32 L69 12 L55 25Z" fill="#fff" ${O()}/>
+      <path d="M34 30 Q50 18 66 30 Q69 50 61 70 Q50 82 39 70 Q31 50 34 30Z" fill="#fff" ${O()}/><path d="M41 22 Q50 8 59 22 Q55 27 50 22 Q45 27 41 22Z" fill="${c.S}" ${O(2.5)}/>
+      <path d="M47 30 L53 30 L52 56 L48 56Z" fill="${c.S}"/><ellipse cx="50" cy="68" rx="11.5" ry="8.5" fill="#e3dccb" ${O(3)}/><circle cx="45.5" cy="68" r="1.8" fill="#16161e"/><circle cx="54.5" cy="68" r="1.8" fill="#16161e"/>
+      <circle cx="40" cy="43" r="3.6" fill="#16161e"/><circle cx="60" cy="43" r="3.6" fill="#16161e"/><circle cx="41" cy="42" r="1.2" fill="#fff"/><circle cx="61" cy="42" r="1.2" fill="#fff"/>`,
+    flame: c => `<path d="M50 12 Q60 30 70 36 Q84 50 75 67 Q66 82 50 82 Q34 82 25 67 Q18 52 31 40 Q33 52 42 55 Q35 37 50 12Z" fill="${c.S}" ${O()}/>
+      <path d="M50 40 Q59 50 63 59 Q65 72 50 74 Q37 74 39 61 Q41 54 46 57 Q44 48 50 40Z" fill="${gold}" ${O(2.5)}/><path d="M50 58 Q55 64 54 69 Q50 72 47 69 Q46 63 50 58Z" fill="#fff"/>`,
+    ship: c => `<line x1="50" y1="14" x2="50" y2="60" stroke="#16161e" stroke-width="4"/><path d="M33 20 L67 20 L71 52 L29 52Z" fill="#fff" ${O()}/>
+      <path d="M41 20 L49 20 L49 52 L39 52Z M57 20 L65 20 L69 52 L59 52Z" fill="${c.S}"/><path d="M33 20 L67 20 L71 52 L29 52Z" fill="none" ${O()}/>
+      <path d="M14 54 Q12 42 21 40 Q26 45 21 49 L24 58 L76 58 L79 49 Q74 45 79 40 Q88 42 86 54 Q81 74 50 74 Q19 74 14 54Z" fill="${wood}" ${O()}/>
+      ${[32, 44, 56, 68].map(x => `<circle cx="${x}" cy="64" r="4.5" fill="${c.S}" ${O(2)}/>`).join('')}<path d="M10 80 Q20 76 30 80 Q40 84 50 80 Q60 76 70 80 Q80 84 90 80" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/>`,
+    plane: c => `<g transform="rotate(-24 50 50)"><path d="M22 47 L14 30 L25 30 L35 45Z" fill="${c.S}" ${O()}/><path d="M17 51 Q19 43 32 43 L70 43 Q85 45 90 50 Q85 55 70 57 L32 57 Q19 57 17 51Z" fill="#fff" ${O()}/>
+      <path d="M44 51 L59 51 L47 74 L37 74Z" fill="${c.S}" ${O()}/><path d="M70 45 Q79 46 84 50 L70 50Z" fill="#8fd6ff" ${O(2)}/></g>
+      <path d="M8 76 L26 70 M12 86 L32 78 M22 92 L38 84" stroke="#fff" stroke-width="3.5" stroke-linecap="round"/>`,
+    anvil: c => `<path d="M20 36 L74 36 Q86 36 88 29 L91 29 Q92 47 72 49 L64 49 Q60 57 67 63 L71 63 L71 72 L29 72 L29 63 L33 63 Q40 57 36 49 L25 49 Q20 47 20 36Z" fill="${steel}" ${O()}/>
+      <path d="M25 40 L72 40" stroke="#fff" stroke-width="3" stroke-linecap="round"/><path d="M29 66 L71 66" stroke="#16161e" stroke-opacity=".3" stroke-width="3"/>${spark(30, 22, 7, gold)}${spark(50, 15, 9, '#fff')}${spark(70, 22, 7, gold)}`,
+    pick: c => `<path d="M30 82 L66 32" stroke="#16161e" stroke-width="12" stroke-linecap="round"/><path d="M30 82 L66 32" stroke="${wood}" stroke-width="7" stroke-linecap="round"/>
+      <path d="M26 36 Q50 12 90 26 Q62 26 64 40 Q52 30 26 36Z" fill="${steel}" ${O()}/><path d="M40 28 Q56 20 74 23" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+      <path d="M58 72 L66 63 L77 65 L81 74 L72 82 L60 80Z" fill="${gold}" ${O()}/><path d="M66 68 L72 69" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>`,
+    anchor: c => `<circle cx="50" cy="21" r="7" fill="none" stroke="#16161e" stroke-width="9"/><circle cx="50" cy="21" r="7" fill="none" stroke="#fff" stroke-width="4"/>
+      <path d="M46.5 28 L53.5 28 L53.5 74 L46.5 74Z" fill="#fff" ${O()}/><rect x="33" y="34" width="34" height="8" rx="4" fill="#fff" ${O()}/>
+      <path d="M20 56 Q24 79 50 81 Q76 79 80 56 L87 61 L83 47 L70 53 L76 56 Q72 72 50 74 Q28 72 24 56 L30 53 L17 47 L13 61Z" fill="#fff" ${O()}/>
+      <path d="M50 26 Q72 30 66 50 Q60 62 70 70" stroke="${c.S}" stroke-width="4" fill="none" stroke-linecap="round"/>`,
+    skull: c => `<path d="M27 50 Q25 21 50 19 Q75 21 73 50 Q73 61 64 63 L64 74 L36 74 L36 63 Q27 61 27 50Z" fill="#fff" ${O()}/>
+      <path d="M26 39 Q50 22 74 39 L74 30 Q50 13 26 30Z" fill="${c.S}" ${O()}/><path d="M74 33 L86 28 L82 38 L88 44 L74 40Z" fill="${c.S}" ${O(2.5)}/>
+      <ellipse cx="40" cy="48" rx="7" ry="7.5" fill="#16161e"/><ellipse cx="60" cy="48" rx="7" ry="7.5" fill="#16161e"/><circle cx="42" cy="46" r="1.8" fill="#fff"/><circle cx="62" cy="46" r="1.8" fill="#fff"/>
+      <path d="M50 55 L46 62 L54 62Z" fill="#16161e"/><path d="M43 67 V74 M50 67 V74 M57 67 V74" stroke="#16161e" stroke-width="2.5"/>`,
+    tree: c => `<path d="M50 12 L65 33 L58 33 L73 51 L65 51 L82 70 L18 70 L35 51 L27 51 L42 33 L35 33Z" fill="${c.S}" ${O()}/><rect x="44" y="70" width="12" height="13" fill="${wood}" ${O()}/>
+      <path d="M44 30 L50 22 L56 30 M38 48 L50 40 M60 46 L66 50 M30 66 L42 58" stroke="#fff" stroke-width="3" stroke-linecap="round" fill="none"/>`,
+    bird: c => `<path d="M28 63 L13 74 L31 71Z" fill="#fff" ${O()}/><path d="M26 56 Q26 35 46 33 Q67 33 71 52 Q73 71 52 75 Q33 77 26 56Z" fill="#fff" ${O()}/>
+      <path d="M40 36 L35 16 L48 29 L51 18 L57 34Z" fill="#fff" ${O()}/><path d="M67 46 L84 50 L67 56Z" fill="${gold}" ${O()}/>
+      <circle cx="58" cy="46" r="4" fill="#16161e"/><circle cx="59.3" cy="44.7" r="1.3" fill="#fff"/><path d="M34 54 Q47 47 59 58 Q48 69 34 62Z" fill="${c.S}" ${O()}/>
+      <path d="M46 75 L44 84 M56 74 L58 84" stroke="#16161e" stroke-width="3" stroke-linecap="round"/>`,
+    talon: c => `<path d="M43 12 L57 12 L57 40 L43 40Z" fill="${gold}" ${O()}/><path d="M43 20 L57 20 M43 28 L57 28" stroke="#16161e" stroke-opacity=".35" stroke-width="2.5"/>
+      ${[['M45 40 Q30 46 26 62', 24, 62], ['M50 40 L50 68', 50, 68], ['M55 40 Q70 46 74 62', 76, 62]].map(([d, x, y]) => `<path d="${d}" stroke="#16161e" stroke-width="11" fill="none" stroke-linecap="round"/><path d="${d}" stroke="${gold}" stroke-width="6" fill="none" stroke-linecap="round"/><path d="M${x - 5} ${y} Q${x - 4} ${y + 15} ${x + 5} ${y + 13} Q${x} ${y + 8} ${x + 4} ${y}Z" fill="#fff" ${O(2.5)}/>`).join('')}`,
+    feather: c => `<path d="M25 80 Q28 40 72 16 Q82 30 76 47 Q67 68 29 78Z" fill="#fff" ${O()}/><path d="M72 16 Q82 30 76 47 Q71 37 62 31Z" fill="${c.S}"/>
+      <path d="M20 86 Q44 56 71 21" stroke="#16161e" stroke-width="3" fill="none" stroke-linecap="round"/><path d="M58 60 L67 55 L63 62Z M44 70 L52 67 L49 72Z" fill="${c.P}"/><path d="M25 80 Q28 40 72 16 Q82 30 76 47 Q67 68 29 78Z" fill="none" ${O()}/>`,
+    moon: c => `<path d="M62 16 Q28 20 28 50 Q28 80 62 84 Q41 71 41 50 Q41 29 62 16Z" fill="#fff" ${O()}/><path d="M33 47 Q36 50 39 47" stroke="#16161e" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+      <path d="${star(70, 36, 9, 3.6, 5)}" fill="${gold}" ${O(2.5)}/><path d="${star(73, 64, 6, 2.4, 5)}" fill="${gold}" ${O(2)}/>`,
+    bison: c => `<path d="M31 40 Q13 37 12 21 Q21 30 35 32Z" fill="#efe6d2" ${O()}/><path d="M69 40 Q87 37 88 21 Q79 30 65 32Z" fill="#efe6d2" ${O()}/>
+      <path d="M30 34 Q50 21 70 34 Q75 53 64 67 Q50 81 36 67 Q25 53 30 34Z" fill="#7a5230" ${O()}/><path d="M31 35 Q35 21 44 28 Q48 17 54 26 Q61 17 65 28 Q71 23 70 35 Q50 30 31 35Z" fill="#4e3219" ${O(2.5)}/>
+      <ellipse cx="50" cy="64" rx="11.5" ry="8.5" fill="#a77a52" ${O(3)}/><circle cx="45.5" cy="64" r="2" fill="#16161e"/><circle cx="54.5" cy="64" r="2" fill="#16161e"/>
+      <circle cx="40" cy="47" r="4" fill="#fff"/><circle cx="60" cy="47" r="4" fill="#fff"/><circle cx="41" cy="48" r="2.2" fill="#16161e"/><circle cx="59" cy="48" r="2.2" fill="#16161e"/>`,
+    hat: c => `<path d="M30 58 Q27 29 38 27 Q44 34 50 30 Q56 34 62 27 Q73 29 70 58Z" fill="#fff" ${O()}/><path d="M30 49 L70 49 L70 57 L30 57Z" fill="${c.S}" ${O(2.5)}/>
+      <rect x="45" y="48.5" width="10" height="9" rx="1.5" fill="${gold}" ${O(2)}/><path d="M10 60 Q20 72 50 72 Q80 72 90 60 Q81 55 70 57 L30 57 Q19 55 10 60Z" fill="#fff" ${O()}/>
+      <path d="M38 33 Q36 42 37 47" stroke="#16161e" stroke-opacity=".3" stroke-width="3" fill="none"/>`,
+    mallet: c => `<path d="M30 82 L60 38" stroke="#16161e" stroke-width="12" stroke-linecap="round"/><path d="M30 82 L60 38" stroke="${wood}" stroke-width="7" stroke-linecap="round"/>
+      <g transform="rotate(34 62 32)"><rect x="40" y="20" width="44" height="22" rx="5" fill="${steel}" ${O()}/><rect x="43" y="23" width="38" height="5" rx="2" fill="#fff"/><rect x="40" y="20" width="7" height="22" fill="${c.S}" ${O(2.5)}/><rect x="77" y="20" width="7" height="22" fill="${c.S}" ${O(2.5)}/></g>
+      <path d="M16 46 Q20 30 34 22 M12 60 Q14 50 20 44" stroke="#fff" stroke-width="3.5" fill="none" stroke-linecap="round"/>`,
+    burst: c => `<path d="${star(50, 50, 40, 22, 12)}" fill="${gold}" ${O()}/><path d="${star(50, 50, 26, 14, 12, -Math.PI / 2 + 0.26)}" fill="#fff" ${O(2.5)}/><circle cx="50" cy="50" r="8" fill="${c.S}" ${O(2.5)}/>`,
+    wave: c => `<path d="M12 76 Q15 42 45 31 Q71 22 86 40 Q75 35 65 41 Q56 48 63 57 Q50 59 46 50 Q40 62 51 74Z" fill="#7fd8ff" ${O()}/>
+      <path d="M45 31 Q71 22 86 40 Q77 37 70 39 Q66 31 58 33 Q51 31 45 31Z" fill="#fff" ${O(2.5)}/><path d="M12 76 Q30 70 46 76 Q62 82 88 74 L88 82 L12 82Z" fill="#3fb3e8" ${O()}/>
+      <circle cx="74" cy="52" r="3" fill="#fff" ${O(2)}/><circle cx="82" cy="58" r="2" fill="#fff"/>`,
+    flag: c => `<rect x="17" y="14" width="6" height="70" rx="2" fill="${steel}" ${O()}/><circle cx="20" cy="13" r="4.5" fill="${gold}" ${O(2.5)}/>
+      <path d="M23 22 Q38 15 54 22 Q70 29 86 22 L86 56 Q70 63 54 56 Q38 49 23 56Z" fill="#fff" ${O()}/>
+      ${[29, 39, 49].map(y => `<path d="M23 ${y} Q38 ${y - 7} 54 ${y} Q70 ${y + 7} 86 ${y} L86 ${y + 5} Q70 ${y + 12} 54 ${y + 5} Q38 ${y - 2} 23 ${y + 5}Z" fill="${c.S}"/>`).join('')}
+      <path d="M23 22 Q32 18 42 19 L42 38 Q32 36 23 40Z" fill="${c.P}" ${O(2)}/>${[[28, 25], [36, 24], [28, 33], [36, 31]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="1.8" fill="#fff"/>`).join('')}
+      <path d="M23 22 Q38 15 54 22 Q70 29 86 22 L86 56 Q70 63 54 56 Q38 49 23 56Z" fill="none" ${O()}/>`,
+    halo: c => `<ellipse cx="50" cy="30" rx="25" ry="9" fill="none" stroke="#16161e" stroke-width="10"/><ellipse cx="50" cy="30" rx="25" ry="9" fill="none" stroke="${gold}" stroke-width="5.5"/>
+      <path d="M48 56 Q30 42 14 50 Q21 54 17 58 Q28 60 23 65 Q36 70 48 63Z" fill="#fff" ${O()}/><path d="M52 56 Q70 42 86 50 Q79 54 83 58 Q72 60 77 65 Q64 70 52 63Z" fill="#fff" ${O()}/>
+      ${spark(50, 52, 9, gold)}${spark(28, 22, 5, '#fff')}${spark(74, 20, 6, '#fff')}`,
+    tower: c => `<path d="M30 80 L30 32 L70 32 L70 80Z" fill="#d8d2c4" ${O()}/><path d="M26 34 L26 22 L33 22 L33 27 L40 27 L40 22 L47 22 L47 27 L53 27 L53 22 L60 22 L60 27 L67 27 L67 22 L74 22 L74 34Z" fill="#d8d2c4" ${O()}/>
+      <path d="M42 80 L42 66 Q50 56 58 66 L58 80Z" fill="#16161e"/><path d="M45 42 L55 42 L55 52 L45 52Z" fill="${c.S}" ${O(2.5)}/><path d="M50 22 L50 6" stroke="#16161e" stroke-width="3"/><path d="M50 6 L64 10 L50 14Z" fill="${c.S}" ${O(2)}/>
+      <path d="M34 44 L38 44 M34 60 L38 60 M62 50 L66 50 M60 70 L66 70" stroke="#16161e" stroke-opacity=".3" stroke-width="2.5"/>`,
+    column: c => `<path d="M20 22 L80 22 L76 30 L24 30Z" fill="#fff" ${O()}/><path d="M18 16 L82 16 L82 22 L18 22Z" fill="#fff" ${O()}/><path d="M28 30 L72 30 L70 72 L30 72Z" fill="#fff" ${O()}/>
+      <path d="M38 33 L38 70 M46 33 L46 70 M54 33 L54 70 M62 33 L62 70" stroke="#16161e" stroke-opacity=".45" stroke-width="2.5"/><path d="M24 72 L76 72 L80 80 L20 80Z" fill="#fff" ${O()}/><path d="M16 80 L84 80 L84 86 L16 86Z" fill="${c.S}" ${O()}/>`,
+    drop: c => `<path d="M50 12 Q64 38 71 51 Q78 78 50 82 Q22 78 29 51 Q36 38 50 12Z" fill="#1d1d26" stroke="#fff" stroke-width="3.5" stroke-linejoin="round"/><path d="M39 54 Q37 67 46 73" stroke="#fff" stroke-width="4.5" fill="none" stroke-linecap="round"/><circle cx="42" cy="47" r="2.5" fill="#fff"/>`,
+    dome: c => `<path d="M48 12 L52 12 L52 22 L48 22Z" fill="#fff" ${O(2.5)}/><path d="M40 30 Q40 22 50 21 Q60 22 60 30Z" fill="#fff" ${O()}/><path d="M26 54 Q26 30 50 29 Q74 30 74 54Z" fill="#fff" ${O()}/>
+      <path d="M33 52 Q34 38 42 33 M50 31 L50 52 M67 52 Q66 38 58 33" stroke="#16161e" stroke-opacity=".35" stroke-width="2.5" fill="none"/><path d="M22 54 L78 54 L78 60 L22 60Z" fill="${c.S}" ${O()}/>
+      <path d="M24 60 L76 60 L76 76 L24 76Z" fill="#fff" ${O()}/><path d="M32 62 L32 74 M40 62 L40 74 M48 62 L48 74 M56 62 L56 74 M64 62 L64 74 M72 62 L72 74" stroke="#16161e" stroke-opacity=".45" stroke-width="2.5"/><path d="M14 76 L86 76 L86 84 L14 84Z" fill="#fff" ${O()}/>`,
+    star: c => `<path d="${star(50, 52, 38, 16, 5)}" fill="#fff" ${O()}/><path d="${star(50, 52, 26, 11, 5)}" fill="${c.S}"/><path d="M38 34 L44 26" stroke="#fff" stroke-width="3.5" stroke-linecap="round"/>`,
+    eye: c => `<path d="M12 50 Q50 14 88 50 Q50 86 12 50Z" fill="#fff" ${O()}/><circle cx="50" cy="50" r="20" fill="${gold}" ${O()}/><path d="M50 32 Q56 50 50 68 Q44 50 50 32Z" fill="#16161e"/><circle cx="58" cy="42" r="4" fill="#fff"/>
+      ${[[22, 22], [78, 22], [22, 80], [78, 80]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="6" fill="none" stroke="${c.S}" stroke-width="3"/><circle cx="${x}" cy="${y}" r="2" fill="${c.S}"/>`).join('')}`,
+    fangs: c => `<path d="M14 40 Q50 22 86 40 Q84 72 50 80 Q16 72 14 40Z" fill="#7a1b1b" ${O()}/><path d="M18 40 Q50 26 82 40 Q50 46 18 40Z" fill="${c.S}" ${O(2.5)}/>
+      <path d="M30 40 L36 66 L42 42Z" fill="#fff" ${O()}/><path d="M70 40 L64 66 L58 42Z" fill="#fff" ${O()}/><path d="M44 72 Q50 66 56 72" stroke="#e86a7a" stroke-width="5" fill="none" stroke-linecap="round"/>`,
+    claw: c => `${[0, 16, 32].map(o => `<path d="M${22 + o} ${16 + o * 0.15} Q${34 + o} ${46} ${26 + o} ${84 - o * 0.15} L${33 + o} ${82 - o * 0.15} Q${44 + o} ${46} ${30 + o} ${16 + o * 0.15}Z" fill="#fff" ${O()}/><path d="M${27 + o} ${30} Q${33 + o} ${46} ${30 + o} ${62}" stroke="${c.S}" stroke-width="3" fill="none" stroke-linecap="round"/>`).join('')}`,
+    crate: c => `<rect x="16" y="20" width="68" height="62" rx="3" fill="${wood}" ${O()}/><path d="M16 36 L84 36 M16 52 L84 52 M16 66 L84 66" stroke="#16161e" stroke-opacity=".35" stroke-width="2.5"/>
+      <path d="M22 26 L78 76 M78 26 L22 76" stroke="#16161e" stroke-width="9" stroke-linecap="round"/><path d="M22 26 L78 76 M78 26 L22 76" stroke="#d9a066" stroke-width="5" stroke-linecap="round"/><rect x="16" y="20" width="68" height="62" rx="3" fill="none" ${O()}/>
+      <path d="M34 54 L44 46 L52 50 L60 42 L66 48" stroke="${c.S}" stroke-width="0" fill="none"/>${[[22, 26], [78, 26], [22, 76], [78, 76]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="2.5" fill="${steel}" ${O(1.5)}/>`).join('')}`,
+    shield: c => `<path d="M50 14 L82 24 Q82 62 50 86 Q18 62 18 24Z" fill="#fff" ${O()}/><path d="M50 22 L74 30 Q74 60 50 78 Q26 60 26 30Z" fill="${c.S}" ${O(2.5)}/><path d="M26 52 L50 36 L74 52 L74 62 L50 46 L26 62Z" fill="#fff" ${O(2.5)}/>`
+  };
+  const BY = { cardinals: 'bird', falcons: 'talon', ravens: 'moon', bills: 'bison', panthers: 'claw', bears: 'paw', bengals: 'fangs', browns: 'shield', cowboys: 'hat', broncos: 'mountain',
+    lions: 'crown', packers: 'crate', texans: 'star', colts: 'colt', jaguars: 'eye', chiefs: 'flame', raiders: 'skull', chargers: 'burst', rams: 'mallet', dolphins: 'wave', vikings: 'ship',
+    patriots: 'flag', saints: 'halo', giants: 'tower', jets: 'plane', eagles: 'feather', steelers: 'anvil', '49ers': 'pick', seahawks: 'tree', buccaneers: 'anchor', titans: 'column',
+    oilers: 'drop', redskins: 'dome', commanders: 'dome', 'football team': 'dome' };
+  const pick = name => { const n = String(name || '').toLowerCase(); for (const k in BY) if (n.includes(k)) return BY[k]; return 'shield'; };
+  const xe = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]);
+  // the full midfield badge: a round seal in the team color, the emblem, and the name on a ribbon
+  function svg(name, P, S, px) {
+    const c = { P, S }, nm = String(name || '').toUpperCase(), long = nm.length > 8;
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 120 120">
+      <circle cx="60" cy="54" r="52" fill="#16161e"/><circle cx="60" cy="54" r="49" fill="${S}"/><circle cx="60" cy="54" r="43" fill="${P}"/><circle cx="60" cy="54" r="43" fill="none" stroke="#16161e" stroke-width="2"/>
+      <path d="M24 40 A40 40 0 0 1 60 14" stroke="#fff" stroke-opacity=".22" stroke-width="5" fill="none" stroke-linecap="round"/>
+      <g transform="translate(23 14) scale(.74)">${E[pick(name)](c)}</g>
+      <path d="M4 88 L14 84 L14 108 L4 112 L10 100Z" fill="${S}" stroke="#16161e" stroke-width="2.5" stroke-linejoin="round"/><path d="M116 88 L106 84 L106 108 L116 112 L110 100Z" fill="${S}" stroke="#16161e" stroke-width="2.5" stroke-linejoin="round"/>
+      <path d="M12 82 Q60 72 108 82 L108 104 Q60 94 12 104Z" fill="${P}" stroke="#16161e" stroke-width="3" stroke-linejoin="round"/><path d="M14 85 Q60 75 106 85" stroke="${S}" stroke-width="2" fill="none"/>
+      <text x="60" y="96.5" text-anchor="middle" font-family="Arial Black, Helvetica Neue, Helvetica, Arial, sans-serif" font-weight="900" font-size="${long ? 12 : 14}" fill="#fff" stroke="#16161e" stroke-width="3" paint-order="stroke" ${nm.length > 10 ? 'textLength="88" lengthAdjust="spacingAndGlyphs"' : ''}>${xe(nm)}</text></svg>`;
+  }
+  return { svg, pick, E };
 })();
-const EMB_BY = { cardinals: 'bird', falcons: 'talon', ravens: 'moon', bills: 'horns', panthers: 'claw', bears: 'paw', bengals: 'stripes', browns: 'shield',
-  cowboys: 'hat', broncos: 'mountain', lions: 'crown', packers: 'crate', texans: 'star', colts: 'horse', jaguars: 'spots', chiefs: 'flame', raiders: 'skull',
-  chargers: 'burst', rams: 'hammer', dolphins: 'wave', vikings: 'ship', patriots: 'flag', saints: 'halo', giants: 'tower', jets: 'plane', eagles: 'feather',
-  steelers: 'anvil', '49ers': 'pick', seahawks: 'tree', buccaneers: 'anchor', titans: 'pillar', oilers: 'drop', redskins: 'dome', commanders: 'dome', 'football team': 'dome' };
-function emblemFor(name) { const n = String(name || '').toLowerCase(); for (const k in EMB_BY) if (n.includes(k)) return EMB[EMB_BY[k]]; return EMB.shield; }
 
+let LOGO_IMG = null;
+function drawLogo() { if (!LOGO_IMG) return; const s = 64, x = wxp(50) - camPx() - s / 2, y = wyp(W / 2) - camPy() - s * 0.47; px.drawImage(LOGO_IMG, Math.round(x * RS) / RS, Math.round(y * RS) / RS, s, s); }
 /* ---------- the stadium, built once per game ---------- */
 function buildWorld() {
   const c = document.createElement('canvas'); c.width = WORLD_W; c.height = WORLD_H; const g = c.getContext('2d');
@@ -6098,14 +6164,8 @@ function buildWorld() {
   for (let y = 1; y < 100; y++) if (y % 5) for (const xx of [0.7, W / 2 - 3.08, W / 2 + 3.08, W - 0.7]) R(wxp(y), wyp(xx) - 1, 1, 2, 'rgba(246,246,239,.75)');
   for (let y = 10; y < 100; y += 10) { const n = String(y > 50 ? 100 - y : y); PKs.pixText(g, n, wxp(y) + 1, wyp(W - 10), 13, '#f6f6ef'); PKs.pixText(g, n, wxp(y) + 1, wyp(10), 13, '#f6f6ef'); }
   // midfield logo: the team name in a ring
-  // midfield: the team's emblem in a round badge, with the name on a banner under it (season colors)
-  { const mx = wxp(50), my = wyp(W / 2) - 6, E = emblemFor(me ? me.name : ''), C = 2, gw = 13 * C, off = Math.floor((13 - E.length) / 2);
-    const disc = (r, col) => { g.fillStyle = col; g.beginPath(); g.arc(mx, my, r, 0, Math.PI * 2); g.fill(); };
-    disc(20, sh(ezc, -0.45)); disc(19, edge); disc(17, ezc);
-    E.forEach((row, y) => { for (let x = 0; x < row.length; x++) { const ch = row[x]; if (ch === '.') continue; R(mx - gw / 2 + x * C, my - gw / 2 + (y + off) * C, C, C, ch === 'W' ? '#ffffff' : edge === '#ffffff' ? sh(ezc, 0.45) : edge); } });
-    const nm = (me ? me.name : '').toUpperCase(), tw = PKs.textW(nm, 7) + 12, by = my + 19;
-    R(mx - tw / 2 - 1, by - 1, tw + 2, 13, sh(ezc, -0.45)); R(mx - tw / 2, by, tw, 11, edge); R(mx - tw / 2 + 1, by + 1, tw - 2, 9, ezc);
-    PKs.pixText(g, nm, mx, by + 5.5, 7, '#ffffff', 0, ink); }
+  // midfield badge: an original cartoon emblem drawn sharp on top of the field each frame (see drawLogo)
+  LOGO_IMG = null; { const im = new Image(), px2 = 64 * RS; im.onload = () => { LOGO_IMG = im; }; im.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(LOGO.svg(me ? me.name : '', ezc, edge, px2)); }
   // goal posts (base at the back of each end zone; the uprights go up the screen)
   for (const y of [-10, 110]) { const x = wxp(y) + (y < 0 ? -2 : 1), a = wyp(W / 2 - 3.1, 0), b = wyp(W / 2 + 3.1, 0), m = (a + b) / 2;
     R(x, m - 1, 2, 8, '#d9b52c'); R(x, m - 24, 2, 24, '#f2d13b'); R(x - 1, a - 22, 3, b - a, '#f2d13b'); R(x - 1, a - 40, 3, 18, '#f2d13b'); R(x - 1, b - 40, 3, 18 + (b - a) - (b - a), '#f2d13b'); }
@@ -6326,6 +6386,7 @@ function aimChance(a) {
   return clamp(0.3 + open * 0.09 - miss * 0.06 - dist * 0.006 + (rt(me.QB, 'acc') - 60) * 0.005, 0.03, 0.95);
 }
 function drawPlay() {
+  drawLogo();
   const f0 = wyp(0) - camPy(), f1 = wyp(W) - camPy();
   const los = P ? P.los : GS.y, kr = P && P.play && P.play.kr;
   if (!kr) R1(wxp(los) - camPx(), f0, 1, f1 - f0, '#5aa2ff');
