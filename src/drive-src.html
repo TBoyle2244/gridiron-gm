@@ -349,13 +349,15 @@ function lineStep(dt) {
 let touch = null, lastTap = 0, AUTO = null;
 function pt(e) { const r = cv.getBoundingClientRect(); const t = e.touches ? e.touches[0] || e.changedTouches[0] : e; return { px: t.clientX - r.left, py: t.clientY - r.top }; }
 function down(e) {
+  if (KK && KK.phase === 'aim') { e.preventDefault(); kickPress(pt(e).py); return; }
   if (P && P.pick) { e.preventDefault(); snapPlay(); return; }
   if (!P || P.done) return; e.preventDefault();
   const q = pt(e); touch = { sx: q.px, sy: q.py, px: q.px, py: q.py, t0: performance.now() };
   if (P.carrier) touch.lane0 = P.carrier.lane != null ? P.carrier.lane : P.carrier.x;
 }
-function move(e) { if (!touch) return; e.preventDefault(); const q = pt(e); touch.px = q.px; touch.py = q.py; }
+function move(e) { if (KK && KK.hold) { e.preventDefault(); kickDrag(pt(e).py); return; } if (!touch) return; e.preventDefault(); const q = pt(e); touch.px = q.px; touch.py = q.py; }
 function up(e) {
+  if (KK && KK.hold) { e.preventDefault(); kickRelease(); return; }
   if (!touch) return; e.preventDefault();
   const dt = performance.now() - touch.t0, dist = Math.hypot(touch.px - touch.sx, touch.py - touch.sy), was = touch; touch = null;
   if (!P || P.done) return;
@@ -729,18 +731,90 @@ function patChoice() {
   if (!GS.twoPt) { kickPAT(); return; }
   sheet(`<h3>Touchdown! Extra point</h3><div class="row"><button class="big" data-act="pat">Kick the extra point</button><button class="big alt" data-act="two">Go for two</button></div>`);
 }
-// Kicking: a marker sweeps across; tap Kick when it's inside the uprights. The window is as wide as your
-// kicker's odds from that distance, so a well-timed tap beats the odds and a bad one misses a chip shot.
-let KICK = null;
+// Kicking, Retro style: the kick happens on the field. Hold to fill the power bar (it sweeps up and back down),
+// slide up or down to aim, let go to kick. The red part of the bar is too short to reach the posts from here.
+// How far a full kick carries comes from your kicker's leg; how straight it flies comes from his accuracy.
+let KICK = null, KK = null;
 function kickMeter(title, p, dist, done) {
-  const w = clamp(p, 0.06, 0.97);
-  KICK = { p: w, t0: performance.now(), v: 0.55 + dist / 90, done };
-  sheet(`<h3>${title}</h3><p class="note">Tap <b>Kick</b> when the ball marker is between the uprights.</p>
-    <div class="kbar"><div class="kwin" style="left:${(0.5 - w / 2) * 100}%;width:${w * 100}%"></div><div class="kmark" id="kmark"></div></div>
-    <div class="row"><button class="big" data-act="kick">Kick</button></div>`);
+  const K = me.K, kpw = rt(K, 'kpw'), kac = rt(K, 'kac');
+  const range = clamp(53 + (kpw - 50) * 0.4 - (GS.year < 1975 ? 3 : 0), 46, 68);
+  const spot = 100 - (dist - 17) - 7, mid = W / 2, los = spot + 7;
+  const off = [], def = [];
+  [-6.2, -3.1, 0, 3.1, 6.2].forEach((dx, i) => off.push(makeUnit('OL', me.OL[i] || me.OL[0], mid + dx, los - 0.7, 'o')));
+  [-8.6, 8.6].forEach((dx, i) => off.push(makeUnit('TE', me.TE[i] || me.TE[0] || me.OL[0], mid + dx, los - 1.2, 'o')));
+  const holder = makeUnit('QB', me.P || me.QB, mid + 0.4, spot, 'o'), kicker = makeUnit('K', K, mid - 2.2, spot - 2.6, 'o');
+  off.push(holder, kicker);
+  const rush = (op.DL || []).concat(op.LB || []).slice(0, 9);
+  rush.forEach((w, i) => def.push(makeUnit(i < 6 ? 'DL' : 'LB', w, mid + (i - (Math.min(rush.length, 9) - 1) / 2) * 2.3, los + 1.1 + (i >= 6 ? 2 : 0), 'd')));
+  P = { play: { kick: true }, t: 0, off, def, qb: kicker, holder, kicker, rbs: [], tes: [], wrs: [], dl: [], lb: [], db: [], elig: [], locks: [], ball: { x: mid, y: spot, z: 0, st: 'tee' },
+    carrier: null, done: true, preview: true, kick: true, los, result: null };
+  KK = { title, dist, range, spot, kac, aim: 0, phase: 'aim', p: 0, done, need: clamp(dist / range, 0, 1.2) };
+  sheet(''); $('#pcard').style.display = 'none'; btns();
+  tip(dist > range ? `Out of ${esc(K.name.split(' ').pop())}'s range — give it everything` : 'Hold to power up · slide up/down to aim · let go to kick');
+  camT = Math.min(spot - 4, Math.max(spot - viewLen() * 0.3, 113 - viewLen())); camY = camT; camXT = aimCamX(mid); camX = camXT;
 }
-function kickPos() { if (!KICK) return 0.5; const ph = ((performance.now() - KICK.t0) / 1000 * KICK.v) % 2; return ph < 1 ? ph : 2 - ph; }
-function kickNow() { if (!KICK) return; const m = kickPos(), good = Math.abs(m - 0.5) <= KICK.p / 2, d = KICK.done; KICK = null; sheet(''); d(good, m); }
+const kickPower = () => { if (!KK || !KK.hold) return KK ? KK.p : 0; const t = (performance.now() - KK.h0) / 1000 / 0.85, ph = t % 2; return ph < 1 ? ph : 2 - ph; };
+function kickPress(py) { if (!KK || KK.phase !== 'aim') return; KK.hold = true; KK.h0 = performance.now(); KK.sy = py; KK.aim0 = KK.aim; }
+function kickDrag(py) { if (!KK || !KK.hold) return; KK.aim = clamp(KK.aim0 + (py - KK.sy) / (S * SQ) * 0.5, -9, 9); }
+function kickRelease() {
+  if (!KK || !KK.hold || KK.phase !== 'aim') return;
+  const pw = kickPower(); KK.hold = false; KK.p = pw; const g = () => (Math.random() + Math.random() + Math.random() - 1.5) * 1.15;
+  const carry = pw * KK.range * (1 + g() * 0.025), sd = (0.6 + KK.dist * 0.035) * clamp(1.4 - (KK.kac - 50) * 0.012, 0.7, 1.6) + (pw > 0.94 ? 0.9 : 0);
+  const lat = KK.aim + g() * sd, short = carry < KK.dist, wide = Math.abs(lat) > 3.08;
+  KK.res = { carry, lat, good: !short && !wide, short, wide };
+  KK.phase = 'fly'; KK.f0 = performance.now(); KK.tof = 0.9 + carry / 55; tip('');
+}
+function kickNow() { if (KK && KK.phase === 'aim') { KK.hold = true; KK.h0 = performance.now() - 850 * Math.min(1, KK.need + 0.12); kickRelease(); } }
+function kickStep(dt) {
+  if (!KK || !P || !P.kick) return;
+  const k = P.kicker, B = P.ball;
+  if (KK.phase === 'aim') return;
+  const age = (performance.now() - KK.f0) / 1000;
+  if (age < 0.3) { k.vx = (B.x - 0.6 - k.x) / 0.3; k.vy = (B.y - 0.4 - k.y) / 0.3; k.x += k.vx * dt; k.y += k.vy * dt; k.ph = (k.ph || 0) + 8 * dt; } else { k.vx *= 0.8; k.vy *= 0.8; }
+  P.def.forEach(u => { if (age < 1.2) { u.vx = (W / 2 - u.x) * 0.4; u.vy = -2.5; u.x += u.vx * dt * 0.3; u.y += u.vy * dt * 0.3; u.ph = (u.ph || 0) + 3 * dt; } });
+  if (KK.phase === 'fly') {
+    const f = clamp((age - 0.28) / KK.tof, 0, 1), r = KK.res, endY = KK.spot + Math.min(r.carry, KK.dist + 10) * 1.0;
+    if (age >= 0.28) { B.y = KK.spot + (endY - KK.spot) * f; B.x = W / 2 + r.lat * f * (KK.dist / Math.max(1, endY - KK.spot)); B.z = Math.sin(f * Math.PI) * (10 + KK.dist * 0.3) * (r.short ? 0.85 : 1); B.st = 'kicked'; }
+    camT = B.y - viewLen() * 0.55; camXT = aimCamX(W / 2);
+    if (f >= 1) {
+      KK.phase = 'over';
+      const txt = r.good ? "IT'S GOOD!" : 'NO GOOD!';
+      P.ban = { at: performance.now(), txt, good: r.good };
+      if (r.good) { const cols = [KH.pri, KH.sec, '#ffffff', '#ffd34d']; for (let i = 0; i < 60; i++) FX.push({ scr: true, x: Math.random() * PW, y: Math.random() * PH * 0.4 - 10, vx: (Math.random() - 0.5) * 20, vy: 30 + Math.random() * 40, g: 0, life: 1.3, c: cols[i % 4], z: 2, fl: Math.random() * 6 }); }
+      const d = KK.done, how = r.short ? 0.5 + Math.sign(r.lat || 1) * 0.01 : r.lat < 0 ? 0.1 : 0.9;
+      setTimeout(() => { KK = null; P.ban = null; d(r.good, how, r); }, 1500);
+    }
+  }
+}
+// the ball on the tee, the aim line and the flight, in the world
+function drawKickWorld() {
+  if (!KK || !P || !P.kick) return; const B = P.ball;
+  if (KK.phase === 'aim') {
+    const [a, b] = toScr(B.y, B.x, 0), [c, d] = toScr(110, W / 2 + KK.aim, 0);
+    px.strokeStyle = 'rgba(255,255,255,.85)'; px.lineWidth = 0.9; px.setLineDash([3, 3]); px.beginPath(); px.moveTo(a, b); px.lineTo(c, d); px.stroke(); px.setLineDash([]);
+    px.fillStyle = '#ffd34d'; px.fillRect(c - 2, d - 2, 4, 4); px.fillStyle = '#16161e'; px.fillRect(c - 1, d - 1, 2, 2);
+  }
+  const [sx, sy] = toScr(B.y, B.x, 0), [bx, by] = toScr(B.y, B.x, B.z || 0);
+  px.fillStyle = 'rgba(0,0,0,.3)'; px.fillRect(sx - 2, sy, 5, 2); drawFootball(bx, by - 2);
+}
+// the power bar along the top, red where the kick would fall short
+function drawKickBar() {
+  if (!KK || KK.phase !== 'aim' && !KK.res) return;
+  const sc = CW / (PW * RS), bw = Math.round(Math.min(PW * RS * 0.5, 420 / sc)), bh = Math.round(16 / sc), bx = Math.round(PW * RS / 2 - bw / 2), by = Math.round((SAT + 58) * RS);
+  const pw = KK.phase === 'aim' ? kickPower() : KK.p, red = Math.min(1, KK.need);
+  px.fillStyle = '#0b0c12'; px.fillRect(bx - 4, by - 4, bw + 8, bh + 8); px.fillStyle = '#1c1f2e'; px.fillRect(bx, by, bw, bh);
+  px.fillStyle = 'rgba(232,48,48,.35)'; px.fillRect(bx, by, Math.round(bw * red), bh); px.fillStyle = 'rgba(70,220,90,.3)'; px.fillRect(bx + Math.round(bw * red), by, bw - Math.round(bw * red), bh);
+  px.fillStyle = pw < red ? '#ff2b2b' : '#5ef06a'; px.fillRect(bx, by, Math.round(bw * pw), bh);
+  px.fillStyle = '#ffffff'; px.fillRect(bx + Math.round(bw * red) - 1, by - 3, 3, bh + 6);
+  PKs.pixText(px, KK.title.replace(/·.*$/, '').trim().toUpperCase(), PW * RS / 2, by + bh + Math.round(14 / sc), Math.max(1, Math.round(10 / (7 * sc))) * 7, '#ffffff', 0, '#0b0c12');
+}
+function drawKickBanner() {
+  if (!P || !P.ban) return; const age = (performance.now() - P.ban.at) / 1000; if (age > 1.5) return;
+  const sc = CW / (PW * RS), ts = Math.max(2, Math.round(40 / (7 * sc))) * 7, bw = PW * RS, bh = Math.round(ts * 1.9), by = Math.round(PH * RS * 0.62 - bh / 2);
+  const slide = age < 0.2 ? (1 - age / 0.2) * bw : 0, good = P.ban.good;
+  px.fillStyle = 'rgba(6,8,16,.75)'; px.fillRect(Math.round(slide), by, bw, bh);
+  PKs.pixText(px, P.ban.txt, Math.round(bw / 2 + slide), by + bh / 2, ts, good ? (Math.floor(age * 8) % 2 ? '#ffd34d' : '#5ef06a') : '#ff3b3b', 0, '#0b0c12');
+}
 function kickPAT() {
   const p = clamp((GS.year >= 2015 ? 0.94 : 0.985) + (rt(me.K, 'kac') - 70) * 0.002, 0.8, 0.995);
   kickMeter(`Extra point · ${esc(me.K.name)}`, p, GS.year >= 2015 ? 33 : 20, good => {
@@ -831,7 +905,7 @@ document.addEventListener('click', e => {
   else if (k === 'simdrive') { sheet(''); $('#pcard').style.display = 'none'; if (P) P.pick = false; simDrive(); }
   else if (k === 'gofor') { sheet(''); showPlays(); }
   else if (k === 'punt') { sheet(''); const gross = Math.round(rnd(38, 52)), land = GS.y + gross; let txt, spot; if (land >= 100) { spot = 20; txt = `Punt ${gross} yards into the end zone: touchback`; } else { const fc = land > 88 || Math.random() < 0.3, ret = fc ? 0 : Math.max(0, Math.round(rnd(-2, 14) + (op.avg('DB') - 65) * 0.1)); spot = clamp(100 - land + ret, 1, 60); txt = fc ? `Punt ${gross} yards, fair catch at the ${Math.round(100 - land)}` : `Punt ${gross} yards, returned ${ret}`; } flash(txt, 1500); setTimeout(() => endDrive('punt', spot), 1500); }
-  else if (k === 'fg') { sheet(''); kickMeter(`${Math.round(GS.fgDist)}-yard field goal · ${esc(me.K.name)}`, GS.pFG, GS.fgDist, (good, m) => { flash(good ? `${Math.round(GS.fgDist)}-yard field goal is good!` : `Field goal no good: wide ${m < 0.5 ? 'left' : 'right'}`, 1400); if (good) GS.my += 3; scoreBar(); setTimeout(() => endDrive(good ? 'score' : 'downs', good ? 0 : GS.y), 1400); }); }
+  else if (k === 'fg') { sheet(''); kickMeter(`${Math.round(GS.fgDist)}-yard field goal · ${esc(me.K.name)}`, GS.pFG, GS.fgDist, (good, m, r) => { flash(good ? `${Math.round(GS.fgDist)}-yard field goal is good!` : r && r.short ? 'Field goal no good: short' : `Field goal no good: wide ${m < 0.5 ? 'left' : 'right'}`, 900); if (good) GS.my += 3; scoreBar(); setTimeout(() => endDrive(good ? 'score' : 'downs', good ? 0 : GS.y), 900); }); }
   else if (k === 'pat') { sheet(''); kickPAT(); }
   else if (k === 'two') { sheet(''); GS.goal2 = true; GS.y = 98; GS.down = 1; GS.togo = 2; scoreBar(); showPlays(); }
   else if (k === 'next') { sheet(''); callPlay(); }
@@ -1266,7 +1340,7 @@ function draw() {
   drawBoard();
   // name tags and other text at full resolution so they stay crisp
   px.save(); px.setTransform(1, 0, 0, 1, 0, 0);
-  drawTD();
+  drawTD(); drawKickBar(); drawKickBanner();
   px.restore();
   cx.setTransform(1, 0, 0, 1, 0, 0); cx.imageSmoothingEnabled = false;
   cx.drawImage(pc, 0, 0, PW * RS, PH * RS, 0, 0, cv.width, cv.height);
@@ -1352,6 +1426,7 @@ function drawPlay() {
     if (u.catchAt && now - u.catchAt < 330) o.pose = 'grab';
     if (P.play.kr && u === P.qb && P.call) { if (u.kneel && P.done) { o.pose = 'stance'; o.ring = null; } else if (!P.done && P.call === 'fair') o.pose = 'up'; }
     if (u === P.carrier && u.jk > 0 && !P.done) { (u.gst = u.gst || []).push([u.y, u.x]); if (u.gst.length > 7) u.gst.shift(); o.pose = 'juke'; o.ghosts = [u.gst[0], u.gst[3]].filter(Boolean); } else if (u.gst) u.gst = null;
+    if (P.kick) { if (u === P.holder) o.pose = 'stance'; else if (u === P.kicker) o.pose = Math.hypot(u.vx, u.vy) > 1 ? null : 'run'; }
     if (P.td) { const age = (now - P.td.at) / 1000;
       if (u === P.td.who) { o.pose = 'upball'; o.fall = 0; o.lift = age > 0.15 ? Math.abs(Math.sin((age - 0.15) * 7)) * 6 : 0; }
       else if (u.side === 'o' && age > 0.3 && Math.hypot(u.x - P.td.who.x, u.y - P.td.who.y) < 4.5) { o.pose = 'up'; o.lift = Math.abs(Math.sin(age * 7 + u.x)) * 3; } }
@@ -1365,6 +1440,7 @@ function drawPlay() {
     const [sx, sy] = toScr(B.y, B.x, 0), hgt = Math.round(14 + B.z * 6);
     px.fillStyle = 'rgba(0,0,0,.3)'; px.fillRect(sx - 3, sy, 7, 2); drawFootball(sx, sy - hgt);
   }
+  drawKickWorld();
   drawFX();
 }
 function drawRoutes() {
@@ -1384,13 +1460,13 @@ let last = 0;
 function frame(t) {
   const dt = Math.min(0.05, (t - last) / 1000 || 0); last = t;
   if (P && !P.done) { const g = dt * PACE; step(g / 2); step(g / 2); }
-  stepFX(dt);
+  stepFX(dt); kickStep(dt);
   if (P && P.td && P.done) { const w = P.td.who; P.off.forEach(u => { if (u === w) return; const d = Math.hypot(w.x - u.x, w.y - u.y); if (d < 16 && d > 1.8) { u.vx = (w.x - u.x) / d * 7; u.vy = (w.y - u.y) / d * 7; } }); }
   if (P && P.result && !P.preview) { P.post = (P.post || 0) + dt; P.off.concat(P.def).forEach(u => { u.vx *= 0.9; u.vy *= 0.9; u.x += u.vx * dt; u.y += u.vy * dt; u.ph = (u.ph || 0) + Math.hypot(u.vx, u.vy) * dt * 1.25; }); }
+  else if (P && P.kick) { }
   else if (P && P.done && !P.result) { const sh = sheetH(); camT = P.los - viewLen() * 0.38; camXT = aimCamX(W / 2, sh); }
   camY += (camT - camY) * Math.min(1, dt * 5); camX += (camXT - camX) * Math.min(1, dt * 5);
   if (window.__camLock) { camY = camT = window.__camLock[0]; camX = camXT = window.__camLock[1]; }
-  if (KICK) { const m = document.getElementById('kmark'); if (m) m.style.left = `calc(${kickPos() * 100}% - 7px)`; }
   draw(); requestAnimationFrame(frame);
 }
 
@@ -1426,7 +1502,7 @@ function setup() {
   $('#tA').innerHTML = esc(L.teams[myId].abbr); $('#tB').innerHTML = esc(L.teams[opId].abbr); $('#mid').innerHTML = `<b>Play the Game</b>${L.year} · preview`;
   sheet(`<div class="setup"><div><h3>Play the Game · preview</h3>
     <p>${demo ? 'No saved league on this device, so this uses a sample league with made-up players.' : `Using your saved ${L.year} league: real players and ratings.`} You play offense; their drives are simulated against your defense.</p>
-    <p class="note"><b>Passing:</b> after the snap, touch anywhere and pull back to the left like a slingshot, then let go. The ball flies the opposite way; pull farther to throw farther, pull up or down to aim across the field. <b>Running:</b> your runner always runs straight ahead at his own speed (faster players run faster). Slide your finger up or down to move him across the field, tap to juke, swipe right to dive forward and go down, swipe left to slide feet first. On a pass play, <b>QB run</b> takes off with your quarterback. Every player plays to his position ratings: a quarterback's arm strength sets how far and fast he throws and his accuracy how close it lands, receivers' speed and route running get them open and their hands catch it, backs' elusiveness makes jukes work, linemen's blocking and pass rush decide the line, and tacklers bring runners down. <b>Kicks:</b> you return kickoffs and punts (fair catch or take a knee while the ball is in the air); for field goals and extra points, tap Kick when the ball is between the uprights.</p></div><div>
+    <p class="note"><b>Calling plays:</b> each down you get three plays that fit your coach's scheme, with the routes drawn on the field. Tap Change play to see the next one, then tap the field to snap. <b>Passing:</b> after the snap, touch anywhere and pull back to the left like a slingshot, then let go. The ball flies the opposite way; pull farther to throw farther, pull up or down to aim across the field. <b>Running:</b> your runner always runs straight ahead at his own speed (faster players run faster). Slide your finger up or down to move him across the field, tap to juke, swipe right to dive forward and go down, swipe left to slide feet first. On a pass play, <b>QB run</b> takes off with your quarterback. Every player plays to his position ratings: a quarterback's arm strength sets how far and fast he throws and his accuracy how close it lands, receivers' speed and route running get them open and their hands catch it, backs' elusiveness makes jukes work, linemen's blocking and pass rush decide the line, and tacklers bring runners down. <b>Kicks:</b> you return kickoffs and punts (fair catch or take a knee while the ball is in the air); for field goals and extra points, hold your finger down to fill the power bar, slide up or down to aim, and let go to kick. Red on the bar is too short to reach the posts; your kicker's leg sets his range and his accuracy how straight it flies.</p></div><div>
     <label class="f">Your team</label><select id="selA">${opts(myId)}</select>
     <label class="f">Opponent</label><select id="selB">${opts(opId)}</select>
     <label class="f">Length</label><select id="selN"><option value="6">Short (6 drives each)</option><option value="8" selected>Standard (8 drives each)</option><option value="12">Long (12 drives each)</option></select>
@@ -1449,7 +1525,7 @@ window.__drive = { get P() { return P; }, get L() { return L; }, call: () => cal
     startReturn(kind, 15); let n = 0; while (!P.done && n++ < 2000) { const a = ai ? ai(P) : null; AUTO = a && a.go || null; step(1 / 60); }
     window.setTimeout = keep; AUTO = null; const r = P.result || {}; return { kind: r.kind, y: r.y, land: P.land, t: P.t, gy: GS.y };
   },
-  kick: { meter: () => KICK, now: () => kickNow() },
+  kick: { meter: () => KK, now: () => kickNow() },
   test(playId, ai, y) {
     GS.y = y || 25; GS.down = 1; GS.togo = 10; GS.goal2 = false;
     const keep = window.setTimeout; window.setTimeout = () => 0;
