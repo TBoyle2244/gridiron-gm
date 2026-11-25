@@ -6513,38 +6513,34 @@ function spriteFor(u, k, pose, frame) {
   shape(() => { g.moveTo(shX - bw / 2 - 2, shY + 2); g.quadraticCurveTo(shX - bw / 2 - 2, shY - 3, shX - bw / 2 + 4, shY - 3); g.lineTo(shX + bw / 2 - 4, shY - 3); g.quadraticCurveTo(shX + bw / 2 + 2, shY - 3, shX + bw / 2 + 2, shY + 2); g.lineTo(hipX + bw / 2 - 1, hipY - 3); g.quadraticCurveTo(hipX, hipY, hipX - bw / 2 + 1, hipY - 3); g.closePath(); }, jer);
   g.fillStyle = trim; g.fillRect(shX - bw / 2 - 1, shY + 2, 4, 2); g.fillRect(shX + bw / 2 - 3, shY + 2, 4, 2);
   if (num) { g.font = `900 ${num.length > 1 ? 9 : 10}px Arial Black, Helvetica, Arial, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineWidth = 2.4; g.strokeStyle = D; const nx = (shX + hipX) / 2 - 3, ny = (shY + hipY) / 2 + 1; g.strokeText(num, nx, ny); g.fillStyle = k.n === jer ? '#ffffff' : k.n; g.fillText(num, nx, ny); }
-  // the head: hair behind, face, hair on top, facial hair, facemask
-  const back = (fn) => { g.save(); fn(); g.restore(); };
-  const hs = LK.hair;
-  if (hs === 1) shape(() => g.arc(hx - 2, hy - 3, hr + 5, 0, Math.PI * 2), hc);                                  // afro
-  if (hs === 2 || hs === 8) shape(() => { g.moveTo(hx - hr + 1, hy - 4); g.quadraticCurveTo(hx - hr - 4, hy + (hs === 8 ? 16 : 10), hx - 6, hy + (hs === 8 ? 17 : 12)); g.lineTo(hx + 2, hy); g.closePath(); }, hc);
-  if (hs === 10) shape(() => g.arc(hx - 6, hy - hr + 1, 5, 0, Math.PI * 2), hc);                                 // bun
-  shape(() => g.arc(hx, hy, hr, 0, Math.PI * 2), sk);
-  g.fillStyle = sh(sk, -0.12); g.beginPath(); g.ellipse(hx - 6.5, hy + 1.5, 2.2, 3, 0, 0, Math.PI * 2); g.fill();   // ear
-  g.save(); g.beginPath(); g.arc(hx, hy, hr, 0, Math.PI * 2); g.clip(); g.fillStyle = hc;
-  if (hs === 0 || hs === 6 || hs === 9 || hs === 11 || hs === 1 || hs === 2 || hs === 8) { g.beginPath(); g.ellipse(hx - 1, hy - hr + 3, hr + 2, 9, -0.12, 0, Math.PI * 2); g.fill(); }
-  if (hs === 4) { g.globalAlpha = 0.55; g.beginPath(); g.ellipse(hx - 1, hy - hr + 3, hr + 2, 8, -0.1, 0, Math.PI * 2); g.fill(); g.globalAlpha = 1; }
-  if (hs === 5) g.fillRect(hx - hr, hy - hr, hr * 2, 8);
-  if (hs === 6) { g.strokeStyle = sh(hc, 0.3); g.lineWidth = 1; for (const o of [-6, -1, 4]) { g.beginPath(); g.moveTo(hx + o - 3, hy - hr); g.lineTo(hx + o + 3, hy - hr + 9); g.stroke(); } }
-  if (hs === 3) { g.fillStyle = 'rgba(255,255,255,.35)'; g.beginPath(); g.ellipse(hx - 3, hy - 9, 5, 2.5, -0.3, 0, Math.PI * 2); g.fill(); }
-  if (LK.fac === 1) { g.fillStyle = hc; g.beginPath(); g.ellipse(hx + 3, hy + hr - 1, hr - 2, 7, 0, 0, Math.PI * 2); g.fill(); }
+  // the head: a big helmet in the team color with the face showing through the front, facemask over it
+  const hs = LK.hair, hel = k.h, stripe = trim === hel ? (k.j === hel ? '#ffffff' : k.j) : trim;
+  if (hs === 1 || hs === 9) shape(() => g.ellipse(hx - hr + 2, hy + hr - 4, 7, 6, 0, 0, Math.PI * 2), hc);                 // afro / curls out the back
+  if (hs === 2 || hs === 8 || hs === 6) shape(() => { g.moveTo(hx - hr + 3, hy + 4); g.quadraticCurveTo(hx - hr - 3, hy + (hs === 8 ? 18 : 13), hx - hr + 6, hy + (hs === 8 ? 19 : 14)); g.lineTo(hx - 2, hy + 9); g.closePath(); }, hc);   // long hair, braids
+  if (hs === 10) shape(() => g.arc(hx - hr + 1, hy + 6, 4, 0, Math.PI * 2), hc);                                            // bun
+  shape(() => g.arc(hx, hy, hr + 1.5, 0, Math.PI * 2), hel);                                                                // shell
+  g.save(); g.beginPath(); g.arc(hx, hy, hr + 0.5, 0, Math.PI * 2); g.clip();
+  g.lineCap = 'butt'; g.strokeStyle = D; g.lineWidth = 5; g.beginPath(); g.arc(hx, hy, hr - 3.5, Math.PI * 1.24, Math.PI * 1.74); g.stroke(); g.strokeStyle = stripe; g.lineWidth = 3; g.beginPath(); g.arc(hx, hy, hr - 3.5, Math.PI * 1.24, Math.PI * 1.74); g.stroke();   // stripe front to back
+  g.strokeStyle = 'rgba(0,0,0,.18)'; g.lineWidth = 4; g.beginPath(); g.arc(hx, hy, hr + 1, Math.PI * 0.55, Math.PI * 1.0); g.stroke();   // shading underneath
   g.restore();
-  g.lineWidth = OL; g.strokeStyle = D; g.beginPath(); g.arc(hx, hy, hr, 0, Math.PI * 2); g.stroke();
-  if (hs === 5) shape(() => { g.moveTo(hx - hr + 2, hy - hr + 6); g.lineTo(hx - hr + 3, hy - hr - 2); g.quadraticCurveTo(hx, hy - hr - 4, hx + hr - 3, hy - hr - 2); g.lineTo(hx + hr - 2, hy - hr + 6); g.closePath(); }, hc);   // flat top
-  if (hs === 7) shape(() => { g.moveTo(hx - 8, hy - hr + 3); g.quadraticCurveTo(hx - 2, hy - hr - 9, hx + 6, hy - hr + 2); g.closePath(); }, hc);   // mohawk
-  if (hs === 9) for (const [ox, oy] of [[-8, -10], [-3, -13], [3, -13], [8, -9]]) shape(() => g.arc(hx + ox, hy + oy, 4, 0, Math.PI * 2), hc);
-  if (hs === 11) shape(() => { g.moveTo(hx - 10, hy - 9); for (let i = 0; i < 5; i++) { g.lineTo(hx - 8 + i * 4.5, hy - hr - 5 + (i % 2) * 2); g.lineTo(hx - 6 + i * 4.5, hy - 10); } g.closePath(); }, hc);
-  if (LK.acc === 1) { g.fillStyle = trim; g.fillRect(hx - hr + 1, hy - 7, hr * 2 - 2, 3); g.lineWidth = 1; g.strokeStyle = D; g.strokeRect(hx - hr + 1, hy - 7, hr * 2 - 2, 3); }
-  // eyes (three-quarter view), brows, mouth
-  for (const [ex, er] of [[hx + 2.5, 3.2], [hx + 9.5, 2.8]]) { g.fillStyle = '#fff'; g.beginPath(); g.ellipse(ex, hy - 1, er * 0.85, er * 1.1, 0, 0, Math.PI * 2); g.fill(); g.lineWidth = 1.2; g.strokeStyle = D; g.stroke(); g.fillStyle = D; g.beginPath(); g.arc(ex + 1, hy - 0.5, er * 0.5, 0, Math.PI * 2); g.fill(); }
-  if (LK.acc === 2) { g.fillStyle = 'rgba(20,20,30,.75)'; g.fillRect(hx - 1, hy - 5, hr + 2, 7); }
-  if (LK.acc === 3) { g.fillStyle = '#111'; g.fillRect(hx + 1, hy + 3, 3, 1.5); g.fillRect(hx + 8, hy + 3, 3, 1.5); }
-  g.strokeStyle = sh(hc === '#1b1209' ? '#2a1a0c' : hc, -0.2); g.lineWidth = 1.6; g.beginPath(); g.moveTo(hx + 0.5, hy - 5.5); g.lineTo(hx + 5, hy - 6); g.moveTo(hx + 8, hy - 6); g.lineTo(hx + 11.5, hy - 5); g.stroke();
-  if (LK.fac === 2 || LK.fac === 3) { g.fillStyle = hc; g.fillRect(hx + 3, hy + 5, 8, 2); if (LK.fac === 3) g.fillRect(hx + 6, hy + 8, 3, 4); }
-  g.strokeStyle = D; g.lineWidth = 1.4; g.beginPath(); g.arc(hx + 7, hy + 6, 3, 0.2, Math.PI - 0.2); g.stroke();
-  // facemask: a cage over the lower face
-  g.strokeStyle = D; g.lineWidth = 3.4; g.lineCap = 'round'; const fm = () => { g.beginPath(); g.moveTo(hx + 1, hy + 2); g.quadraticCurveTo(hx + 10, hy + 1.5, hx + hr + 2, hy + 4); g.moveTo(hx + 2, hy + 9); g.quadraticCurveTo(hx + 10, hy + 9.5, hx + hr, hy + 8); g.moveTo(hx + 6, hy + 1.5); g.lineTo(hx + 6, hy + 10); g.moveTo(hx + hr - 1, hy + 2.5); g.lineTo(hx + hr - 2, hy + 9); g.stroke(); };
-  fm(); g.strokeStyle = '#c9ced6'; g.lineWidth = 1.6; fm();
+  // the face opening (front, lower half)
+  shape(() => { g.moveTo(hx + 1, hy - 5); g.quadraticCurveTo(hx + 9, hy - 7, hx + hr + 1, hy - 3); g.lineTo(hx + hr + 1, hy + 9); g.quadraticCurveTo(hx + 8, hy + hr + 2, hx + 1, hy + 10); g.quadraticCurveTo(hx - 2, hy + 3, hx + 1, hy - 5); g.closePath(); }, sk);
+  if (LK.fac === 1) { g.save(); g.beginPath(); g.moveTo(hx + 1, hy + 4); g.lineTo(hx + hr + 1, hy + 4); g.lineTo(hx + hr + 1, hy + hr); g.lineTo(hx, hy + hr); g.closePath(); g.clip(); g.fillStyle = hc; g.beginPath(); g.ellipse(hx + 8, hy + 10, 8, 6, 0, 0, Math.PI * 2); g.fill(); g.restore(); }
+  // eyes, brows, mouth
+  for (const [ex, er] of [[hx + 5, 2.9], [hx + 11, 2.5]]) { g.fillStyle = '#fff'; g.beginPath(); g.ellipse(ex, hy - 0.5, er * 0.85, er * 1.1, 0, 0, Math.PI * 2); g.fill(); g.lineWidth = 1.1; g.strokeStyle = D; g.stroke(); g.fillStyle = D; g.beginPath(); g.arc(ex + 0.9, hy, er * 0.5, 0, Math.PI * 2); g.fill(); }
+  if (LK.acc === 2) { g.fillStyle = 'rgba(20,20,30,.78)'; g.beginPath(); g.moveTo(hx + 2, hy - 4.5); g.lineTo(hx + hr + 1, hy - 3); g.lineTo(hx + hr + 1, hy + 2.5); g.lineTo(hx + 2, hy + 2.5); g.closePath(); g.fill(); }
+  if (LK.acc === 3) { g.fillStyle = '#111'; g.fillRect(hx + 3.5, hy + 3, 3, 1.4); g.fillRect(hx + 9.5, hy + 3, 3, 1.4); }
+  g.strokeStyle = D; g.lineWidth = 1.5; g.beginPath(); g.moveTo(hx + 3, hy - 4.3); g.lineTo(hx + 7, hy - 4.8); g.moveTo(hx + 9.5, hy - 4.8); g.lineTo(hx + 12.5, hy - 4); g.stroke();
+  if (LK.fac === 2 || LK.fac === 3) { g.fillStyle = hc; g.fillRect(hx + 5, hy + 5, 7, 1.8); if (LK.fac === 3) g.fillRect(hx + 7.5, hy + 8, 2.5, 3); }
+  g.strokeStyle = D; g.lineWidth = 1.3; g.beginPath(); g.arc(hx + 8.5, hy + 5.5, 2.6, 0.2, Math.PI - 0.2); g.stroke();
+  // ear hole and a shine on the shell
+  g.fillStyle = sh(hel, -0.45); g.beginPath(); g.arc(hx - 3, hy + 3, 2.4, 0, Math.PI * 2); g.fill(); g.strokeStyle = sh(hel, 0.35); g.lineWidth = 1; g.stroke();
+  g.strokeStyle = 'rgba(255,255,255,.55)'; g.lineWidth = 2.2; g.lineCap = 'round'; g.beginPath(); g.arc(hx - 1, hy - 1, hr - 4, Math.PI * 1.15, Math.PI * 1.4); g.stroke();
+  g.lineWidth = OL; g.strokeStyle = D; g.beginPath(); g.arc(hx, hy, hr + 1.5, Math.PI * 1.55, Math.PI * 2.08, true); g.stroke();
+  // facemask: a cage across the opening, bolted to the shell
+  g.lineCap = 'round'; const fm = () => { g.beginPath(); g.moveTo(hx + 1, hy + 2); g.quadraticCurveTo(hx + 10, hy + 1.5, hx + hr + 3, hy + 3.5); g.moveTo(hx + 1.5, hy + 8.5); g.quadraticCurveTo(hx + 10, hy + 9.5, hx + hr + 2, hy + 8); g.moveTo(hx + 7, hy + 1.6); g.lineTo(hx + 7, hy + 10); g.moveTo(hx + hr + 2, hy + 3); g.lineTo(hx + hr + 1, hy + 8.5); g.stroke(); };
+  g.strokeStyle = D; g.lineWidth = 3.4; fm(); g.strokeStyle = '#c9ced6'; g.lineWidth = 1.6; fm();
+  shape(() => g.arc(hx + 1, hy + 2, 1.8, 0, Math.PI * 2), sh(hel, 0.2)); shape(() => g.arc(hx + 1.5, hy + 8.5, 1.8, 0, Math.PI * 2), sh(hel, 0.2));
   // near arm last, then the ball
   arm(...nearArm, false);
   if (ballAt) ball(...ballAt);
