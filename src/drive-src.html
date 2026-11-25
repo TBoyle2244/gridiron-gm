@@ -380,7 +380,7 @@ const armRange = () => clamp(28 + (rt(me.QB, 'arm') - 50) * 0.85, 26, 66);
 const armSpeed = () => 19 + (rt(me.QB, 'arm') - 50) * 0.18;
 function aimFrom(t) {
   // pull left to throw right (downfield); pull up to throw toward the near sideline, down for the far one
-  const q = P.qb, down = (t.sx - t.px) / S, across = (t.sy - t.py) / (S * SQ);
+  const q = P.qb, down = (t.sx - t.px) / (S * 6 / YD), across = (t.sy - t.py) / (S * SQ);
   const k = 2.0, maxd = armRange();
   let ax = across * k, ay = down * k; const d = Math.hypot(ax, ay); if (d > maxd) { ax *= maxd / d; ay *= maxd / d; }
   return { x: clamp(q.x + ax, -1, W + 1), y: q.y + ay };
@@ -966,7 +966,7 @@ let KH = null, KA = null;
    - the field, stands, aprons and photographers are prerendered once into a "world" canvas and blitted with the camera;
    - 3/4 top-down: depth across the field squashed to 0.66.
    Units: YD = pixels per yard (1x), so 2.75 px per foot. World yard y (downfield) is screen x; across the field (x) is screen y. */
-const RS = 3, SK = 2, YD = 6, DEP = 0.66, FT = YD / 3;
+const RS = 3, SK = 2, YD = 12, DEP = 0.33, FT = 2;   // Retro proportions: yards long downfield, the width squeezed to fit
 const MARGIN = 26;                 // yards of stadium past each goal line (end zone + stands): the world runs from y = -26 to 126
 const APR = 6, CROWD_H = 72;       // sideline apron (yards) and stand depth (px) on each side
 const TOPF = CROWD_H + APR * YD * DEP;                       // world px of the far sideline
@@ -1464,7 +1464,7 @@ function frame(t) {
   if (P && P.td && P.done) { const w = P.td.who; P.off.forEach(u => { if (u === w) return; const d = Math.hypot(w.x - u.x, w.y - u.y); if (d < 16 && d > 1.8) { u.vx = (w.x - u.x) / d * 7; u.vy = (w.y - u.y) / d * 7; } }); }
   if (P && P.result && !P.preview) { P.post = (P.post || 0) + dt; P.off.concat(P.def).forEach(u => { u.vx *= 0.9; u.vy *= 0.9; u.x += u.vx * dt; u.y += u.vy * dt; u.ph = (u.ph || 0) + Math.hypot(u.vx, u.vy) * dt * 1.25; }); }
   else if (P && P.kick) { }
-  else if (P && P.done && !P.result) { const sh = sheetH(); camT = P.los - viewLen() * 0.38; camXT = aimCamX(W / 2, sh); }
+  else if (P && P.done && !P.result) { const sh = sheetH(); camT = P.los - viewLen() * 0.3; camXT = aimCamX(W / 2, sh); }
   camY += (camT - camY) * Math.min(1, dt * 5); camX += (camXT - camX) * Math.min(1, dt * 5);
   if (window.__camLock) { camY = camT = window.__camLock[0]; camX = camXT = window.__camLock[1]; }
   draw(); requestAnimationFrame(frame);
