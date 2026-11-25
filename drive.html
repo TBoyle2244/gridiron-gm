@@ -5571,17 +5571,17 @@ function step(dt) {
   if (P.carrier) {
     const c = P.carrier; c.jcd = Math.max(0, (c.jcd || 0) - dt);
     let tx = c.x, ty = c.y + 12;
-    if (AUTO) { tx = AUTO[0]; ty = AUTO[1]; }
-    else if (touch && touch.lane0 != null) {
-      c.rpath = null;
-      // he always runs straight ahead at full speed; sliding your finger up or down moves him across the field with it
-      c.lane = clamp(touch.lane0 + (touch.py - touch.sy) / (S * SQ) * 1.3, 0.5, W - 0.5);
-      tx = c.lane; ty = c.y + 3;
-    }
-    else if (c.lane != null) { tx = c.lane; ty = c.y + 3; }
-    else if (c.rpath && c.rpi < c.rpath.length) { [tx, ty] = c.rpath[c.rpi]; if (Math.hypot(tx - c.x, ty - c.y) < 1) c.rpi++; }
+    // you steer by sliding: he keeps running downfield and drifts toward the lane under your finger. Just touching
+    // (or a tiny slide) keeps him on his run path until he's through the line.
+    const onPath = c.rpath && c.rpi < c.rpath.length && c.y < P.los + 1;
+    let want = null;
+    if (AUTO) want = AUTO[0];
+    else if (touch && touch.lane0 != null) want = clamp(touch.lane0 + (touch.py - touch.sy) / (S * SQ) * 1.3, 0.5, W - 0.5);
+    if (want != null && !(onPath && Math.abs(want - (touch && touch.lane0 != null ? touch.lane0 : c.x)) < 1.5)) { c.rpath = null; c.lane = want; }
+    if (c.rpath && c.rpi < c.rpath.length) { [tx, ty] = c.rpath[c.rpi]; if (Math.hypot(tx - c.x, ty - c.y) < 1) c.rpi++; }
+    else if (c.lane != null) { tx = c.lane; ty = c.y + 6; }
     else if (P.play.run && P.t < 1.4 && P.dir) { tx = c.x + P.dir * 8; ty = c.y + 3; }
-    let sp = c.sp * 0.93;
+    let sp = c.sp;
     if (c.jk > 0) { c.jk -= dt; tx = c.x + c.jx * 6; ty = c.y + 2; sp *= 1.2; }
     if (c.jk > 0) c.lane = null;
     steer(c, tx, ty, sp, dt, c.jk > 0 ? 34 : 20);
@@ -6582,15 +6582,42 @@ function drawBoard() {
 }
 
 /* ---------- referee: the umpire behind the defensive line ---------- */
+// the referee, in the same big-head cartoon style as the players (drawn once, then reused)
+let REF_IMG = null;
+function refSprite() {
+  if (REF_IMG) return REF_IMG;
+  const SC = 1.25, c = document.createElement('canvas'); c.width = Math.round(60 * SC); c.height = Math.round(80 * SC);
+  const g = c.getContext('2d'), D = '#16161e', OL = 2.2; g.scale(SC, SC);
+  const cap = (x1, y1, x2, y2, w, col) => { g.lineCap = 'round'; g.strokeStyle = D; g.lineWidth = w + OL * 2; g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke(); g.strokeStyle = col; g.lineWidth = w; g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke(); };
+  const shape = (fn, fill) => { g.beginPath(); fn(); g.fillStyle = fill; g.fill(); g.lineWidth = OL; g.strokeStyle = D; g.lineJoin = 'round'; g.stroke(); };
+  const sk = '#e0ac85', foot = 74, hipX = 30, hipY = foot - 12, shY = hipY - 15, hx = 31, hy = shY - 13, hr = 14.5;
+  // legs in black slacks, black shoes
+  cap(hipX - 3, hipY, hipX - 4, foot - 2, 6, '#22222a'); cap(hipX + 3, hipY, hipX + 4, foot - 2, 6, '#2c2c36');
+  shape(() => g.ellipse(hipX - 3, foot, 4.6, 2.6, 0, 0, Math.PI * 2), '#111'); shape(() => g.ellipse(hipX + 6, foot, 4.6, 2.6, 0, 0, Math.PI * 2), '#111');
+  // arms, then the striped shirt
+  cap(hipX - 10, shY + 3, hipX - 12, shY + 13, 5.5, '#f4f4f4'); cap(hipX - 12, shY + 13, hipX - 11, shY + 19, 4.6, sk);
+  shape(() => { g.moveTo(hipX - 11, shY + 2); g.quadraticCurveTo(hipX - 11, shY - 3, hipX - 5, shY - 3); g.lineTo(hipX + 5, shY - 3); g.quadraticCurveTo(hipX + 11, shY - 3, hipX + 11, shY + 2); g.lineTo(hipX + 9, hipY); g.lineTo(hipX - 9, hipY); g.closePath(); }, '#f4f4f4');
+  g.save(); g.beginPath(); g.moveTo(hipX - 11, shY + 2); g.lineTo(hipX - 5, shY - 3); g.lineTo(hipX + 5, shY - 3); g.lineTo(hipX + 11, shY + 2); g.lineTo(hipX + 9, hipY); g.lineTo(hipX - 9, hipY); g.closePath(); g.clip();
+  g.fillStyle = '#16161e'; for (let x = hipX - 12; x < hipX + 12; x += 6) g.fillRect(x, shY - 4, 3, hipY - shY + 6); g.restore();
+  g.lineWidth = OL; g.strokeStyle = D; g.beginPath(); g.moveTo(hipX - 11, shY + 2); g.quadraticCurveTo(hipX - 11, shY - 3, hipX - 5, shY - 3); g.lineTo(hipX + 5, shY - 3); g.quadraticCurveTo(hipX + 11, shY - 3, hipX + 11, shY + 2); g.lineTo(hipX + 9, hipY); g.lineTo(hipX - 9, hipY); g.closePath(); g.stroke();
+  g.fillStyle = '#16161e'; g.fillRect(hipX - 9, hipY - 3, 18, 3);
+  cap(hipX + 10, shY + 3, hipX + 12, shY + 13, 5.5, '#f4f4f4'); cap(hipX + 12, shY + 13, hipX + 11, shY + 19, 4.6, sk);
+  // the head: white cap, face, whistle
+  shape(() => g.arc(hx, hy, hr, 0, Math.PI * 2), sk);
+  shape(() => { g.moveTo(hx - hr - 0.5, hy - 1); g.arc(hx, hy - 1, hr + 0.5, Math.PI, Math.PI * 2); g.closePath(); }, '#f4f4f4');
+  shape(() => { g.moveTo(hx + 4, hy - 2); g.quadraticCurveTo(hx + hr + 6, hy - 3, hx + hr + 8, hy + 1); g.lineTo(hx + 4, hy + 0.5); g.closePath(); }, '#e8e8e8');
+  g.strokeStyle = '#16161e'; g.lineWidth = 1.2; g.beginPath(); g.moveTo(hx - 3, hy - hr + 2); g.lineTo(hx - 3, hy - 2); g.moveTo(hx + 3, hy - hr + 2); g.lineTo(hx + 3, hy - 2); g.stroke();
+  for (const [ex, er] of [[hx + 3, 2.9], [hx + 9.5, 2.5]]) { g.fillStyle = '#fff'; g.beginPath(); g.ellipse(ex, hy + 3, er * 0.85, er * 1.1, 0, 0, Math.PI * 2); g.fill(); g.lineWidth = 1.1; g.strokeStyle = D; g.stroke(); g.fillStyle = D; g.beginPath(); g.arc(ex + 0.9, hy + 3.4, er * 0.5, 0, Math.PI * 2); g.fill(); }
+  g.fillStyle = sh(sk, -0.12); g.beginPath(); g.ellipse(hx - 6.5, hy + 3, 2.2, 3, 0, 0, Math.PI * 2); g.fill();
+  shape(() => g.ellipse(hx + 10, hy + 9.5, 3, 2, 0, 0, Math.PI * 2), '#c9ced6');
+  g.strokeStyle = '#c9ced6'; g.lineWidth = 1; g.beginPath(); g.moveTo(hx + 8, hy + 10); g.quadraticCurveTo(hx + 2, hy + 16, hx - 1, shY - 2); g.stroke();
+  REF_IMG = { c, foot: Math.round((foot + 2) * SC) };
+  return REF_IMG;
+}
 function drawRef(y, x) {
   const [sx, sy] = toScr(y, x, 0);
   px.fillStyle = 'rgba(0,0,0,.28)'; px.beginPath(); px.ellipse(sx, sy, 4, 1.5, 0, 0, Math.PI * 2); px.fill();
-  const k = SK / RS, R = (a, b, w, h, c) => { px.fillStyle = c; px.fillRect(Math.round(sx * RS) / RS + a * k, Math.round(sy * RS) / RS + b * k, w * k, h * k); };
-  R(-4, -27, 8, 28, 'rgba(20,14,10,.85)');
-  R(-3, -2, 2, 2, '#111'); R(1, -2, 2, 2, '#111'); R(-3, -10, 2, 8, '#f4f4f4'); R(1, -10, 2, 8, '#f4f4f4');
-  R(-3, -17, 6, 7, '#f4f4f4'); R(-2, -17, 1, 7, '#111'); R(0, -17, 1, 7, '#111'); R(2, -17, 1, 7, '#111');
-  R(-2, -23, 4, 5, '#c68863'); R(-3, -25, 6, 2, '#f4f4f4'); R(-2, -26, 4, 1, '#f4f4f4');
-  R(-4, -16, 1, 5, '#c68863'); R(3, -16, 1, 5, '#c68863');
+  const r = refSprite(); px.save(); px.setTransform(1, 0, 0, 1, 0, 0); px.drawImage(r.c, Math.round(sx * RS - r.c.width / 2), Math.round(sy * RS - r.foot)); px.restore();
 }
 
 /* ---------- the ball ---------- */
