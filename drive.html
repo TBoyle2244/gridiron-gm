@@ -5757,7 +5757,7 @@ function startReturn(kind, land) {
     const x = 3 + i * ((W - 6) / 10), y = ko ? 72 : land + (Math.abs(x - mid) > 18 ? 14 : 22) + rnd(-1, 1); const u = makeUnit(role, w, x, y, 'd'); def.push(u); });
   const kx = mid, ky = ko ? 66 : land + 40;
   P = { play: { run: true, kr: kind }, t: 0, off, def, qb: ret, runner: ret, rbs: [], tes: [], wrs: [], dl: [], lb: [], db: [], elig: [], locks: [],
-    ball: { st: 'kick', x: kx, y: ky, sx: kx, sy: ky, lx: ret.x, ly: land, t0: 0, tof: ko ? 3.4 : 2.1, z: 0 }, carrier: null, done: false, los: land, result: null, land };
+    ball: { st: 'kick', x: kx, y: ky, sx: kx, sy: ky, lx: ret.x, ly: land, t0: 0, tof: ko ? 2.3 : 1.5, z: 0 }, carrier: null, done: false, los: land, result: null, land };
   def.forEach(u => u.read = 0);
   camT = land - viewLen() * 0.35; camY = camT; camXT = aimCamX(ret.x); camX = camXT;
   tip(ko ? 'Kickoff! Catch it, then hold and slide to run' : 'Punt return. Fair catch, or run it back');
@@ -6534,7 +6534,7 @@ function drawRoutes() {
 }
 
 /* ---------- loop ---------- */
-const PACE = 1.2;   // game speed: a touch quicker than real time, like Retro Bowl
+const PACE = 0.6;   // game speed: Retro Bowl's ball carriers cover about 5 yards a second on screen; ours run about 8.5, so the clock runs at 0.6
 let last = 0;
 function frame(t) {
   const dt = Math.min(0.05, (t - last) / 1000 || 0); last = t;
