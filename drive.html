@@ -5520,7 +5520,7 @@ function step(dt) {
   // receivers run routes (until the ball is in the air)
   P.elig.forEach(u => {
     if (u === P.carrier) return;
-    if (u.blocker) { blockerMove(u, dt); return; }
+    if (u.blocker || (P.carrier && u !== P.carrier && B.st !== 'air')) { blockerMove(u, dt); return; }
     if (B.st === 'air' && B.tgt === u) { steer(u, B.lx, B.ly, u.sp, dt, 20); return; }
     if (u.route && u.ri < u.route.length && P.t > 0.25) {
       const [tx, ty] = u.route[u.ri]; steer(u, tx, ty, u.sp, dt, 24);
@@ -5595,12 +5595,16 @@ function step(dt) {
     }
   }
   // blocking on running plays: defenders who run into a blocker get held up
-  if (P.carrier || P.play.run) {
+  if (P.carrier || P.play.run || P.play.kr) {
     P.def.forEach(u => {
       if (u.lock || u.block > 0 || u.stun > 0 || (u.free || 0) > P.t) return;
-      if (!P.carrier && u.role !== 'DL' && u.role !== 'LB') return;
-      const b = P.off.find(o => o !== P.carrier && !o.lock && o.role !== 'QB' && (o.role === 'OL' || o.blocker) && Math.hypot(o.x - u.x, o.y - u.y) < (o.role === 'OL' ? 1.4 : 1.2));
-      if (b) { const hold = clamp((0.75 + (blockOf(b.who, 1) - shedOf(u.who, 1)) * 0.025 + rnd(0, 1.0)) * (b.role === 'OL' ? 1 : 0.55), 0.15, 2.4); u.block = hold; u.free = P.t + hold + 0.5; }
+      if (!P.carrier && !P.play.kr && u.role !== 'DL' && u.role !== 'LB') return;
+      const b = P.off.find(o => o !== P.carrier && !o.lock && o.role !== 'QB' && o.role !== 'K' && (o.role === 'OL' || o.blocker || P.carrier) && !(o.route && o.ri < o.route.length && !P.carrier) && Math.hypot(o.x - u.x, o.y - u.y) < (o.role === 'OL' ? 1.4 : 1.25));
+      if (b) { const e = blockOf(b.who, 1) - shedOf(u.who, 1), ol = b.role === 'OL';
+        // a defender can slip past a block in the open field (better tacklers slip more)
+        if (!ol && Math.random() < clamp(0.4 - e * 0.012, 0.15, 0.7)) { b.stun = 0.35; u.free = P.t + 0.8; return; }
+        const hold = ol ? clamp(0.75 + e * 0.025 + rnd(0, 1.0), 0.2, 2.4) : clamp(0.35 + e * 0.012 + rnd(0, 0.45), 0.15, 1.0);
+        u.block = hold; u.free = P.t + hold + 0.5; lockUp(b, u, P.t + hold, clamp((ol ? 0.25 : 0.05) + e * 0.015, -0.3, 0.6)); }
     });
   }
   // the ball
@@ -5647,15 +5651,27 @@ function step(dt) {
   camT = Math.min(fy - viewLen() * (P.carrier ? 0.4 : 0.32), Math.max(fy, P.los) - viewLen() * 0.2);
 }
 function nearest(list, u) { let b = null, bd = 1e9; list.forEach(o => { const d = Math.hypot(o.x - u.x, o.y - u.y); if (d < bd) { bd = d; b = o; } }); return b; }
+// Block assignments: each blocker takes a different defender, closest threats to the ball first
+function assignBlocks() {
+  if (P.blockT != null && P.t - P.blockT < 0.3) return; P.blockT = P.t;
+  const c = P.carrier || P.runner || P.qb, bl = P.off.filter(o => o !== c && !o.lock && o.role !== 'QB' && o.role !== 'K' && (o.role === 'OL' ? (P.carrier || P.play.run || P.play.kr) : (o.blocker || P.carrier)) && !(o.route && o.ri < o.route.length && !P.carrier));
+  const th = P.def.filter(d => !d.lock && d.y > c.y - 4 && Math.hypot(d.x - c.x, d.y - c.y) < 28);
+  const pairs = []; bl.forEach(b => th.forEach(d => pairs.push([Math.hypot(d.x - b.x, d.y - b.y) + Math.hypot(d.x - c.x, d.y - c.y) * 0.6, b, d])));
+  pairs.sort((a, b) => a[0] - b[0]); const usedB = new Set(), usedD = new Set();
+  bl.forEach(b => b.bt = null);
+  for (const [, b, d] of pairs) { if (usedB.has(b) || usedD.has(d)) continue; b.bt = d; usedB.add(b); usedD.add(d); }
+}
 function blockerMove(u, dt) {
   if (u.lock) return;
   if (u.mark && !u.mark.lock && (u.mark.freeT || 0) <= P.t && !P.play.kr) { const d = u.mark, q = P.qb; const tx = P.play.run ? d.x : d.x + (q.x - d.x) * 0.3, ty = P.play.run ? d.y - 0.6 : Math.min(d.y + (q.y - d.y) * 0.3, u.sy); steer(u, tx, ty, P.play.run ? u.sp * 0.8 : 3.4, dt, 10); return; }
   if (u.help && !P.play.run && !P.carrier) { const k = P.locks.slice().sort((a, b) => Math.abs(a.o.x - u.x) - Math.abs(b.o.x - u.x))[0]; if (k) { steer(u, k.o.x + (k.o.x < u.x ? 1.2 : -1.2), k.o.y - 0.3, 3, dt, 8); return; } }
-  if (P.carrier || P.play.run) {
-    // lead the way: pick the closest defender ahead of the runner
-    const c = P.carrier || P.runner || P.qb, threats = P.def.filter(d => d.block <= 0 && d.y > c.y - 2);
-    const t = nearest(threats, u);
-    if (t && Math.hypot(t.x - u.x, t.y - u.y) < 8) steer(u, t.x, t.y - 0.4, u.sp * 0.85, dt, 10); else { u.vx *= 0.9; u.vy *= 0.9; }
+  if (P.carrier || P.play.run || P.play.kr) {
+    // lead the way: go get your man and get between him and the ball
+    assignBlocks();
+    const c = P.carrier || P.runner || P.qb, t = u.bt && !u.bt.lock ? u.bt : null;
+    if (t) steer(u, t.x + (c.x - t.x) * 0.12, t.y + (c.y - t.y) * 0.12, u.sp * 0.9, dt, 12);
+    else if (P.play.kr && !P.carrier) steer(u, u.x + (c.x - u.x) * 0.3, c.y + 12, u.sp * 0.6, dt, 8);   // form the wall in front of the returner
+    else { u.vx *= 0.9; u.vy *= 0.9; }
   } else {
     // pass protection: stay between the nearest rusher and the quarterback
     const r = nearest(rushers(), u);
@@ -5850,7 +5866,7 @@ function kickStep(dt) {
   if (KK.phase === 'aim') return;
   const age = (performance.now() - KK.f0) / 1000;
   if (age < 0.3) { k.vx = (B.x - 0.6 - k.x) / 0.3; k.vy = (B.y - 0.4 - k.y) / 0.3; k.x += k.vx * dt; k.y += k.vy * dt; k.ph = (k.ph || 0) + 8 * dt; } else { k.vx *= 0.8; k.vy *= 0.8; }
-  P.def.forEach(u => { if (age < 1.2) { u.vx = (W / 2 - u.x) * 0.4; u.vy = -2.5; u.x += u.vx * dt * 0.3; u.y += u.vy * dt * 0.3; u.ph = (u.ph || 0) + 3 * dt; } });
+  P.def.forEach(u => { if (u.y > P.los + 0.9) { u.vx = (W / 2 - u.x) * 0.15; u.vy = -3; u.x += u.vx * dt; u.y += u.vy * dt; u.ph = (u.ph || 0) + 3 * dt; } else { u.vx = u.vy = 0; } });
   if (KK.phase === 'fly') {
     const f = clamp((age - 0.28) / KK.tof, 0, 1), r = KK.res, endY = KK.spot + Math.min(r.carry, KK.dist + 10) * 1.0;
     if (age >= 0.28) { B.y = KK.spot + (endY - KK.spot) * f; B.x = W / 2 + r.lat * f * (KK.dist / Math.max(1, endY - KK.spot)); B.z = Math.sin(f * Math.PI) * (10 + KK.dist * 0.3) * (r.short ? 0.85 : 1); B.st = 'kicked'; }
@@ -6191,8 +6207,10 @@ const LOGO = (() => {
   return { svg, pick, E };
 })();
 
-let LOGO_IMG = null;
-function drawLogo() { if (!LOGO_IMG) return; const s = 64, x = wxp(50) - camPx() - s / 2, y = wyp(W / 2) - camPy() - s * 0.47; px.drawImage(LOGO_IMG, Math.round(x * RS) / RS, Math.round(y * RS) / RS, s, s); }
+let LOGO_IMG = null, EZ_IMG = [null, null];
+function drawLogo() {
+  EZ_IMG.forEach((im, i) => { if (!im) return; const x = wxp(i ? 100 : -10) - camPx(), y = wyp(0) - camPy(); px.drawImage(im, x, y, 10 * YD, wyp(W) - wyp(0)); });
+  if (!LOGO_IMG) return; const s = 64, x = wxp(50) - camPx() - s / 2, y = wyp(W / 2) - camPy() - s * 0.47; px.drawImage(LOGO_IMG, Math.round(x * RS) / RS, Math.round(y * RS) / RS, s, s); }
 /* ---------- the stadium, built once per game ---------- */
 function buildWorld() {
   const c = document.createElement('canvas'); c.width = WORLD_W; c.height = WORLD_H; const g = c.getContext('2d');
@@ -6229,7 +6247,7 @@ function buildWorld() {
   const edge = dist(ezc, HC.sec) < 90 ? '#ffffff' : HC.sec, ink = edge === '#ffffff' ? sh(ezc, -0.5) : edge;
   const ez = (a, b, name, rot) => { R(wxp(a), f0, (b - a) * YD, f1 - f0, ezc); for (let x = wxp(a) + 2; x < wxp(b) - 1; x += 4) R(x, f0, 1, f1 - f0, sh(ezc, -0.06));
     R(wxp(a) + 3, f0 + 3, (b - a) * YD - 6, 2, edge); R(wxp(a) + 3, f1 - 5, (b - a) * YD - 6, 2, edge);
-    PKs.pixText(g, name.toUpperCase(), wxp((a + b) / 2), (f0 + f1) / 2, 22, '#ffffff', rot, ink); };
+  };
   ez(-10, 0, me ? me.name : 'HOME', -Math.PI / 2);
   ez(100, 110, me ? me.city : 'HOME', Math.PI / 2);
   // lines: sidelines, end lines, every 5 yards, hash marks, numbers
@@ -6239,6 +6257,14 @@ function buildWorld() {
   for (let y = 10; y < 100; y += 10) { const n = String(y > 50 ? 100 - y : y); PKs.pixText(g, n, wxp(y) + 1, wyp(W - 10), 13, '#f6f6ef'); PKs.pixText(g, n, wxp(y) + 1, wyp(10), 13, '#f6f6ef'); }
   // midfield logo: the team name in a ring
   // midfield badge: an original cartoon emblem drawn sharp on top of the field each frame (see drawLogo)
+  // end zone names in the same bold, outlined lettering as the midfield badge (drawn sharp each frame in drawLogo)
+  EZ_IMG = [null, null]; { const zw = 10 * YD, zh = f1 - f0;
+    [[me ? me.name : 'HOME', -90, 0], [me ? me.city : 'HOME', 90, 1]].forEach(([nm, rot, i]) => {
+      const t = String(nm).toUpperCase(), fs = Math.min(zw * 0.5, (zh - 24) / Math.max(3, t.length * 0.78)), long = t.length * fs * 0.78 > zh - 24;
+      const tx = (stroke, sw, fill) => `<text x="0" y="0" text-anchor="middle" dominant-baseline="central" font-family="Arial Black, Helvetica Neue, Helvetica, Arial, sans-serif" font-weight="900" font-size="${fs.toFixed(1)}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" stroke-linejoin="round" paint-order="stroke" ${long ? `textLength="${zh - 24}" lengthAdjust="spacingAndGlyphs"` : ''}>${t.replace(/[&<>]/g, '')}</text>`;
+      const svgS = `<svg xmlns="http://www.w3.org/2000/svg" width="${zw * RS}" height="${zh * RS}" viewBox="0 0 ${zw} ${zh}"><g transform="translate(${zw / 2} ${zh / 2}) rotate(${rot})">${tx('#16161e', fs * 0.34, '#16161e')}${tx(edge, fs * 0.2, edge)}${tx('#16161e', fs * 0.08, '#ffffff')}</g></svg>`;
+      const im = new Image(); im.onload = () => { EZ_IMG[i] = im; }; im.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgS); });
+  }
   LOGO_IMG = null; { const im = new Image(), px2 = 64 * RS; im.onload = () => { LOGO_IMG = im; }; im.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(LOGO.svg(me ? me.name : '', ezc, edge, px2)); }
   // goal posts (base at the back of each end zone; the uprights go up the screen)
   for (const y of [-10, 110]) { const x = wxp(y) + (y < 0 ? -2 : 1), a = wyp(W / 2 - 3.1, 0), b = wyp(W / 2 + 3.1, 0), m = (a + b) / 2;
@@ -6505,7 +6531,7 @@ function drawPlay() {
     if (u.catchAt && now - u.catchAt < 330) o.pose = 'grab';
     if (P.play.kr && u === P.qb && P.call) { if (u.kneel && P.done) { o.pose = 'stance'; o.ring = null; } else if (!P.done && P.call === 'fair') o.pose = 'up'; }
     if (u === P.carrier && u.jk > 0 && !P.done) { (u.gst = u.gst || []).push([u.y, u.x]); if (u.gst.length > 7) u.gst.shift(); o.pose = 'juke'; o.ghosts = [u.gst[0], u.gst[3]].filter(Boolean); } else if (u.gst) u.gst = null;
-    if (P.kick) { if (u === P.holder) o.pose = 'stance'; else if (u === P.kicker) o.pose = Math.hypot(u.vx, u.vy) > 1 ? null : 'run'; }
+    if (P.kick) { if (KK && KK.phase !== 'aim' && (u.role === 'OL' || u.role === 'TE' || u.side === 'd')) o.pose = 'block'; if (u === P.holder) o.pose = 'stance'; else if (u === P.kicker) o.pose = Math.hypot(u.vx, u.vy) > 1 ? null : 'run'; }
     if (P.td) { const age = (now - P.td.at) / 1000;
       if (u === P.td.who) { o.pose = 'upball'; o.fall = 0; o.lift = age > 0.15 ? Math.abs(Math.sin((age - 0.15) * 7)) * 6 : 0; }
       else if (u.side === 'o' && age > 0.3 && Math.hypot(u.x - P.td.who.x, u.y - P.td.who.y) < 4.5) { o.pose = 'up'; o.lift = Math.abs(Math.sin(age * 7 + u.x)) * 3; } }
